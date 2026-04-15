@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "id": 2001,
+      "text": "<p>Still expensive, but quality is there.</p>",
+      "created_at": "2026-04-15T10:00:00+08:00",
+      "like_count": 9,
+      "user": {"id": 3001}
+    },
+    {
+      "id": 2002,
+      "text": "<p>Need to watch channel inventory.</p>",
+      "created_at": "2026-04-15T10:03:00+08:00",
+      "reply_id": 2001,
+      "like_count": 4,
+      "user": {"id": 3002}
+    }
+  ],
+  "has_more": false
+}
+

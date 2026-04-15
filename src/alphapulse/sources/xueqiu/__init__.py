@@ -1,0 +1,2 @@
+"""Xueqiu source adapter."""
+

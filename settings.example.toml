@@ -1,0 +1,45 @@
+[storage]
+backend = "rqlite"
+
+[clickhouse]
+url = "http://clickhouse:8123"
+database = "alphapulse"
+username = "default"
+password = ""
+secure = false
+
+[rqlite]
+url = "http://remote-rqlite.example.com:4001"
+username = ""
+password = ""
+queue_writes = true
+queue_timeout_seconds = 10
+
+[crawl]
+state_path = ".runtime/state.db"
+poll_interval_seconds = 300
+request_timeout_seconds = 30
+post_recrawl_minutes = 360
+comment_refresh_minutes = 60
+concurrent_requests = 4
+log_level = "INFO"
+user_agent = "AlphaPulseBot/0.1 (+https://github.com/xmxjq/alphapulse)"
+
+[sources.xueqiu]
+enabled = true
+base_url = "https://xueqiu.com"
+fetch_mode = "static"
+homepage_discovery_urls = ["https://xueqiu.com"]
+comments_api_template = "https://xueqiu.com/statuses/comments.json?id={post_id}&count={page_size}&page={page}"
+
+[sources.xueqiu.cookies]
+# xq_a_token = ""
+# xqat = ""
+
+[[sources.xueqiu.seed_sets]]
+name = "cn-core"
+discover_homepage = true
+post_urls = []
+stock_ids = ["SH600519", "SZ000858"]
+topic_ids = ["新能源"]
+user_ids = []
