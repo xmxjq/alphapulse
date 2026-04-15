@@ -6,7 +6,7 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 
 - Pluggable source adapter contract for future sites
 - First `XueqiuAdapter` with:
-  - configured seeds
+  - generated seed snapshots compiled from a seed catalog
   - homepage discovery
   - post extraction
   - full comment thread refresh via API template
@@ -19,10 +19,11 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 
 ## Quick start
 
-1. Create a local config from the example:
+1. Create a local config from the examples:
 
    ```bash
    cp settings.example.toml settings.toml
+   cp seed_catalog.example.toml seed_catalog.toml
    ```
 
 2. Install dependencies:
@@ -41,6 +42,12 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 
    ```bash
    uv run alphapulse run --config settings.toml --once
+   ```
+
+   Or refresh generated seed snapshots without crawling:
+
+   ```bash
+   uv run alphapulse refresh-seeds --config settings.toml
    ```
 
 5. Start the interactive SQL shell against the configured storage backend:
@@ -77,4 +84,6 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 
 - `xueqiu.com` is behind WAF protection. The default config runs in guest mode, but the config already supports cookie injection and fetch-mode selection.
 - The comments API template is configurable because Xueqiu can change its endpoints and payload shapes.
+- Seed generation is configured in `seed_catalog.toml`; `settings.toml` now points at the catalog and controls refresh cadence plus TTL.
+- V1 seed generator types are `manual`, `stock_universe`, and `longhubang`. The built-in providers are deterministic and file-backed.
 - V1 stores normalized records only. Raw HTML retention is intentionally deferred.

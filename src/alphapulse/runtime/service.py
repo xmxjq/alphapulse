@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, ItemReference, SeedDefinition
 from alphapulse.runtime.config import Settings
 from alphapulse.runtime.state import StateStore
+from alphapulse.seeds.discovery import SeedDiscoveryManager
 from alphapulse.sources.xueqiu.adapter import XueqiuAdapter
 from alphapulse.storage.base import StorageStore
 from alphapulse.storage.factory import build_store
@@ -50,6 +51,7 @@ class AlphaPulseService:
     state: StateStore | None = None
     store: StorageStore | None = None
     xueqiu: XueqiuAdapter | None = None
+    seed_discovery: SeedDiscoveryManager | None = None
 
     def __post_init__(self) -> None:
         if self.state is None:
@@ -58,6 +60,9 @@ class AlphaPulseService:
             self.store = build_store(self.settings)
         if self.xueqiu is None:
             self.xueqiu = XueqiuAdapter(self.settings.sources.xueqiu, self.settings.crawl)
+        if self.seed_discovery is None:
+            assert self.state is not None
+            self.seed_discovery = SeedDiscoveryManager(self.settings.sources.xueqiu, self.state)
 
     def run_forever(self) -> None:
         logger.info("Starting AlphaPulse service loop", extra={"event": "service_start"})
@@ -69,6 +74,7 @@ class AlphaPulseService:
         assert self.state is not None
         assert self.store is not None
         assert self.xueqiu is not None
+        assert self.seed_discovery is not None
         run_id = str(uuid.uuid4())
         started_at = datetime.now(UTC)
         stats = RunStats()
@@ -191,7 +197,5 @@ class AlphaPulseService:
         return timedelta(minutes=self.settings.crawl.post_recrawl_minutes)
 
     def _select_seeds(self, seed_set_name: str | None) -> list[SeedDefinition]:
-        seeds = self.settings.sources.xueqiu.seed_sets
-        if seed_set_name is None:
-            return seeds
-        return [seed for seed in seeds if seed.name == seed_set_name]
+        assert self.seed_discovery is not None
+        return self.seed_discovery.ensure_compiled_seed_sets(seed_set_name)

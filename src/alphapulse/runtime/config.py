@@ -6,9 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
-from alphapulse.pipeline.contracts import SeedDefinition
-
-
 FetchMode = Literal["static", "dynamic", "stealth"]
 StorageBackend = Literal["clickhouse", "rqlite"]
 
@@ -61,7 +58,9 @@ class XueqiuSettings(BaseModel):
     homepage_discovery_urls: list[HttpUrl] = Field(default_factory=lambda: ["https://xueqiu.com"])
     comments_api_template: str = "https://xueqiu.com/statuses/comments.json?id={post_id}&count={page_size}&page={page}"
     cookies: dict[str, str] = Field(default_factory=dict)
-    seed_sets: list[SeedDefinition] = Field(default_factory=list)
+    seed_catalog_path: Path = Path("seed_catalog.toml")
+    seed_refresh_minutes: int = 60
+    generated_seed_ttl_minutes: int = 1440
 
 
 class SourcesSettings(BaseModel):
@@ -88,4 +87,15 @@ class Settings(BaseModel):
 def load_settings(path: Path) -> Settings:
     with path.open("rb") as handle:
         payload = tomllib.load(handle)
-    return Settings.model_validate(payload)
+    settings = Settings.model_validate(payload)
+    config_dir = path.parent.resolve()
+    settings.crawl.state_path = _resolve_path(config_dir, settings.crawl.state_path)
+    settings.sources.xueqiu.seed_catalog_path = _resolve_path(config_dir, settings.sources.xueqiu.seed_catalog_path)
+    settings.crawl.state_path.parent.mkdir(parents=True, exist_ok=True)
+    return settings
+
+
+def _resolve_path(base_dir: Path, candidate: Path) -> Path:
+    if candidate.is_absolute():
+        return candidate
+    return (base_dir / candidate).resolve()

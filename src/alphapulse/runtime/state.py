@@ -7,6 +7,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
+from alphapulse.pipeline.contracts import SeedDefinition
+from alphapulse.seeds.catalog import GeneratedSeedItem
+
 
 class StateStore:
     def __init__(self, path: Path) -> None:
@@ -55,6 +58,33 @@ class StateStore:
                     finished_at TEXT,
                     status TEXT NOT NULL,
                     stats_json TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE TABLE IF NOT EXISTS generated_seed_runs (
+                    run_id TEXT PRIMARY KEY,
+                    logical_set_name TEXT NOT NULL,
+                    generator_name TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    item_count INTEGER NOT NULL,
+                    error_message TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS generated_seed_items (
+                    logical_set_name TEXT NOT NULL,
+                    generator_name TEXT NOT NULL,
+                    item_kind TEXT NOT NULL,
+                    item_value TEXT NOT NULL,
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    PRIMARY KEY (logical_set_name, generator_name, item_kind, item_value)
+                );
+
+                CREATE TABLE IF NOT EXISTS compiled_seed_sets (
+                    seed_set_name TEXT PRIMARY KEY,
+                    seed_json TEXT NOT NULL,
+                    refreshed_at TEXT NOT NULL
                 );
                 """
             )
@@ -155,3 +185,163 @@ class StateStore:
                 (datetime.now(UTC).isoformat(), status, json.dumps(stats, ensure_ascii=True), run_id),
             )
 
+    def upsert_generated_seed_items(
+        self,
+        logical_set_name: str,
+        generator_name: str,
+        items: list[GeneratedSeedItem],
+        seen_at: datetime,
+    ) -> None:
+        if not items:
+            return
+        timestamp = seen_at.isoformat()
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO generated_seed_items (
+                    logical_set_name,
+                    generator_name,
+                    item_kind,
+                    item_value,
+                    first_seen_at,
+                    last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(logical_set_name, generator_name, item_kind, item_value) DO UPDATE SET
+                    last_seen_at = excluded.last_seen_at
+                """,
+                [
+                    (
+                        logical_set_name,
+                        generator_name,
+                        item.kind,
+                        item.value,
+                        timestamp,
+                        timestamp,
+                    )
+                    for item in items
+                ],
+            )
+
+    def load_active_generated_seed_items(
+        self,
+        logical_set_name: str,
+        *,
+        ttl: timedelta,
+        as_of: datetime,
+    ) -> list[GeneratedSeedItem]:
+        threshold = (as_of - ttl).isoformat()
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT item_kind, item_value
+                FROM generated_seed_items
+                WHERE logical_set_name = ? AND last_seen_at >= ?
+                """,
+                (logical_set_name, threshold),
+            ).fetchall()
+        return [
+            GeneratedSeedItem(kind=row["item_kind"], value=row["item_value"])
+            for row in rows
+        ]
+
+    def record_generated_seed_run(
+        self,
+        *,
+        run_id: str,
+        logical_set_name: str,
+        generator_name: str,
+        started_at: datetime,
+        finished_at: datetime,
+        status: str,
+        item_count: int,
+        error_message: str | None,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO generated_seed_runs (
+                    run_id,
+                    logical_set_name,
+                    generator_name,
+                    started_at,
+                    finished_at,
+                    status,
+                    item_count,
+                    error_message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    logical_set_name,
+                    generator_name,
+                    started_at.isoformat(),
+                    finished_at.isoformat(),
+                    status,
+                    item_count,
+                    error_message,
+                ),
+            )
+
+    def store_compiled_seed_set(self, seed: SeedDefinition, refreshed_at: datetime) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO compiled_seed_sets (seed_set_name, seed_json, refreshed_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(seed_set_name) DO UPDATE SET
+                    seed_json = excluded.seed_json,
+                    refreshed_at = excluded.refreshed_at
+                """,
+                (
+                    seed.name,
+                    json.dumps(seed.model_dump(mode="json"), ensure_ascii=True),
+                    refreshed_at.isoformat(),
+                ),
+            )
+
+    def load_compiled_seed_sets(self, seed_set_name: str | None = None) -> list[SeedDefinition]:
+        with self.connection() as conn:
+            if seed_set_name is None:
+                rows = conn.execute(
+                    """
+                    SELECT seed_json
+                    FROM compiled_seed_sets
+                    ORDER BY seed_set_name
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT seed_json
+                    FROM compiled_seed_sets
+                    WHERE seed_set_name = ?
+                    ORDER BY seed_set_name
+                    """,
+                    (seed_set_name,),
+                ).fetchall()
+        return [SeedDefinition.model_validate(json.loads(row["seed_json"])) for row in rows]
+
+    def list_compiled_seed_set_names(self) -> list[str]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT seed_set_name
+                FROM compiled_seed_sets
+                ORDER BY seed_set_name
+                """
+            ).fetchall()
+        return [row["seed_set_name"] for row in rows]
+
+    def get_compiled_seed_set_refreshed_at(self, seed_set_name: str) -> datetime | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT refreshed_at
+                FROM compiled_seed_sets
+                WHERE seed_set_name = ?
+                """,
+                (seed_set_name,),
+            ).fetchone()
+        if row is None:
+            return None
+        return datetime.fromisoformat(row["refreshed_at"])

@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 from alphapulse.pipeline.contracts import NormalizedAuthor, NormalizedComment, NormalizedPost
-from alphapulse.sources.xueqiu.urls import extract_post_id
+from alphapulse.sources.xueqiu.urls import extract_post_id, is_post_url
 
 
 POST_LINK_RE = re.compile(r'href="(https://xueqiu\.com/\d+/\d+/?)"')
@@ -28,9 +28,14 @@ def _meta_map(html: str) -> dict[str, str]:
     return {name: value for name, value in META_RE.findall(html)}
 
 
-def _parse_datetime(value: str | None) -> datetime | None:
+def _parse_datetime(value: str | int | float | None) -> datetime | None:
     if not value:
         return None
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if timestamp > 1_000_000_000_000:
+            timestamp /= 1000
+        return datetime.fromtimestamp(timestamp, tz=UTC)
     cleaned = value.strip().replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(cleaned)
@@ -60,6 +65,56 @@ def _parse_embedded_json(html: str) -> list[dict[str, Any]]:
 def discover_post_urls(html: str) -> list[str]:
     urls = sorted({url.rstrip("/") for url in POST_LINK_RE.findall(html)})
     return urls
+
+
+def discover_post_urls_from_timeline_payload(payload: dict[str, Any], base_url: str = "https://xueqiu.com") -> list[str]:
+    urls: set[str] = set()
+
+    def add_candidate(value: str | None) -> None:
+        if not value:
+            return
+        normalized = value.rstrip("/")
+        if is_post_url(normalized):
+            urls.add(normalized)
+
+    def visit_status(record: Any) -> None:
+        if not isinstance(record, dict):
+            return
+
+        for key in ("target", "url", "canonical_url", "share_url"):
+            raw = record.get(key)
+            if isinstance(raw, str):
+                add_candidate(raw)
+
+        post_id = record.get("id") or record.get("status_id")
+        user_id = record.get("user_id")
+        user = record.get("user")
+        if user_id is None and isinstance(user, dict):
+            user_id = user.get("id")
+
+        if post_id is not None and user_id is not None:
+            candidate = f"{base_url.rstrip('/')}/{user_id}/{post_id}"
+            add_candidate(candidate)
+
+        for key in ("status", "retweeted_status", "retweet_status", "original_status"):
+            visit_status(record.get(key))
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in {"list", "items", "statuses", "data", "cards"} and isinstance(value, list):
+                    for item in value:
+                        visit_status(item)
+                        walk(item)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit_status(item)
+                walk(item)
+
+    walk(payload)
+    return sorted(urls)
 
 
 def parse_post(html: str, url: str, fetched_at: datetime | None = None) -> tuple[NormalizedPost | None, NormalizedAuthor | None]:
@@ -173,4 +228,3 @@ def parse_comments(payload: dict[str, Any], post_id: str, fetched_at: datetime |
             )
         )
     return results
-

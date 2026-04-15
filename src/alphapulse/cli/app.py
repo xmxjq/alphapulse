@@ -9,6 +9,7 @@ from alphapulse.cli.sql_shell import run_once, run_repl, SqlExecutor
 from alphapulse.runtime.config import Settings, load_settings
 from alphapulse.runtime.logging import configure_logging
 from alphapulse.runtime.service import AlphaPulseService
+from alphapulse.seeds.catalog import SeedCatalogLoader
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     backfill_parser = subparsers.add_parser("backfill", help="Run a single crawl cycle for one seed set.")
     backfill_parser.add_argument("--seed-set", required=True, help="Seed set name.")
+    refresh_parser = subparsers.add_parser("refresh-seeds", help="Refresh generated seed sets from the seed catalog.")
+    refresh_parser.add_argument("--seed-set", help="Refresh only one logical seed set.")
     sql_parser = subparsers.add_parser("sql", help="Run SQL or start an interactive SQL shell.")
     sql_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output.")
     sql_parser.add_argument("sql", nargs="?", help="SQL statement to run. If omitted, start the shell.")
@@ -44,7 +47,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "validate-config":
         settings = load_settings(Path(args.config))
-        print(json.dumps(settings.model_dump(mode="json"), indent=2))
+        catalog = SeedCatalogLoader(settings.sources.xueqiu.seed_catalog_path).load()
+        print(
+            json.dumps(
+                {
+                    "settings": settings.model_dump(mode="json"),
+                    "seed_catalog": catalog.model_dump(mode="json"),
+                },
+                indent=2,
+            )
+        )
         return 0
 
     if args.command == "sql":
@@ -75,6 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         }
         print(json.dumps(status, indent=2))
         return 0 if status["storage_ok"] else 1
+
+    if args.command == "refresh-seeds":
+        result = service.seed_discovery.refresh(seed_set_name=args.seed_set)
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0
 
     if args.command == "backfill":
         stats = service.run_cycle(seed_set_name=args.seed_set)

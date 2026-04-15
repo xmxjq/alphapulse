@@ -31,15 +31,10 @@ base_url = "https://xueqiu.com"
 fetch_mode = "static"
 homepage_discovery_urls = ["https://xueqiu.com"]
 comments_api_template = "https://xueqiu.com/statuses/comments.json?id={post_id}&count={page_size}&page={page}"
+seed_catalog_path = "seed_catalog.example.toml"
+seed_refresh_minutes = 60
+generated_seed_ttl_minutes = 1440
 
 [sources.xueqiu.cookies]
 # xq_a_token = ""
 # xqat = ""
-
-[[sources.xueqiu.seed_sets]]
-name = "cn-core"
-discover_homepage = true
-post_urls = []
-stock_ids = ["SH600519", "SZ000858"]
-topic_ids = ["新能源"]
-user_ids = []

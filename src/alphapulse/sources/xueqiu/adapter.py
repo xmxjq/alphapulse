@@ -7,8 +7,21 @@ from urllib.parse import urlencode
 from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, ItemReference, NormalizedPost, SeedDefinition
 from alphapulse.runtime.config import CrawlSettings, XueqiuSettings
 from alphapulse.sources.fetching import ScraplingClient
-from alphapulse.sources.xueqiu.parser import discover_post_urls, parse_comments, parse_post
-from alphapulse.sources.xueqiu.urls import extract_post_id, normalize_url, stock_url, topic_url, user_url
+from alphapulse.sources.xueqiu.parser import (
+    discover_post_urls,
+    discover_post_urls_from_timeline_payload,
+    parse_comments,
+    parse_post,
+)
+from alphapulse.sources.xueqiu.urls import (
+    extract_post_id,
+    normalize_url,
+    stock_status_search_url,
+    stock_timeline_url,
+    stock_url,
+    topic_url,
+    user_url,
+)
 
 
 class XueqiuAdapter:
@@ -51,10 +64,15 @@ class XueqiuAdapter:
                 CrawlTask(
                     source=self.source_name,
                     kind="discover",
-                    url=stock_url(str(self.settings.base_url), stock_id),
+                    url=stock_status_search_url(str(self.settings.base_url), stock_id),
                     seed_name=seed.name,
                     priority=120,
-                    metadata={"seed_kind": "stock", "stock_id": stock_id},
+                    metadata={
+                        "seed_kind": "stock",
+                        "stock_id": stock_id,
+                        "discovery_url": stock_url(str(self.settings.base_url), stock_id),
+                        "api_url": stock_timeline_url(str(self.settings.base_url), stock_id),
+                    },
                 )
             )
 
@@ -92,6 +110,7 @@ class XueqiuAdapter:
             return outcome
 
         if task.kind == "discover":
+            discovered_urls = self._discover_urls(task, response.text)
             discovered = [
                 CrawlTask(
                     source=self.source_name,
@@ -101,7 +120,7 @@ class XueqiuAdapter:
                     priority=150,
                     metadata={"discovered_from": str(task.url)},
                 )
-                for url in discover_post_urls(response.text)
+                for url in discovered_urls
             ]
             outcome.discovered_tasks.extend(discovered)
             return outcome
@@ -168,8 +187,18 @@ class XueqiuAdapter:
 
     @staticmethod
     def _is_blocked(text: str, status_code: int) -> bool:
+        if not text.strip():
+            return True
         if status_code in {401, 403, 429, 503}:
             return True
         markers = ("aliyun_waf", "renderData", "_waf_", "captcha")
         return any(marker in text for marker in markers)
 
+    @staticmethod
+    def _discover_urls(task: CrawlTask, text: str) -> list[str]:
+        if task.metadata.get("seed_kind") == "stock":
+            try:
+                return discover_post_urls_from_timeline_payload(json.loads(text))
+            except json.JSONDecodeError:
+                return discover_post_urls(text)
+        return discover_post_urls(text)

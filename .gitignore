@@ -14,3 +14,4 @@ build/
 htmlcov/
 settings.toml
 
+/seed_catalog.toml

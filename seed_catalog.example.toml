@@ -1,0 +1,12 @@
+[[logical_sets]]
+name = "cn-core"
+generators = ["cn-core-manual"]
+
+[[generators]]
+name = "cn-core-manual"
+type = "manual"
+discover_homepage = true
+post_urls = []
+stock_ids = ["SH600519", "SZ000858"]
+topic_ids = ["新能源"]
+user_ids = []

@@ -50,7 +50,20 @@ def test_service_runs_one_cycle(tmp_path: Path) -> None:
     fixtures = Path("tests/fixtures/xueqiu")
     settings = load_settings(Path("settings.example.toml"))
     settings.crawl.state_path = tmp_path / "state.db"
-    settings.sources.xueqiu.seed_sets[0].post_urls = ["https://xueqiu.com/1234567890/987654321"]
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "cn-core"
+generators = ["manual-post"]
+
+[[generators]]
+name = "manual-post"
+type = "manual"
+post_urls = ["https://xueqiu.com/1234567890/987654321"]
+""".strip()
+    )
     service = AlphaPulseService(settings, store=FakeStore())
     service.xueqiu.client = FakeClient(fixtures)
 
@@ -59,3 +72,51 @@ def test_service_runs_one_cycle(tmp_path: Path) -> None:
     assert stats.posts_written >= 1
     assert stats.comments_written >= 2
     assert service.store.posts[0].source_entity_id == "987654321"
+    assert service.state.list_compiled_seed_set_names() == ["cn-core"]
+
+
+def test_service_reuses_fresh_compiled_seed_snapshot(tmp_path: Path) -> None:
+    fixtures = Path("tests/fixtures/xueqiu")
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.crawl.post_recrawl_minutes = 0
+    settings.crawl.comment_refresh_minutes = 0
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "cn-core"
+generators = ["manual-post"]
+
+[[generators]]
+name = "manual-post"
+type = "manual"
+post_urls = ["https://xueqiu.com/1234567890/987654321"]
+""".strip()
+    )
+
+    service = AlphaPulseService(settings, store=FakeStore())
+    service.xueqiu.client = FakeClient(fixtures)
+
+    first = service.run_cycle(seed_set_name="cn-core")
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "cn-core"
+generators = ["manual-post"]
+
+[[generators]]
+name = "manual-post"
+type = "manual"
+post_urls = ["https://xueqiu.com/1111111111/222222222"]
+""".strip()
+    )
+    second = service.run_cycle(seed_set_name="cn-core")
+
+    with service.state.connection() as conn:
+        run_count = conn.execute("SELECT COUNT(*) AS count FROM generated_seed_runs").fetchone()["count"]
+
+    assert first.posts_written >= 1
+    assert second.posts_written >= 1
+    assert run_count == 1
