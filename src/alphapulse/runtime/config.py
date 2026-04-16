@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 FetchMode = Literal["static", "dynamic", "stealth"]
 StorageBackend = Literal["clickhouse", "rqlite"]
+ProxyProviderType = Literal["proxy_pool"]
 
 
 class StorageSettings(BaseModel):
@@ -47,6 +48,32 @@ class CrawlSettings(BaseModel):
     concurrent_requests: int = 4
     log_level: str = "INFO"
     user_agent: str = "AlphaPulseBot/0.1"
+    proxy: "CrawlProxySettings" = Field(default_factory=lambda: CrawlProxySettings())
+    proxy_pool: "CrawlProxyPoolSettings" = Field(default_factory=lambda: CrawlProxyPoolSettings())
+
+
+class CrawlProxySettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: ProxyProviderType | None = None
+    max_attempts: int = Field(default=2, ge=1)
+    fail_open: bool = False
+
+    @model_validator(mode="after")
+    def validate_enabled_provider(self) -> "CrawlProxySettings":
+        if self.enabled and self.provider is None:
+            raise ValueError("crawl.proxy.provider must be set when crawl.proxy.enabled is true")
+        return self
+
+
+class CrawlProxyPoolSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = "http://proxy_pool:5010"
+    https_only: bool = True
+    acquire_timeout_seconds: int = Field(default=3, ge=1)
+    report_bad_on_block: bool = True
 
 
 class XueqiuSettings(BaseModel):

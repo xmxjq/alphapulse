@@ -25,6 +25,18 @@ concurrent_requests = 4
 log_level = "INFO"
 user_agent = "AlphaPulseBot/0.1 (+https://github.com/xmxjq/alphapulse)"
 
+[crawl.proxy]
+enabled = false
+# provider = "proxy_pool"
+max_attempts = 2
+fail_open = false
+
+[crawl.proxy_pool]
+base_url = "http://proxy_pool:5010"
+https_only = true
+acquire_timeout_seconds = 3
+report_bad_on_block = true
+
 [sources.xueqiu]
 enabled = true
 base_url = "https://xueqiu.com"

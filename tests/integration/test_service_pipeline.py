@@ -46,6 +46,26 @@ class FakeClient:
         return FetchResult(url=url, status_code=200, text=(self.fixtures / "discovery.html").read_text(), headers={})
 
 
+class FailingPostClient:
+    def fetch(self, url: str) -> FetchResult:
+        return FetchResult(url=url, status_code=0, text="", headers={}, error_message="dial tcp failed")
+
+
+class BlockedClient:
+    def fetch(self, url: str) -> FetchResult:
+        return FetchResult(url=url, status_code=403, text="captcha", headers={}, proxy_url="http://1.2.3.4:8080")
+
+
+class FailingCommentsClient:
+    def __init__(self, fixtures: Path) -> None:
+        self.fixtures = fixtures
+
+    def fetch(self, url: str) -> FetchResult:
+        if "comments.json" in url:
+            return FetchResult(url=url, status_code=0, text="", headers={}, error_message="proxy connect failed")
+        return FetchResult(url=url, status_code=200, text=(self.fixtures / "post.html").read_text(), headers={})
+
+
 def test_service_runs_one_cycle(tmp_path: Path) -> None:
     fixtures = Path("tests/fixtures/xueqiu")
     settings = load_settings(Path("settings.example.toml"))
@@ -120,3 +140,91 @@ post_urls = ["https://xueqiu.com/1111111111/222222222"]
     assert first.posts_written >= 1
     assert second.posts_written >= 1
     assert run_count == 1
+
+
+def test_service_handles_fetch_transport_failure_without_crashing(tmp_path: Path) -> None:
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "cn-core"
+generators = ["manual-post"]
+
+[[generators]]
+name = "manual-post"
+type = "manual"
+post_urls = ["https://xueqiu.com/1234567890/987654321"]
+""".strip()
+    )
+
+    store = FakeStore()
+    service = AlphaPulseService(settings, store=store)
+    service.xueqiu.client = FailingPostClient()
+
+    stats = service.run_cycle(seed_set_name="cn-core")
+
+    assert stats.errors == 1
+    assert stats.posts_written == 0
+    assert store.errors[0][2].startswith("Fetch failed for https://xueqiu.com/1234567890/987654321")
+
+
+def test_service_counts_blocked_responses(tmp_path: Path) -> None:
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "cn-core"
+generators = ["manual-post"]
+
+[[generators]]
+name = "manual-post"
+type = "manual"
+post_urls = ["https://xueqiu.com/1234567890/987654321"]
+""".strip()
+    )
+
+    store = FakeStore()
+    service = AlphaPulseService(settings, store=store)
+    service.xueqiu.client = BlockedClient()
+
+    stats = service.run_cycle(seed_set_name="cn-core")
+
+    assert stats.blocked_responses == 1
+    assert stats.errors == 1
+    assert store.errors[0][2] == "Blocked response from https://xueqiu.com/1234567890/987654321"
+
+
+def test_service_stops_comment_refresh_on_fetch_failure(tmp_path: Path) -> None:
+    fixtures = Path("tests/fixtures/xueqiu")
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.crawl.comment_refresh_minutes = 0
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "cn-core"
+generators = ["manual-post"]
+
+[[generators]]
+name = "manual-post"
+type = "manual"
+post_urls = ["https://xueqiu.com/1234567890/987654321"]
+""".strip()
+    )
+
+    store = FakeStore()
+    service = AlphaPulseService(settings, store=store)
+    service.xueqiu.client = FailingCommentsClient(fixtures)
+
+    stats = service.run_cycle(seed_set_name="cn-core")
+
+    assert stats.posts_written == 1
+    assert stats.comments_written == 0

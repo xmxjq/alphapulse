@@ -80,6 +80,34 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
    docker compose run --rm crawler uv run alphapulse --config /app/settings.toml init-db
    ```
 
+7. Optional: start the local proxy pool sidecar when Xueqiu is blocking your crawler IP:
+
+   ```bash
+   docker compose --profile proxy up -d
+   ```
+
+   Then enable the proxy settings in `settings.toml`:
+
+   ```toml
+   [crawl.proxy]
+   enabled = true
+   provider = "proxy_pool"
+   max_attempts = 2
+   fail_open = false
+
+   [crawl.proxy_pool]
+   base_url = "http://proxy_pool:5010"
+   https_only = true
+   acquire_timeout_seconds = 3
+   report_bad_on_block = true
+   ```
+
+   Verify the sidecar is serving proxies before you run the crawler:
+
+   ```bash
+   curl http://localhost:5010/count/
+   ```
+
 ## Storage
 
 - `rqlite` is the default backend in `settings.example.toml` and is intended for lighter remote persistence.
@@ -89,6 +117,8 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 ## Notes
 
 - `xueqiu.com` is behind WAF protection. The default config runs in guest mode, but the config already supports cookie injection and fetch-mode selection.
+- Proxy support is provider-based. This repo includes a `proxy_pool` sidecar option, but free proxies can be unstable and may still underperform against Xueqiu WAF.
+- The proxy abstraction is intentionally generic so stronger external pools, including paid residential or mobile providers, can be added later without rewriting the Xueqiu adapter.
 - The comments API template is configurable because Xueqiu can change its endpoints and payload shapes.
 - Seed generation is configured in `seed_catalog.toml`; `settings.toml` now points at the catalog and controls refresh cadence plus TTL.
 - V1 seed generator types are `manual`, `stock_universe`, and `longhubang`. The built-in providers are deterministic and file-backed.

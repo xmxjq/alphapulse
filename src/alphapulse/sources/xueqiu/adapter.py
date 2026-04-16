@@ -103,6 +103,14 @@ class XueqiuAdapter:
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
         response = self.client.fetch(str(task.url))
+        if response.error_message:
+            outcome = FetchOutcome(blocked=False, status_code=response.status_code)
+            error = f"Fetch failed for {task.url}: {response.error_message}"
+            if response.proxy_url:
+                error = f"{error} via {response.proxy_url}"
+            outcome.errors.append(error)
+            return outcome
+
         blocked = self._is_blocked(response.text, response.status_code)
         outcome = FetchOutcome(blocked=blocked, status_code=response.status_code)
         if blocked:
@@ -151,6 +159,8 @@ class XueqiuAdapter:
                 page=page,
             )
             response = self.client.fetch(url)
+            if response.error_message:
+                break
             if self._is_blocked(response.text, response.status_code):
                 break
             try:
