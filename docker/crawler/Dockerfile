@@ -11,9 +11,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 WORKDIR /app
 
-COPY pyproject.toml README.md /app/
+COPY pyproject.toml uv.lock README.md /app/
 COPY src /app/src
 
-RUN uv sync --no-dev
+RUN uv sync --frozen --no-dev \
+    && uv run patchright install --with-deps chromium
 
 CMD ["uv", "run", "alphapulse", "--config", "/app/settings.toml", "run"]
