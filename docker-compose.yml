@@ -1,29 +1,12 @@
 services:
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.12
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    environment:
-      CLICKHOUSE_DB: alphapulse
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
-    volumes:
-      - clickhouse-data:/var/lib/clickhouse
-
   crawler:
     build:
       context: .
       dockerfile: docker/crawler/Dockerfile
-    depends_on:
-      - clickhouse
+    restart: unless-stopped
     working_dir: /app
-    command: ["uv", "run", "alphapulse", "run", "--config", "/app/settings.toml"]
+    command: ["uv", "run", "alphapulse", "--config", "/app/settings.toml", "run"]
     volumes:
       - ./:/app
     environment:
       PYTHONUNBUFFERED: "1"
-
-volumes:
-  clickhouse-data:
-

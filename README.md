@@ -15,7 +15,7 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
   - `ClickHouse` for analytical storage
 - Durable local crawl state in SQLite
 - CLI commands for config validation, DB init, health checks, run loop, and backfill
-- Docker Compose for local ClickHouse + crawler
+- Docker Compose for the crawler, configured to write to remote `rqlite`
 
 ## Quick start
 
@@ -35,19 +35,19 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 3. Initialize the configured storage backend:
 
    ```bash
-   uv run alphapulse init-db --config settings.toml
+   uv run alphapulse --config settings.toml init-db
    ```
 
 4. Run one crawl cycle:
 
    ```bash
-   uv run alphapulse run --config settings.toml --once
+   uv run alphapulse --config settings.toml run --once
    ```
 
    Or refresh generated seed snapshots without crawling:
 
    ```bash
-   uv run alphapulse refresh-seeds --config settings.toml
+   uv run alphapulse --config settings.toml refresh-seeds
    ```
 
 5. Start the interactive SQL shell against the configured storage backend:
@@ -68,17 +68,23 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
    uv run alphapulse --config settings.toml sql --pretty "SELECT * FROM posts LIMIT 5"
    ```
 
-6. Start the local stack:
+6. Start the crawler container:
 
    ```bash
    docker compose up --build
    ```
 
+   If you want to initialize the remote `rqlite` schema from inside the container first:
+
+   ```bash
+   docker compose run --rm crawler uv run alphapulse --config /app/settings.toml init-db
+   ```
+
 ## Storage
 
 - `rqlite` is the default backend in `settings.example.toml` and is intended for lighter remote persistence.
-- `ClickHouse` support remains available by setting `storage.backend = "clickhouse"`.
-- The local Docker Compose file still includes a `clickhouse` service for the analytical path; it is not required when you point the crawler at a remote `rqlite` node.
+- The Docker Compose file assumes you are pointing the crawler at an external `rqlite` node via `settings.toml`; it does not start a database container.
+- `ClickHouse` support remains available by setting `storage.backend = "clickhouse"` and pointing the crawler at an existing ClickHouse instance.
 
 ## Notes
 

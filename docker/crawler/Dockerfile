@@ -16,5 +16,4 @@ COPY src /app/src
 
 RUN uv sync --no-dev
 
-CMD ["uv", "run", "alphapulse", "run", "--config", "/app/settings.toml"]
-
+CMD ["uv", "run", "alphapulse", "--config", "/app/settings.toml", "run"]
