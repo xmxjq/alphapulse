@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
-SeedItemKind = Literal["discover_homepage", "post_url", "stock_id", "topic_id", "user_id"]
+SeedItemKind = Literal["discover_homepage", "post_url", "bilibili_video_target", "stock_id", "topic_id", "user_id"]
 
 
 class GeneratedSeedItem(BaseModel):
@@ -33,6 +33,7 @@ class ManualGeneratorDefinition(BaseModel):
     type: Literal["manual"] = "manual"
     discover_homepage: bool = False
     post_urls: list[HttpUrl] = Field(default_factory=list)
+    bilibili_video_targets: list[str] = Field(default_factory=list)
     stock_ids: list[str] = Field(default_factory=list)
     topic_ids: list[str] = Field(default_factory=list)
     user_ids: list[str] = Field(default_factory=list)

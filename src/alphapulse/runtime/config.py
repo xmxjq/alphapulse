@@ -90,10 +90,23 @@ class XueqiuSettings(BaseModel):
     generated_seed_ttl_minutes: int = 1440
 
 
+class BilibiliSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    api_base_url: HttpUrl = "https://api.bilibili.com"
+    web_base_url: HttpUrl = "https://www.bilibili.com"
+    sort_mode: int = 3
+    page_size: int = Field(default=30, ge=1, le=30)
+    max_pages: int = Field(default=1000, ge=1)
+    cookies: dict[str, str] = Field(default_factory=dict)
+
+
 class SourcesSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     xueqiu: XueqiuSettings = Field(default_factory=XueqiuSettings)
+    bilibili: BilibiliSettings = Field(default_factory=BilibiliSettings)
 
 
 class Settings(BaseModel):

@@ -15,6 +15,7 @@ class SeedDefinition(BaseModel):
     name: str
     discover_homepage: bool = False
     post_urls: list[HttpUrl] = Field(default_factory=list)
+    bilibili_video_targets: list[str] = Field(default_factory=list)
     stock_ids: list[str] = Field(default_factory=list)
     topic_ids: list[str] = Field(default_factory=list)
     user_ids: list[str] = Field(default_factory=list)
@@ -113,3 +114,4 @@ class SourceAdapter(Protocol):
 
     def refresh_comments(self, item_ref: ItemReference) -> list[NormalizedComment]: ...
 
+    def comment_task_for_post(self, post: NormalizedPost, seed_name: str) -> CrawlTask: ...

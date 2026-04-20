@@ -59,6 +59,10 @@ class ManualSeedGenerator:
         if definition.discover_homepage:
             items.append(GeneratedSeedItem(kind="discover_homepage", value="true"))
         items.extend(GeneratedSeedItem(kind="post_url", value=str(url)) for url in definition.post_urls)
+        items.extend(
+            GeneratedSeedItem(kind="bilibili_video_target", value=value)
+            for value in definition.bilibili_video_targets
+        )
         items.extend(GeneratedSeedItem(kind="stock_id", value=value) for value in definition.stock_ids)
         items.extend(GeneratedSeedItem(kind="topic_id", value=value) for value in definition.topic_ids)
         items.extend(GeneratedSeedItem(kind="user_id", value=value) for value in definition.user_ids)
@@ -140,6 +144,7 @@ class SeedCompiler:
     def compile(self, seed_name: str, items: list[GeneratedSeedItem]) -> SeedDefinition:
         buckets: dict[str, set[str]] = {
             "post_url": set(),
+            "bilibili_video_target": set(),
             "stock_id": set(),
             "topic_id": set(),
             "user_id": set(),
@@ -156,6 +161,7 @@ class SeedCompiler:
             name=seed_name,
             discover_homepage=discover_homepage,
             post_urls=sorted(buckets["post_url"]),
+            bilibili_video_targets=sorted(buckets["bilibili_video_target"]),
             stock_ids=sorted(buckets["stock_id"]),
             topic_ids=sorted(buckets["topic_id"]),
             user_ids=sorted(buckets["user_id"]),

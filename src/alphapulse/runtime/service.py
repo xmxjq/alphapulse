@@ -7,10 +7,11 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, ItemReference, SeedDefinition
+from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, ItemReference, SeedDefinition, SourceAdapter
 from alphapulse.runtime.config import Settings
 from alphapulse.runtime.state import StateStore
 from alphapulse.seeds.discovery import SeedDiscoveryManager
+from alphapulse.sources.bilibili.adapter import BilibiliAdapter
 from alphapulse.sources.xueqiu.adapter import XueqiuAdapter
 from alphapulse.storage.base import StorageStore
 from alphapulse.storage.factory import build_store
@@ -50,7 +51,7 @@ class AlphaPulseService:
     settings: Settings
     state: StateStore | None = None
     store: StorageStore | None = None
-    xueqiu: XueqiuAdapter | None = None
+    sources: dict[str, SourceAdapter] = field(default_factory=dict)
     seed_discovery: SeedDiscoveryManager | None = None
 
     def __post_init__(self) -> None:
@@ -58,8 +59,8 @@ class AlphaPulseService:
             self.state = StateStore(self.settings.crawl.state_path)
         if self.store is None:
             self.store = build_store(self.settings)
-        if self.xueqiu is None:
-            self.xueqiu = XueqiuAdapter(self.settings.sources.xueqiu, self.settings.crawl)
+        if not self.sources:
+            self.sources = self._build_sources()
         if self.seed_discovery is None:
             assert self.state is not None
             self.seed_discovery = SeedDiscoveryManager(self.settings.sources.xueqiu, self.state)
@@ -73,7 +74,7 @@ class AlphaPulseService:
     def run_cycle(self, seed_set_name: str | None = None) -> RunStats:
         assert self.state is not None
         assert self.store is not None
-        assert self.xueqiu is not None
+        assert self.sources
         assert self.seed_discovery is not None
         run_id = str(uuid.uuid4())
         started_at = datetime.now(UTC)
@@ -83,8 +84,9 @@ class AlphaPulseService:
             queue: deque[CrawlTask] = deque()
             for seed in self._select_seeds(seed_set_name):
                 stats.seeds_processed += 1
-                for task in self.xueqiu.discover(seed):
-                    self._enqueue_task(queue, task, stats)
+                for adapter in self.sources.values():
+                    for task in adapter.discover(seed):
+                        self._enqueue_task(queue, task, stats)
 
             while queue:
                 task = queue.popleft()
@@ -103,7 +105,8 @@ class AlphaPulseService:
                 )
 
                 if task.kind == "refresh_comments":
-                    comments = self.xueqiu.refresh_comments(
+                    adapter = self._adapter_for_task(task)
+                    comments = adapter.refresh_comments(
                         ItemReference(
                             source=task.source,
                             source_entity_id=task.metadata["post_id"],
@@ -118,7 +121,8 @@ class AlphaPulseService:
                     self.state.mark_url_fetched(str(task.url), 200)
                     continue
 
-                outcome = self.xueqiu.fetch_item(task)
+                adapter = self._adapter_for_task(task)
+                outcome = adapter.fetch_item(task)
                 self._apply_outcome(task, outcome, queue, stats)
                 self.state.mark_url_fetched(str(task.url), outcome.status_code)
 
@@ -179,7 +183,7 @@ class AlphaPulseService:
                     post.source_entity_id,
                     timedelta(minutes=self.settings.crawl.comment_refresh_minutes),
                 ):
-                    comment_task = self.xueqiu.comment_task_for_post(post, task.seed_name)
+                    comment_task = self._adapter_for_source(post.source).comment_task_for_post(post, task.seed_name)
                     self._enqueue_task(queue, comment_task, stats)
 
         for discovered_task in outcome.discovered_tasks:
@@ -199,3 +203,20 @@ class AlphaPulseService:
     def _select_seeds(self, seed_set_name: str | None) -> list[SeedDefinition]:
         assert self.seed_discovery is not None
         return self.seed_discovery.ensure_compiled_seed_sets(seed_set_name)
+
+    def _build_sources(self) -> dict[str, SourceAdapter]:
+        sources: dict[str, SourceAdapter] = {}
+        if self.settings.sources.xueqiu.enabled:
+            sources["xueqiu"] = XueqiuAdapter(self.settings.sources.xueqiu, self.settings.crawl)
+        if self.settings.sources.bilibili.enabled:
+            sources["bilibili"] = BilibiliAdapter(self.settings.sources.bilibili, self.settings.crawl)
+        return sources
+
+    def _adapter_for_task(self, task: CrawlTask) -> SourceAdapter:
+        return self._adapter_for_source(task.source)
+
+    def _adapter_for_source(self, source_name: str) -> SourceAdapter:
+        adapter = self.sources.get(source_name)
+        if adapter is None:
+            raise KeyError(f"Unknown source adapter: {source_name}")
+        return adapter

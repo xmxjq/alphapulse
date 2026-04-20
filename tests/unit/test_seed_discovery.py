@@ -7,12 +7,14 @@ from alphapulse.seeds.catalog import (
     GeneratedSeedItem,
     LonghubangGeneratorDefinition,
     LonghubangRecord,
+    ManualGeneratorDefinition,
     SeedCatalogLoader,
     StockUniverseGeneratorDefinition,
     StockUniverseRecord,
 )
 from alphapulse.seeds.discovery import (
     LonghubangSeedGenerator,
+    ManualSeedGenerator,
     SeedCompiler,
     SeedDiscoveryManager,
     StockUniverseSeedGenerator,
@@ -209,3 +211,20 @@ stock_ids = ["SZ000858"]
     assert first[0].stock_ids == ["SH600519"]
     assert second[0].stock_ids == ["SH600519"]
     assert run_count == 1
+
+
+def test_manual_seed_generator_emits_bilibili_targets() -> None:
+    generator = ManualSeedGenerator()
+    items = generator.generate(
+        ManualGeneratorDefinition(name="manual", bilibili_video_targets=["BV1xx411c7mu"]),
+        datetime.now(UTC),
+    )
+    assert [(item.kind, item.value) for item in items] == [("bilibili_video_target", "BV1xx411c7mu")]
+
+
+def test_seed_compiler_preserves_bilibili_targets() -> None:
+    compiled = SeedCompiler().compile(
+        "cn-core",
+        [GeneratedSeedItem(kind="bilibili_video_target", value="BV1xx411c7mu")],
+    )
+    assert compiled.bilibili_video_targets == ["BV1xx411c7mu"]

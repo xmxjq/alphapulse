@@ -6,6 +6,7 @@ generators = ["cn-core-manual"]
 name = "cn-core-manual"
 type = "manual"
 discover_homepage = true
+bilibili_video_targets = ["BV1xx411c7mu"]
 post_urls = []
 stock_ids = ["SH600519", "SZ000858"]
 topic_ids = ["新能源"]

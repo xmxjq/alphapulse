@@ -1,15 +1,19 @@
 # AlphaPulse
 
-AlphaPulse is a Python-first crawling platform for finance data collection. The v1 scaffold targets `xueqiu.com`, uses `Scrapling` for fetching, supports `rqlite` and `ClickHouse` storage backends, and runs as a long-lived crawl service.
+AlphaPulse is a Python-first crawling platform for finance data collection. The current scaffold supports `xueqiu.com` and Bilibili video comments, uses `Scrapling` where browser-style fetching is needed, supports `rqlite` and `ClickHouse` storage backends, and runs as a long-lived crawl service.
 
 ## What is included
 
 - Pluggable source adapter contract for future sites
-- First `XueqiuAdapter` with:
+- `XueqiuAdapter` with:
   - generated seed snapshots compiled from a seed catalog
   - homepage discovery
   - post extraction
   - full comment thread refresh via API template
+- `BilibiliAdapter` with:
+  - manual video seed support via canonical URL, `BV...`, or `av...`
+  - video metadata normalization into the shared post/author models
+  - full video comment thread refresh via Bilibili JSON APIs
 - Configurable storage backends:
   - `rqlite` for lightweight remote persistence
   - `ClickHouse` for analytical storage
@@ -117,9 +121,11 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 ## Notes
 
 - `xueqiu.com` is behind WAF protection. The default config runs in guest mode, but the config already supports cookie injection and fetch-mode selection.
+- Bilibili video comments use public JSON APIs in guest mode by default. Optional cookies can be supplied under `[sources.bilibili.cookies]` when rate limits or access restrictions appear.
 - Proxy support is provider-based. This repo includes a `proxy_pool` sidecar option, but free proxies can be unstable and may still underperform against Xueqiu WAF.
 - The proxy abstraction is intentionally generic so stronger external pools, including paid residential or mobile providers, can be added later without rewriting the Xueqiu adapter.
 - The comments API template is configurable because Xueqiu can change its endpoints and payload shapes.
 - Seed generation is configured in `seed_catalog.toml`; `settings.toml` now points at the catalog and controls refresh cadence plus TTL.
 - V1 seed generator types are `manual`, `stock_universe`, and `longhubang`. The built-in providers are deterministic and file-backed.
+- `manual` generators can now include `bilibili_video_targets = ["https://www.bilibili.com/video/BV...", "BV...", "av..."]`.
 - V1 stores normalized records only. Raw HTML retention is intentionally deferred.

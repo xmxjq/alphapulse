@@ -50,3 +50,14 @@ generated_seed_ttl_minutes = 1440
 [sources.xueqiu.cookies]
 # xq_a_token = ""
 # xqat = ""
+
+[sources.bilibili]
+enabled = true
+api_base_url = "https://api.bilibili.com"
+web_base_url = "https://www.bilibili.com"
+sort_mode = 3
+page_size = 30
+max_pages = 1000
+
+[sources.bilibili.cookies]
+# SESSDATA = ""

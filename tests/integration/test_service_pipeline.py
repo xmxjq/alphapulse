@@ -2,6 +2,7 @@ from pathlib import Path
 
 from alphapulse.runtime.config import Settings, load_settings
 from alphapulse.runtime.service import AlphaPulseService
+from alphapulse.sources.bilibili.api import BilibiliApiResult
 from alphapulse.sources.fetching import FetchResult
 
 
@@ -66,6 +67,77 @@ class FailingCommentsClient:
         return FetchResult(url=url, status_code=200, text=(self.fixtures / "post.html").read_text(), headers={})
 
 
+class FakeBilibiliApi:
+    def get_video_info(self, *, bvid=None, aid=None) -> BilibiliApiResult:
+        del bvid, aid
+        return BilibiliApiResult(
+            payload={
+                "code": 0,
+                "data": {
+                    "aid": 123456,
+                    "bvid": "BV1xx411c7mu",
+                    "title": "Test video",
+                    "desc": "Video description",
+                    "pubdate": 1_776_205_307,
+                    "owner": {"mid": 42, "name": "Uploader"},
+                    "stat": {"like": 88, "reply": 2, "share": 5},
+                },
+            },
+            status_code=200,
+        )
+
+    def get_comments(self, *, aid: int, next_cursor: int = 0, page: int = 1) -> BilibiliApiResult:
+        del aid, page
+        if next_cursor > 0:
+            return BilibiliApiResult(payload={"code": 0, "data": {"replies": [], "cursor": {"is_end": True}}}, status_code=200)
+        return BilibiliApiResult(
+            payload={
+                "code": 0,
+                "data": {
+                    "replies": [
+                        {
+                            "rpid": 1001,
+                            "parent": 0,
+                            "like": 3,
+                            "rcount": 1,
+                            "ctime": 1_776_205_308,
+                            "member": {"mid": "7"},
+                            "content": {"message": "root comment"},
+                        }
+                    ],
+                    "cursor": {"is_end": True, "next": 0},
+                },
+            },
+            status_code=200,
+        )
+
+    def get_replies(self, *, aid: int, root_rpid: int, page: int = 1) -> BilibiliApiResult:
+        del aid, page
+        return BilibiliApiResult(
+            payload={
+                "code": 0,
+                "data": {
+                    "replies": [
+                        {
+                            "rpid": 2001,
+                            "parent": root_rpid,
+                            "like": 1,
+                            "ctime": 1_776_205_309,
+                            "member": {"mid": "8"},
+                            "content": {"message": "child reply"},
+                        }
+                    ],
+                    "cursor": {"is_end": True},
+                },
+            },
+            status_code=200,
+        )
+
+
+def _xueqiu_adapter(service: AlphaPulseService):
+    return service.sources["xueqiu"]
+
+
 def test_service_runs_one_cycle(tmp_path: Path) -> None:
     fixtures = Path("tests/fixtures/xueqiu")
     settings = load_settings(Path("settings.example.toml"))
@@ -85,7 +157,7 @@ post_urls = ["https://xueqiu.com/1234567890/987654321"]
 """.strip()
     )
     service = AlphaPulseService(settings, store=FakeStore())
-    service.xueqiu.client = FakeClient(fixtures)
+    _xueqiu_adapter(service).client = FakeClient(fixtures)
 
     stats = service.run_cycle(seed_set_name="cn-core")
 
@@ -117,7 +189,7 @@ post_urls = ["https://xueqiu.com/1234567890/987654321"]
     )
 
     service = AlphaPulseService(settings, store=FakeStore())
-    service.xueqiu.client = FakeClient(fixtures)
+    _xueqiu_adapter(service).client = FakeClient(fixtures)
 
     first = service.run_cycle(seed_set_name="cn-core")
     settings.sources.xueqiu.seed_catalog_path.write_text(
@@ -162,7 +234,7 @@ post_urls = ["https://xueqiu.com/1234567890/987654321"]
 
     store = FakeStore()
     service = AlphaPulseService(settings, store=store)
-    service.xueqiu.client = FailingPostClient()
+    _xueqiu_adapter(service).client = FailingPostClient()
 
     stats = service.run_cycle(seed_set_name="cn-core")
 
@@ -191,7 +263,7 @@ post_urls = ["https://xueqiu.com/1234567890/987654321"]
 
     store = FakeStore()
     service = AlphaPulseService(settings, store=store)
-    service.xueqiu.client = BlockedClient()
+    _xueqiu_adapter(service).client = BlockedClient()
 
     stats = service.run_cycle(seed_set_name="cn-core")
 
@@ -222,9 +294,41 @@ post_urls = ["https://xueqiu.com/1234567890/987654321"]
 
     store = FakeStore()
     service = AlphaPulseService(settings, store=store)
-    service.xueqiu.client = FailingCommentsClient(fixtures)
+    _xueqiu_adapter(service).client = FailingCommentsClient(fixtures)
 
     stats = service.run_cycle(seed_set_name="cn-core")
 
     assert stats.posts_written == 1
     assert stats.comments_written == 0
+
+
+def test_service_runs_bilibili_cycle(tmp_path: Path) -> None:
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.crawl.comment_refresh_minutes = 0
+    settings.sources.xueqiu.enabled = False
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "bili-core"
+generators = ["manual-video"]
+
+[[generators]]
+name = "manual-video"
+type = "manual"
+bilibili_video_targets = ["BV1xx411c7mu"]
+""".strip()
+    )
+
+    store = FakeStore()
+    service = AlphaPulseService(settings, store=store)
+    service.sources["bilibili"].api = FakeBilibiliApi()
+
+    stats = service.run_cycle(seed_set_name="bili-core")
+
+    assert stats.posts_written == 1
+    assert stats.comments_written == 2
+    assert store.posts[0].source == "bilibili"
+    assert store.comments[1].parent_comment_entity_id == "1001"

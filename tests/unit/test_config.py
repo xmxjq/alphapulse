@@ -14,6 +14,9 @@ def test_load_settings_example() -> None:
     assert settings.sources.xueqiu.seed_catalog_path.name == "seed_catalog.example.toml"
     assert settings.sources.xueqiu.seed_refresh_minutes == 60
     assert settings.sources.xueqiu.generated_seed_ttl_minutes == 1440
+    assert str(settings.sources.bilibili.api_base_url) == "https://api.bilibili.com/"
+    assert settings.sources.bilibili.page_size == 30
+    assert settings.sources.bilibili.max_pages == 1000
 
 
 def test_load_seed_catalog_example() -> None:
@@ -21,6 +24,8 @@ def test_load_seed_catalog_example() -> None:
     catalog = SeedCatalogLoader(settings.sources.xueqiu.seed_catalog_path).load()
     assert [item.name for item in catalog.logical_sets] == ["cn-core"]
     assert catalog.logical_sets[0].generators == ["cn-core-manual"]
+    manual = catalog.generator_map()["cn-core-manual"]
+    assert manual.bilibili_video_targets == ["BV1xx411c7mu"]
 
 
 def test_load_settings_with_proxy_enabled(tmp_path: Path) -> None:

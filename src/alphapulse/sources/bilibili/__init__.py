@@ -1,0 +1,1 @@
+"""Bilibili source adapter."""
