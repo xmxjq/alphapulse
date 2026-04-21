@@ -16,6 +16,8 @@ queue_writes = true
 queue_timeout_seconds = 10
 
 [crawl]
+# state_backend: "sqlite" (local file, single instance) or "rqlite" (shared, safe for multiple instances)
+state_backend = "sqlite"
 state_path = ".runtime/state.db"
 poll_interval_seconds = 300
 request_timeout_seconds = 30

@@ -75,16 +75,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "init-db":
         service.store.init_db()
-        print(f"{settings.storage.backend} schema initialized.")
+        service.state.init_db()
+        print(f"{settings.storage.backend} storage + {settings.crawl.state_backend} state schema initialized.")
         return 0
 
     if args.command == "health":
-        status = {
+        status: dict[str, object] = {
             "storage_backend": settings.storage.backend,
             "storage_ok": service.store.healthcheck(),
-            "state_path": str(settings.crawl.state_path),
-            "state_exists": settings.crawl.state_path.exists(),
+            "state_backend": settings.crawl.state_backend,
         }
+        if settings.crawl.state_backend == "sqlite":
+            status["state_path"] = str(settings.crawl.state_path)
+            status["state_exists"] = settings.crawl.state_path.exists()
         print(json.dumps(status, indent=2))
         return 0 if status["storage_ok"] else 1
 

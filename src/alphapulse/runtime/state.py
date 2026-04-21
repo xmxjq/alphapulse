@@ -28,6 +28,9 @@ class StateStore:
             conn.close()
 
     def _init_db(self) -> None:
+        self.init_db()
+
+    def init_db(self) -> None:
         with self.connection() as conn:
             conn.executescript(
                 """
@@ -42,6 +45,9 @@ class StateStore:
                     last_status INTEGER
                 );
 
+                CREATE INDEX IF NOT EXISTS idx_url_state_source_fetched
+                    ON url_state (source, last_fetched_at);
+
                 CREATE TABLE IF NOT EXISTS item_state (
                     source TEXT NOT NULL,
                     source_entity_id TEXT NOT NULL,
@@ -50,14 +56,6 @@ class StateStore:
                     last_comment_refresh_at TEXT,
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     PRIMARY KEY (source, source_entity_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS crawl_runs (
-                    run_id TEXT PRIMARY KEY,
-                    started_at TEXT NOT NULL,
-                    finished_at TEXT,
-                    status TEXT NOT NULL,
-                    stats_json TEXT NOT NULL DEFAULT '{}'
                 );
 
                 CREATE TABLE IF NOT EXISTS generated_seed_runs (
@@ -89,32 +87,35 @@ class StateStore:
                 """
             )
 
-    def should_fetch_url(self, url: str, min_age: timedelta) -> bool:
+    def try_claim_url(
+        self,
+        *,
+        url: str,
+        source: str,
+        kind: str,
+        seed_name: str,
+        min_age: timedelta,
+    ) -> bool:
+        now = datetime.now(UTC)
+        now_iso = now.isoformat()
+        threshold_iso = (now - min_age).isoformat()
         with self.connection() as conn:
-            row = conn.execute(
-                "SELECT last_fetched_at FROM url_state WHERE url = ?",
-                (url,),
-            ).fetchone()
-        if row is None or row["last_fetched_at"] is None:
-            return True
-        last_fetched_at = datetime.fromisoformat(row["last_fetched_at"])
-        return datetime.now(UTC) - last_fetched_at >= min_age
-
-    def remember_url(self, *, url: str, source: str, kind: str, seed_name: str) -> None:
-        now = datetime.now(UTC).isoformat()
-        with self.connection() as conn:
-            conn.execute(
+            cur = conn.execute(
                 """
-                INSERT INTO url_state (url, source, kind, seed_name, first_seen_at, last_seen_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO url_state (url, source, kind, seed_name, first_seen_at, last_seen_at, last_fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     source = excluded.source,
                     kind = excluded.kind,
                     seed_name = excluded.seed_name,
-                    last_seen_at = excluded.last_seen_at
+                    last_seen_at = excluded.last_seen_at,
+                    last_fetched_at = excluded.last_fetched_at
+                WHERE url_state.last_fetched_at IS NULL
+                   OR url_state.last_fetched_at < ?
                 """,
-                (url, source, kind, seed_name, now, now),
+                (url, source, kind, seed_name, now_iso, now_iso, now_iso, threshold_iso),
             )
+            return cur.rowcount > 0
 
     def mark_url_fetched(self, url: str, status: int | None) -> None:
         with self.connection() as conn:
@@ -162,27 +163,6 @@ class StateStore:
                 WHERE source = ? AND source_entity_id = ?
                 """,
                 (datetime.now(UTC).isoformat(), source, source_entity_id),
-            )
-
-    def start_run(self, run_id: str) -> None:
-        with self.connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO crawl_runs (run_id, started_at, status)
-                VALUES (?, ?, 'running')
-                """,
-                (run_id, datetime.now(UTC).isoformat()),
-            )
-
-    def finish_run(self, run_id: str, status: str, stats: dict[str, int]) -> None:
-        with self.connection() as conn:
-            conn.execute(
-                """
-                UPDATE crawl_runs
-                SET finished_at = ?, status = ?, stats_json = ?
-                WHERE run_id = ?
-                """,
-                (datetime.now(UTC).isoformat(), status, json.dumps(stats, ensure_ascii=True), run_id),
             )
 
     def upsert_generated_seed_items(

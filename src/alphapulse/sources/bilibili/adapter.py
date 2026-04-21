@@ -88,6 +88,7 @@ class BilibiliAdapter:
             return []
 
         canonical_url = str(item_ref.canonical_url)
+        owner_mid = item_ref.metadata.get("owner_mid") if item_ref.metadata else None
         comments: list[NormalizedComment] = []
         seen_root_ids: set[str] = set()
         next_cursor = 0
@@ -119,15 +120,20 @@ class BilibiliAdapter:
             for reply in replies:
                 if not isinstance(reply, dict):
                     continue
-                comment = self._normalize_comment(reply, aid=aid, canonical_url=canonical_url, is_reply=False)
-                if comment is None:
-                    continue
-                comments.append(comment)
+                comment = self._normalize_comment(
+                    reply,
+                    aid=aid,
+                    canonical_url=canonical_url,
+                    is_reply=False,
+                    owner_mid=owner_mid,
+                )
+                if comment is not None:
+                    comments.append(comment)
                 if int(reply.get("rcount") or 0) > 0 and reply.get("rpid") is not None:
                     root_tasks.append(int(reply["rpid"]))
 
             if root_tasks:
-                comments.extend(self._fetch_replies_concurrently(aid, root_tasks, canonical_url))
+                comments.extend(self._fetch_replies_concurrently(aid, root_tasks, canonical_url, owner_mid))
 
             cursor = data.get("cursor") or {}
             is_end = bool(cursor.get("is_end", True))
@@ -149,16 +155,19 @@ class BilibiliAdapter:
                 "next": 0,
             }
         )
+        metadata: dict[str, Any] = {
+            "post_id": post.source_entity_id,
+            "canonical_url": str(post.canonical_url),
+        }
+        if post.author_entity_id is not None:
+            metadata["owner_mid"] = post.author_entity_id
         return CrawlTask(
             source=self.source_name,
             kind="refresh_comments",
             url=f"{str(self.settings.api_base_url).rstrip('/')}/x/v2/reply/main?{query}",
             seed_name=seed_name,
             priority=90,
-            metadata={
-                "post_id": post.source_entity_id,
-                "canonical_url": str(post.canonical_url),
-            },
+            metadata=metadata,
         )
 
     def _fetch_replies_concurrently(
@@ -166,12 +175,13 @@ class BilibiliAdapter:
         aid: int,
         root_rpids: list[int],
         canonical_url: str,
+        owner_mid: str | None = None,
     ) -> list[NormalizedComment]:
         max_workers = max(1, self.crawl_settings.concurrent_requests)
         comments: list[NormalizedComment] = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(self._fetch_replies_for_root, aid, root_rpid, canonical_url): root_rpid
+                executor.submit(self._fetch_replies_for_root, aid, root_rpid, canonical_url, owner_mid): root_rpid
                 for root_rpid in root_rpids
             }
             for future in as_completed(futures):
@@ -181,7 +191,13 @@ class BilibiliAdapter:
                     continue
         return comments
 
-    def _fetch_replies_for_root(self, aid: int, root_rpid: int, canonical_url: str) -> list[NormalizedComment]:
+    def _fetch_replies_for_root(
+        self,
+        aid: int,
+        root_rpid: int,
+        canonical_url: str,
+        owner_mid: str | None = None,
+    ) -> list[NormalizedComment]:
         comments: list[NormalizedComment] = []
         page = 1
         while page <= self.settings.max_pages:
@@ -200,7 +216,13 @@ class BilibiliAdapter:
             for reply in replies:
                 if not isinstance(reply, dict):
                     continue
-                comment = self._normalize_comment(reply, aid=aid, canonical_url=canonical_url, is_reply=True)
+                comment = self._normalize_comment(
+                    reply,
+                    aid=aid,
+                    canonical_url=canonical_url,
+                    is_reply=True,
+                    owner_mid=owner_mid,
+                )
                 if comment is not None:
                     comments.append(comment)
 
@@ -260,6 +282,7 @@ class BilibiliAdapter:
         aid: int,
         canonical_url: str,
         is_reply: bool,
+        owner_mid: str | None = None,
     ) -> NormalizedComment | None:
         rpid = reply.get("rpid")
         if rpid is None:
@@ -270,6 +293,11 @@ class BilibiliAdapter:
             return None
 
         member = reply.get("member") or {}
+        author_mid = str(member.get("mid")) if member.get("mid") is not None else None
+
+        if owner_mid is not None and author_mid != owner_mid:
+            return None
+
         parent_id = reply.get("parent")
         parent_comment_entity_id = None
         if is_reply and parent_id not in (None, 0, "0"):
@@ -280,7 +308,7 @@ class BilibiliAdapter:
             source_entity_id=str(rpid),
             post_entity_id=str(aid),
             canonical_url=f"{canonical_url}#reply{rpid}",
-            author_entity_id=str(member.get("mid")) if member.get("mid") is not None else None,
+            author_entity_id=author_mid,
             parent_comment_entity_id=parent_comment_entity_id,
             content_text=message,
             published_at=self._parse_timestamp(reply.get("ctime")),

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 FetchMode = Literal["static", "dynamic", "stealth"]
 StorageBackend = Literal["clickhouse", "rqlite"]
+StateBackend = Literal["sqlite", "rqlite"]
 ProxyProviderType = Literal["proxy_pool"]
 
 
@@ -40,6 +41,7 @@ class RqliteSettings(BaseModel):
 class CrawlSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    state_backend: StateBackend = "sqlite"
     state_path: Path = Path(".runtime/state.db")
     poll_interval_seconds: int = 300
     request_timeout_seconds: int = 30
@@ -120,7 +122,8 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_state_dir(self) -> "Settings":
-        self.crawl.state_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.crawl.state_backend == "sqlite":
+            self.crawl.state_path.parent.mkdir(parents=True, exist_ok=True)
         return self
 
 
@@ -131,7 +134,8 @@ def load_settings(path: Path) -> Settings:
     config_dir = path.parent.resolve()
     settings.crawl.state_path = _resolve_path(config_dir, settings.crawl.state_path)
     settings.sources.xueqiu.seed_catalog_path = _resolve_path(config_dir, settings.sources.xueqiu.seed_catalog_path)
-    settings.crawl.state_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.crawl.state_backend == "sqlite":
+        settings.crawl.state_path.parent.mkdir(parents=True, exist_ok=True)
     return settings
 
 

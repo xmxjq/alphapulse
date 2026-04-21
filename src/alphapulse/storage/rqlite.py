@@ -24,15 +24,24 @@ class RqliteClient:
     def __init__(self, settings: RqliteSettings) -> None:
         self.settings = settings
 
-    def execute(self, statements: list[str | list[Any]]) -> dict[str, Any]:
+    def execute(
+        self,
+        statements: list[str | list[Any]],
+        *,
+        queued: bool | None = None,
+    ) -> dict[str, Any]:
         params = {}
-        if self.settings.queue_writes:
+        use_queue = self.settings.queue_writes if queued is None else queued
+        if use_queue:
             params["queue"] = "true"
             params["timeout"] = f"{self.settings.queue_timeout_seconds}s"
         return self._request("POST", "/db/execute", payload=statements, params=params)
 
     def query(self, sql: str) -> dict[str, Any]:
         return self._request("GET", "/db/query", params={"q": sql})
+
+    def query_params(self, statements: list[str | list[Any]]) -> dict[str, Any]:
+        return self._request("POST", "/db/query", payload=statements)
 
     def _request(
         self,

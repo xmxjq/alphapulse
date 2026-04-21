@@ -101,7 +101,7 @@ class FakeBilibiliApi:
                             "like": 3,
                             "rcount": 1,
                             "ctime": 1_776_205_308,
-                            "member": {"mid": "7"},
+                            "member": {"mid": "42"},
                             "content": {"message": "root comment"},
                         }
                     ],
@@ -123,7 +123,7 @@ class FakeBilibiliApi:
                             "parent": root_rpid,
                             "like": 1,
                             "ctime": 1_776_205_309,
-                            "member": {"mid": "8"},
+                            "member": {"mid": "42"},
                             "content": {"message": "child reply"},
                         }
                     ],

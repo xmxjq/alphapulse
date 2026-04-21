@@ -9,7 +9,9 @@ from datetime import UTC, datetime, timedelta
 
 from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, ItemReference, SeedDefinition, SourceAdapter
 from alphapulse.runtime.config import Settings
+from alphapulse.runtime.rqlite_state import RqliteStateStore
 from alphapulse.runtime.state import StateStore
+from alphapulse.runtime.state_factory import build_state_store
 from alphapulse.seeds.discovery import SeedDiscoveryManager
 from alphapulse.sources.bilibili.adapter import BilibiliAdapter
 from alphapulse.sources.xueqiu.adapter import XueqiuAdapter
@@ -49,14 +51,14 @@ class RunStats:
 @dataclass
 class AlphaPulseService:
     settings: Settings
-    state: StateStore | None = None
+    state: StateStore | RqliteStateStore | None = None
     store: StorageStore | None = None
     sources: dict[str, SourceAdapter] = field(default_factory=dict)
     seed_discovery: SeedDiscoveryManager | None = None
 
     def __post_init__(self) -> None:
         if self.state is None:
-            self.state = StateStore(self.settings.crawl.state_path)
+            self.state = build_state_store(self.settings)
         if self.store is None:
             self.store = build_store(self.settings)
         if not self.sources:
@@ -95,7 +97,6 @@ class AlphaPulseService:
         run_id = str(uuid.uuid4())
         started_at = datetime.now(UTC)
         stats = RunStats()
-        self.state.start_run(run_id)
         logger.info(
             "Crawl cycle started",
             extra={
@@ -137,13 +138,16 @@ class AlphaPulseService:
 
             while queue:
                 task = queue.popleft()
-                if not self.state.should_fetch_url(
-                    str(task.url),
-                    self._min_age_for_task(task),
+                if not self.state.try_claim_url(
+                    url=str(task.url),
+                    source=task.source,
+                    kind=task.kind,
+                    seed_name=task.seed_name,
+                    min_age=self._min_age_for_task(task),
                 ):
                     stats.skipped_tasks += 1
                     logger.debug(
-                        "Task skipped (still fresh)",
+                        "Task skipped (claim lost or still fresh)",
                         extra={
                             "event": "task_skipped",
                             "extra_data": {
@@ -154,13 +158,6 @@ class AlphaPulseService:
                         },
                     )
                     continue
-
-                self.state.remember_url(
-                    url=str(task.url),
-                    source=task.source,
-                    kind=task.kind,
-                    seed_name=task.seed_name,
-                )
 
                 if task.kind == "refresh_comments":
                     adapter = self._adapter_for_task(task)
@@ -196,7 +193,6 @@ class AlphaPulseService:
                 self.state.mark_url_fetched(str(task.url), outcome.status_code)
 
             duration = (datetime.now(UTC) - started_at).total_seconds()
-            self.state.finish_run(run_id, "succeeded", stats.to_dict())
             self.store.insert_crawl_run(
                 run_id=run_id,
                 started_at=started_at,
@@ -219,7 +215,6 @@ class AlphaPulseService:
             return stats
         except Exception:
             stats.errors += 1
-            self.state.finish_run(run_id, "failed", stats.to_dict())
             self.store.insert_crawl_run(
                 run_id=run_id,
                 started_at=started_at,
