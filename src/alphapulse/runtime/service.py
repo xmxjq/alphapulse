@@ -66,9 +66,25 @@ class AlphaPulseService:
             self.seed_discovery = SeedDiscoveryManager(self.settings.sources.xueqiu, self.state)
 
     def run_forever(self) -> None:
-        logger.info("Starting AlphaPulse service loop", extra={"event": "service_start"})
+        logger.info(
+            "Starting AlphaPulse service loop",
+            extra={
+                "event": "service_start",
+                "extra_data": {
+                    "sources": sorted(self.sources.keys()),
+                    "poll_interval_seconds": self.settings.crawl.poll_interval_seconds,
+                },
+            },
+        )
         while True:
             self.run_cycle()
+            logger.info(
+                "Sleeping between cycles",
+                extra={
+                    "event": "cycle_sleep",
+                    "extra_data": {"seconds": self.settings.crawl.poll_interval_seconds},
+                },
+            )
             time.sleep(self.settings.crawl.poll_interval_seconds)
 
     def run_cycle(self, seed_set_name: str | None = None) -> RunStats:
@@ -80,13 +96,44 @@ class AlphaPulseService:
         started_at = datetime.now(UTC)
         stats = RunStats()
         self.state.start_run(run_id)
+        logger.info(
+            "Crawl cycle started",
+            extra={
+                "event": "cycle_start",
+                "extra_data": {"run_id": run_id, "seed_set": seed_set_name},
+            },
+        )
         try:
             queue: deque[CrawlTask] = deque()
             for seed in self._select_seeds(seed_set_name):
                 stats.seeds_processed += 1
                 for adapter in self.sources.values():
-                    for task in adapter.discover(seed):
+                    discovered = adapter.discover(seed)
+                    for task in discovered:
                         self._enqueue_task(queue, task, stats)
+                    logger.debug(
+                        "Seed expanded",
+                        extra={
+                            "event": "seed_expanded",
+                            "extra_data": {
+                                "seed": seed.name,
+                                "source": adapter.source_name,
+                                "tasks": len(discovered),
+                            },
+                        },
+                    )
+
+            logger.info(
+                "Seed discovery complete",
+                extra={
+                    "event": "seeds_discovered",
+                    "extra_data": {
+                        "run_id": run_id,
+                        "seeds_processed": stats.seeds_processed,
+                        "tasks_enqueued": stats.tasks_enqueued,
+                    },
+                },
+            )
 
             while queue:
                 task = queue.popleft()
@@ -95,6 +142,17 @@ class AlphaPulseService:
                     self._min_age_for_task(task),
                 ):
                     stats.skipped_tasks += 1
+                    logger.debug(
+                        "Task skipped (still fresh)",
+                        extra={
+                            "event": "task_skipped",
+                            "extra_data": {
+                                "source": task.source,
+                                "kind": task.kind,
+                                "url": str(task.url),
+                            },
+                        },
+                    )
                     continue
 
                 self.state.remember_url(
@@ -119,6 +177,17 @@ class AlphaPulseService:
                         stats.comments_written += len(comments)
                         self.state.mark_comments_refreshed(task.source, task.metadata["post_id"])
                     self.state.mark_url_fetched(str(task.url), 200)
+                    logger.info(
+                        "Comments refreshed",
+                        extra={
+                            "event": "comments_refreshed",
+                            "extra_data": {
+                                "source": task.source,
+                                "post_id": task.metadata["post_id"],
+                                "comments": len(comments),
+                            },
+                        },
+                    )
                     continue
 
                 adapter = self._adapter_for_task(task)
@@ -126,6 +195,7 @@ class AlphaPulseService:
                 self._apply_outcome(task, outcome, queue, stats)
                 self.state.mark_url_fetched(str(task.url), outcome.status_code)
 
+            duration = (datetime.now(UTC) - started_at).total_seconds()
             self.state.finish_run(run_id, "succeeded", stats.to_dict())
             self.store.insert_crawl_run(
                 run_id=run_id,
@@ -133,6 +203,18 @@ class AlphaPulseService:
                 finished_at=datetime.now(UTC),
                 stats=stats.to_dict(),
                 status="succeeded",
+            )
+            logger.info(
+                "Crawl cycle finished",
+                extra={
+                    "event": "cycle_done",
+                    "extra_data": {
+                        "run_id": run_id,
+                        "status": "succeeded",
+                        "duration_seconds": round(duration, 3),
+                        **stats.to_dict(),
+                    },
+                },
             )
             return stats
         except Exception:
@@ -144,6 +226,13 @@ class AlphaPulseService:
                 finished_at=datetime.now(UTC),
                 stats=stats.to_dict(),
                 status="failed",
+            )
+            logger.exception(
+                "Crawl cycle failed",
+                extra={
+                    "event": "cycle_failed",
+                    "extra_data": {"run_id": run_id, **stats.to_dict()},
+                },
             )
             raise
 
@@ -188,6 +277,26 @@ class AlphaPulseService:
 
         for discovered_task in outcome.discovered_tasks:
             self._enqueue_task(queue, discovered_task, stats)
+
+        log_level = logging.WARNING if (outcome.blocked or outcome.errors) else logging.INFO
+        logger.log(
+            log_level,
+            "Task fetched",
+            extra={
+                "event": "task_fetched",
+                "extra_data": {
+                    "source": task.source,
+                    "kind": task.kind,
+                    "url": str(task.url),
+                    "status_code": outcome.status_code,
+                    "blocked": outcome.blocked,
+                    "posts": len(outcome.posts),
+                    "authors": len(outcome.authors),
+                    "discovered_tasks": len(outcome.discovered_tasks),
+                    "errors": list(outcome.errors),
+                },
+            },
+        )
 
     def _enqueue_task(self, queue: deque[CrawlTask], task: CrawlTask, stats: RunStats) -> None:
         queue.append(task)

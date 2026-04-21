@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -8,6 +9,9 @@ from urllib import error, parse, request
 
 from alphapulse.runtime.config import BilibiliSettings, CrawlSettings
 from alphapulse.sources.fetching import ProxyLease, _build_proxy_provider
+
+
+logger = logging.getLogger(__name__)
 
 
 COMMENT_API_PATH = "/x/v2/reply/main"
@@ -108,6 +112,18 @@ class BilibiliApiClient:
 
             try:
                 self._adaptive_sleep(was_rate_limited=was_rate_limited)
+                logger.debug(
+                    "Bilibili API request",
+                    extra={
+                        "event": "bilibili_request",
+                        "extra_data": {
+                            "path": path,
+                            "params": params,
+                            "attempt": attempt + 1,
+                            "proxy": proxy_url,
+                        },
+                    },
+                )
                 status_code, body = self._dispatch_request(path, params, proxy_url)
                 payload = json.loads(body)
             except error.HTTPError as exc:
@@ -115,6 +131,19 @@ class BilibiliApiClient:
                 body = exc.read().decode("utf-8", errors="ignore")
                 blocked = status_code in {403, 412, 429}
                 last_error = f"HTTP {status_code}"
+                logger.warning(
+                    "Bilibili HTTP error",
+                    extra={
+                        "event": "bilibili_http_error",
+                        "extra_data": {
+                            "path": path,
+                            "status_code": status_code,
+                            "blocked": blocked,
+                            "attempt": attempt + 1,
+                            "proxy": proxy_url,
+                        },
+                    },
+                )
                 if lease is not None and blocked:
                     self._report_bad_proxy(lease, last_error)
                 if blocked and attempt + 1 < attempts:
@@ -128,6 +157,18 @@ class BilibiliApiClient:
                 )
             except (error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
                 last_error = str(exc)
+                logger.warning(
+                    "Bilibili request error",
+                    extra={
+                        "event": "bilibili_request_error",
+                        "extra_data": {
+                            "path": path,
+                            "error": last_error,
+                            "attempt": attempt + 1,
+                            "proxy": proxy_url,
+                        },
+                    },
+                )
                 if lease is not None:
                     self._report_bad_proxy(lease, last_error)
                 if attempt + 1 < attempts:
@@ -143,11 +184,36 @@ class BilibiliApiClient:
             code = payload.get("code", -1)
             if code == 0:
                 self._current_delay = max(self._current_delay * 0.8, REQUEST_DELAY_MIN)
+                logger.debug(
+                    "Bilibili API ok",
+                    extra={
+                        "event": "bilibili_response",
+                        "extra_data": {
+                            "path": path,
+                            "status_code": status_code,
+                            "proxy": proxy_url,
+                        },
+                    },
+                )
                 return BilibiliApiResult(payload=payload, status_code=status_code, proxy_url=proxy_url)
 
             blocked = code == -412
             message = str(payload.get("message") or payload.get("msg") or f"API error {code}")
             last_error = f"API code {code}: {message}"
+            logger.warning(
+                "Bilibili API error code",
+                extra={
+                    "event": "bilibili_api_error",
+                    "extra_data": {
+                        "path": path,
+                        "code": code,
+                        "message": message,
+                        "blocked": blocked,
+                        "attempt": attempt + 1,
+                        "proxy": proxy_url,
+                    },
+                },
+            )
             if lease is not None and blocked:
                 self._report_bad_proxy(lease, last_error)
             if blocked and attempt + 1 < attempts:
