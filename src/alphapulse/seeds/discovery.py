@@ -63,6 +63,10 @@ class ManualSeedGenerator:
             GeneratedSeedItem(kind="bilibili_video_target", value=value)
             for value in definition.bilibili_video_targets
         )
+        items.extend(
+            GeneratedSeedItem(kind="bilibili_space_url", value=value)
+            for value in definition.bilibili_space_urls
+        )
         items.extend(GeneratedSeedItem(kind="stock_id", value=value) for value in definition.stock_ids)
         items.extend(GeneratedSeedItem(kind="topic_id", value=value) for value in definition.topic_ids)
         items.extend(GeneratedSeedItem(kind="user_id", value=value) for value in definition.user_ids)
@@ -145,6 +149,7 @@ class SeedCompiler:
         buckets: dict[str, set[str]] = {
             "post_url": set(),
             "bilibili_video_target": set(),
+            "bilibili_space_url": set(),
             "stock_id": set(),
             "topic_id": set(),
             "user_id": set(),
@@ -162,6 +167,7 @@ class SeedCompiler:
             discover_homepage=discover_homepage,
             post_urls=sorted(buckets["post_url"]),
             bilibili_video_targets=sorted(buckets["bilibili_video_target"]),
+            bilibili_space_urls=sorted(buckets["bilibili_space_url"]),
             stock_ids=sorted(buckets["stock_id"]),
             topic_ids=sorted(buckets["topic_id"]),
             user_ids=sorted(buckets["user_id"]),

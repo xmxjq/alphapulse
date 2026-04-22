@@ -28,6 +28,37 @@ def test_bilibili_api_retries_rate_limit_code(monkeypatch: pytest.MonkeyPatch) -
     assert len(sleeps) == 2
 
 
+def test_bilibili_get_user_videos_signs_wbi_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = BilibiliApiClient(BilibiliSettings(), CrawlSettings())
+    client._wbi_keys = ("a" * 32, "b" * 32)
+    client._wbi_keys_fetched_at = 9e18
+
+    captured: dict[str, dict[str, object]] = {}
+
+    def fake_dispatch(path: str, params: dict[str, object], proxy_url: object) -> tuple[int, str]:
+        del proxy_url
+        captured["path"] = path
+        captured["params"] = params
+        return 200, json.dumps({"code": 0, "data": {"list": {"vlist": []}, "page": {"count": 0}}})
+
+    monkeypatch.setattr(client, "_dispatch_request", fake_dispatch)
+    monkeypatch.setattr("alphapulse.sources.bilibili.api.time.sleep", lambda value: None)
+    monkeypatch.setattr("alphapulse.sources.bilibili.api.time.time", lambda: 1_700_000_000)
+
+    result = client.get_user_videos(mid=7033507, page=2, page_size=5)
+
+    assert result.error_message is None
+    assert captured["path"] == "/x/space/wbi/arc/search"
+    params = captured["params"]
+    assert params["mid"] == "7033507"
+    assert params["pn"] == "2"
+    assert params["ps"] == "5"
+    assert params["wts"] == "1700000000"
+    assert len(params["w_rid"]) == 32
+    ordered_keys = list(params.keys())
+    assert ordered_keys == sorted(k for k in ordered_keys if k != "w_rid") + ["w_rid"]
+
+
 def test_bilibili_adaptive_sleep_samples_random_interval(monkeypatch: pytest.MonkeyPatch) -> None:
     client = BilibiliApiClient(
         BilibiliSettings(request_interval_min_seconds=1.5, request_interval_max_seconds=4.0),

@@ -7,6 +7,9 @@ name = "cn-core-manual"
 type = "manual"
 discover_homepage = true
 bilibili_video_targets = ["BV1xx411c7mu"]
+# UP主 space pages — each expands into a fetch_post task per published video.
+# Accepts full URLs (https://space.bilibili.com/<mid>) or bare numeric mids.
+bilibili_space_urls = ["https://space.bilibili.com/7033507"]
 post_urls = []
 stock_ids = ["SH600519", "SZ000858"]
 topic_ids = ["新能源"]

@@ -9,6 +9,19 @@ from alphapulse.sources.bilibili.api import BilibiliApiResult
 class FakeBilibiliApi:
     def __init__(self) -> None:
         self.comment_calls = 0
+        self.user_video_calls: list[tuple[str, int]] = []
+        self.user_video_pages: list[BilibiliApiResult] = []
+
+    def get_user_videos(self, *, mid, page: int = 1, page_size: int = 30, order: str = "pubdate") -> BilibiliApiResult:
+        del page_size, order
+        self.user_video_calls.append((str(mid), page))
+        index = page - 1
+        if index < len(self.user_video_pages):
+            return self.user_video_pages[index]
+        return BilibiliApiResult(
+            payload={"code": 0, "data": {"list": {"vlist": []}, "page": {"count": 0}}},
+            status_code=200,
+        )
 
     def get_video_info(self, *, bvid=None, aid=None) -> BilibiliApiResult:
         del aid
@@ -106,6 +119,83 @@ def test_bilibili_adapter_discovers_manual_video_targets() -> None:
     tasks = adapter.discover(SeedDefinition(name="bili", bilibili_video_targets=["BV1xx411c7mu"]))
     assert len(tasks) == 1
     assert str(tasks[0].url) == "https://www.bilibili.com/video/BV1xx411c7mu"
+
+
+def test_bilibili_adapter_discovers_space_url_as_discover_task() -> None:
+    adapter = BilibiliAdapter(BilibiliSettings(), CrawlSettings())
+    tasks = adapter.discover(
+        SeedDefinition(name="bili", bilibili_space_urls=["https://space.bilibili.com/7033507"])
+    )
+    assert len(tasks) == 1
+    assert tasks[0].kind == "discover"
+    assert str(tasks[0].url) == "https://space.bilibili.com/7033507"
+    assert tasks[0].metadata == {"seed_kind": "space", "mid": "7033507"}
+
+
+def test_bilibili_adapter_fetch_space_paginates_and_emits_fetch_post_tasks() -> None:
+    adapter = BilibiliAdapter(BilibiliSettings(), CrawlSettings())
+    fake = FakeBilibiliApi()
+    fake.user_video_pages = [
+        BilibiliApiResult(
+            payload={
+                "code": 0,
+                "data": {
+                    "list": {
+                        "vlist": [
+                            {"bvid": "BV1aaa000001", "aid": 111},
+                            {"bvid": "BV1aaa000002", "aid": 222},
+                        ]
+                    },
+                    "page": {"count": 3, "pn": 1, "ps": 2},
+                },
+            },
+            status_code=200,
+        ),
+        BilibiliApiResult(
+            payload={
+                "code": 0,
+                "data": {
+                    "list": {"vlist": [{"bvid": "BV1aaa000003", "aid": 333}]},
+                    "page": {"count": 3, "pn": 2, "ps": 2},
+                },
+            },
+            status_code=200,
+        ),
+    ]
+    adapter.api = fake
+
+    task = adapter.discover(
+        SeedDefinition(name="bili", bilibili_space_urls=["https://space.bilibili.com/7033507"])
+    )[0]
+
+    outcome = adapter.fetch_item(task)
+
+    assert outcome.errors == []
+    assert [(call[0], call[1]) for call in fake.user_video_calls] == [("7033507", 1), ("7033507", 2)]
+    bvids = [t.metadata["bvid"] for t in outcome.discovered_tasks]
+    assert bvids == ["BV1aaa000001", "BV1aaa000002", "BV1aaa000003"]
+    assert all(t.kind == "fetch_post" and t.source == "bilibili" for t in outcome.discovered_tasks)
+    assert all(t.metadata["owner_mid"] == "7033507" for t in outcome.discovered_tasks)
+    assert str(outcome.discovered_tasks[0].url) == "https://www.bilibili.com/video/BV1aaa000001"
+
+
+def test_bilibili_adapter_fetch_space_stops_on_empty_page() -> None:
+    adapter = BilibiliAdapter(BilibiliSettings(), CrawlSettings())
+    fake = FakeBilibiliApi()
+    fake.user_video_pages = [
+        BilibiliApiResult(
+            payload={"code": 0, "data": {"list": {"vlist": []}, "page": {"count": 0}}},
+            status_code=200,
+        ),
+    ]
+    adapter.api = fake
+
+    task = adapter.discover(SeedDefinition(name="bili", bilibili_space_urls=["7033507"]))[0]
+    outcome = adapter.fetch_item(task)
+
+    assert outcome.errors == []
+    assert outcome.discovered_tasks == []
+    assert fake.user_video_calls == [("7033507", 1)]
 
 
 def test_bilibili_adapter_fetch_item_maps_video_to_post_and_author() -> None:

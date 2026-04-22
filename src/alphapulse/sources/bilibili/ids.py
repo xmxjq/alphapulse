@@ -7,6 +7,7 @@ from dataclasses import dataclass
 BV_RE = re.compile(r"(BV[a-zA-Z0-9]{10})", re.IGNORECASE)
 AV_RE = re.compile(r"(?:^|/)(av\d+)(?:$|[/?#])", re.IGNORECASE)
 VIDEO_URL_RE = re.compile(r"bilibili\.com/video/([^/?#]+)", re.IGNORECASE)
+SPACE_URL_RE = re.compile(r"space\.bilibili\.com/(\d+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,22 @@ def extract_aid(value: str) -> int | None:
 
 def build_video_url(web_base_url: str, bvid: str) -> str:
     return f"{web_base_url.rstrip('/')}/video/{bvid}"
+
+
+def build_space_url(mid: int | str) -> str:
+    return f"https://space.bilibili.com/{mid}"
+
+
+def parse_space_mid(value: str) -> str | None:
+    candidate = value.strip()
+    if not candidate:
+        return None
+    match = SPACE_URL_RE.search(candidate)
+    if match is not None:
+        return match.group(1)
+    if candidate.isdigit():
+        return candidate
+    return None
 
 
 def parse_video_target(value: str, web_base_url: str) -> VideoTarget | None:

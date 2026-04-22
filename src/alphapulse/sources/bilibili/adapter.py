@@ -16,7 +16,7 @@ from alphapulse.pipeline.contracts import (
 )
 from alphapulse.runtime.config import BilibiliSettings, CrawlSettings
 from alphapulse.sources.bilibili.api import BilibiliApiClient, BilibiliApiResult
-from alphapulse.sources.bilibili.ids import build_video_url, parse_video_target
+from alphapulse.sources.bilibili.ids import build_space_url, build_video_url, parse_space_mid, parse_video_target
 
 
 class BilibiliAdapter:
@@ -48,9 +48,26 @@ class BilibiliAdapter:
                     metadata=metadata,
                 )
             )
+        for space_url in seed.bilibili_space_urls:
+            mid = parse_space_mid(space_url)
+            if mid is None:
+                continue
+            tasks.append(
+                CrawlTask(
+                    source=self.source_name,
+                    kind="discover",
+                    url=build_space_url(mid),
+                    seed_name=seed.name,
+                    priority=120,
+                    metadata={"seed_kind": "space", "mid": mid},
+                )
+            )
         return tasks
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
+        if task.kind == "discover" and task.metadata.get("seed_kind") == "space":
+            return self._fetch_space(task)
+
         outcome = FetchOutcome()
         parsed = parse_video_target(task.metadata.get("video_target", str(task.url)), str(self.settings.web_base_url))
         if parsed is None:
@@ -79,6 +96,72 @@ class BilibiliAdapter:
         if author is not None:
             outcome.authors.append(author)
         outcome.status_code = result.status_code
+        return outcome
+
+    def _fetch_space(self, task: CrawlTask) -> FetchOutcome:
+        outcome = FetchOutcome()
+        mid = task.metadata.get("mid") or parse_space_mid(str(task.url))
+        if not mid:
+            outcome.errors.append(f"Could not parse Bilibili space mid from {task.url}")
+            return outcome
+
+        seen_bvids: set[str] = set()
+        page = 1
+        page_size = 30
+        last_status: int | None = None
+        while page <= self.settings.max_pages:
+            result = self.api.get_user_videos(mid=mid, page=page, page_size=page_size)
+            last_status = result.status_code
+            if result.error_message:
+                outcome.blocked = outcome.blocked or result.blocked
+                outcome.errors.append(
+                    f"Fetch failed for space {mid} page {page}: {result.error_message}"
+                )
+                break
+
+            data = (result.payload or {}).get("data") or {}
+            vlist = ((data.get("list") or {}).get("vlist")) or []
+            if not vlist:
+                break
+
+            new_this_page = 0
+            for video in vlist:
+                if not isinstance(video, dict):
+                    continue
+                bvid = video.get("bvid")
+                if not bvid or bvid in seen_bvids:
+                    continue
+                seen_bvids.add(bvid)
+                new_this_page += 1
+                metadata: dict[str, Any] = {
+                    "video_target": bvid,
+                    "bvid": bvid,
+                    "discovered_from": str(task.url),
+                    "owner_mid": str(mid),
+                }
+                aid = video.get("aid")
+                if aid is not None:
+                    metadata["aid"] = str(aid)
+                outcome.discovered_tasks.append(
+                    CrawlTask(
+                        source=self.source_name,
+                        kind="fetch_post",
+                        url=build_video_url(str(self.settings.web_base_url), str(bvid)),
+                        seed_name=task.seed_name,
+                        priority=180,
+                        metadata=metadata,
+                    )
+                )
+
+            page_info = data.get("page") or {}
+            total = self._optional_int(page_info.get("count"))
+            if new_this_page == 0:
+                break
+            if total is not None and len(seen_bvids) >= total:
+                break
+            page += 1
+
+        outcome.status_code = last_status
         return outcome
 
     def refresh_comments(self, item_ref: ItemReference) -> list[NormalizedComment]:

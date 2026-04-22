@@ -222,9 +222,27 @@ def test_manual_seed_generator_emits_bilibili_targets() -> None:
     assert [(item.kind, item.value) for item in items] == [("bilibili_video_target", "BV1xx411c7mu")]
 
 
+def test_manual_seed_generator_emits_bilibili_space_urls() -> None:
+    generator = ManualSeedGenerator()
+    items = generator.generate(
+        ManualGeneratorDefinition(
+            name="manual",
+            bilibili_space_urls=["https://space.bilibili.com/7033507"],
+        ),
+        datetime.now(UTC),
+    )
+    assert [(item.kind, item.value) for item in items] == [
+        ("bilibili_space_url", "https://space.bilibili.com/7033507")
+    ]
+
+
 def test_seed_compiler_preserves_bilibili_targets() -> None:
     compiled = SeedCompiler().compile(
         "cn-core",
-        [GeneratedSeedItem(kind="bilibili_video_target", value="BV1xx411c7mu")],
+        [
+            GeneratedSeedItem(kind="bilibili_video_target", value="BV1xx411c7mu"),
+            GeneratedSeedItem(kind="bilibili_space_url", value="https://space.bilibili.com/7033507"),
+        ],
     )
     assert compiled.bilibili_video_targets == ["BV1xx411c7mu"]
+    assert compiled.bilibili_space_urls == ["https://space.bilibili.com/7033507"]
