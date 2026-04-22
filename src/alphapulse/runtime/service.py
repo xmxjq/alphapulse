@@ -299,6 +299,8 @@ class AlphaPulseService:
 
     def _min_age_for_task(self, task: CrawlTask) -> timedelta:
         if task.kind == "discover":
+            if task.source == "bilibili" and task.metadata.get("seed_kind") == "space":
+                return timedelta(minutes=self.settings.sources.bilibili.space_discovery_interval_minutes)
             return timedelta(minutes=self.settings.crawl.comment_refresh_minutes)
         if task.kind == "refresh_comments":
             return timedelta(minutes=self.settings.crawl.comment_refresh_minutes)

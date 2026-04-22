@@ -114,6 +114,19 @@ class FakeBilibiliApi:
         )
 
 
+class FakeSpaceCli:
+    def __init__(self, videos: list[dict[str, object]] | None = None, error: Exception | None = None) -> None:
+        self.videos = videos or []
+        self.error = error
+        self.calls: list[tuple[int, int]] = []
+
+    def get_user_videos(self, *, uid: int, count: int) -> list[dict[str, object]]:
+        self.calls.append((uid, count))
+        if self.error is not None:
+            raise self.error
+        return self.videos
+
+
 def test_bilibili_adapter_discovers_manual_video_targets() -> None:
     adapter = BilibiliAdapter(BilibiliSettings(), CrawlSettings())
     tasks = adapter.discover(SeedDefinition(name="bili", bilibili_video_targets=["BV1xx411c7mu"]))
@@ -196,6 +209,38 @@ def test_bilibili_adapter_fetch_space_stops_on_empty_page() -> None:
     assert outcome.errors == []
     assert outcome.discovered_tasks == []
     assert fake.user_video_calls == [("7033507", 1)]
+
+
+def test_bilibili_adapter_fetch_space_via_cli_emits_fetch_post_tasks() -> None:
+    settings = BilibiliSettings(space_discovery_backend="cli", space_discovery_max_videos=3)
+    cli = FakeSpaceCli(
+        videos=[
+            {"bvid": "BV1aaa000001", "aid": 111},
+            {"bvid": "BV1aaa000002", "aid": 222},
+            {"bvid": "BV1aaa000001", "aid": 111},
+        ]
+    )
+    adapter = BilibiliAdapter(settings, CrawlSettings(), space_cli=cli)
+
+    task = adapter.discover(SeedDefinition(name="bili", bilibili_space_urls=["7033507"]))[0]
+    outcome = adapter.fetch_item(task)
+
+    assert outcome.errors == []
+    assert cli.calls == [(7033507, 3)]
+    assert [t.metadata["bvid"] for t in outcome.discovered_tasks] == ["BV1aaa000001", "BV1aaa000002"]
+    assert all(t.metadata["owner_mid"] == "7033507" for t in outcome.discovered_tasks)
+
+
+def test_bilibili_adapter_fetch_space_via_cli_marks_blocked_errors() -> None:
+    settings = BilibiliSettings(space_discovery_backend="cli")
+    cli = FakeSpaceCli(error=RuntimeError("HTTP 412"))
+    adapter = BilibiliAdapter(settings, CrawlSettings(), space_cli=cli)
+
+    task = adapter.discover(SeedDefinition(name="bili", bilibili_space_urls=["7033507"]))[0]
+    outcome = adapter.fetch_item(task)
+
+    assert outcome.blocked is True
+    assert outcome.errors == ["Fetch failed for space 7033507 via bilibili-cli: HTTP 412"]
 
 
 def test_bilibili_adapter_fetch_item_maps_video_to_post_and_author() -> None:

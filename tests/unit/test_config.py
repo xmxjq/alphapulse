@@ -17,6 +17,9 @@ def test_load_settings_example() -> None:
     assert str(settings.sources.bilibili.api_base_url) == "https://api.bilibili.com/"
     assert settings.sources.bilibili.page_size == 30
     assert settings.sources.bilibili.max_pages == 1000
+    assert settings.sources.bilibili.space_discovery_backend == "api"
+    assert settings.sources.bilibili.space_discovery_interval_minutes == 60
+    assert settings.sources.bilibili.space_discovery_max_videos == 50
 
 
 def test_load_seed_catalog_example() -> None:

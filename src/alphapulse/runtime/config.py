@@ -10,6 +10,7 @@ FetchMode = Literal["static", "dynamic", "stealth"]
 StorageBackend = Literal["clickhouse", "rqlite"]
 StateBackend = Literal["sqlite", "rqlite"]
 ProxyProviderType = Literal["proxy_pool"]
+SpaceDiscoveryBackend = Literal["api", "cli"]
 
 
 class StorageSettings(BaseModel):
@@ -103,6 +104,9 @@ class BilibiliSettings(BaseModel):
     max_pages: int = Field(default=1000, ge=1)
     request_interval_min_seconds: float = Field(default=2.0, ge=0.0)
     request_interval_max_seconds: float = Field(default=5.0, ge=0.0)
+    space_discovery_backend: SpaceDiscoveryBackend = "api"
+    space_discovery_interval_minutes: int = Field(default=60, ge=1)
+    space_discovery_max_videos: int = Field(default=50, ge=1)
     cookies: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")

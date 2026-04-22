@@ -5,6 +5,7 @@ description = "Finance crawling pipeline built on Scrapling and ClickHouse."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "bilibili-cli>=0.6.2",
   "clickhouse-connect>=0.8.17",
   "fastapi>=0.115",
   "pydantic>=2.11.3",

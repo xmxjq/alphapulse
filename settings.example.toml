@@ -60,6 +60,9 @@ web_base_url = "https://www.bilibili.com"
 sort_mode = 3
 page_size = 30
 max_pages = 1000
+space_discovery_backend = "api"
+space_discovery_interval_minutes = 60
+space_discovery_max_videos = 50
 # Per-request jitter in seconds. Each request sleeps a uniform random value in
 # [min, max] before firing. Keep this conservative when using an authenticated
 # cookie — fast, regular cadence is the fastest way to get the account banned.

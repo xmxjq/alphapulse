@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any
@@ -17,15 +18,26 @@ from alphapulse.pipeline.contracts import (
 from alphapulse.runtime.config import BilibiliSettings, CrawlSettings
 from alphapulse.sources.bilibili.api import BilibiliApiClient, BilibiliApiResult
 from alphapulse.sources.bilibili.ids import build_space_url, build_video_url, parse_space_mid, parse_video_target
+from alphapulse.sources.bilibili.space_cli import BilibiliCliSpaceDiscoveryClient, SpaceDiscoveryClient
+
+
+BLOCKED_ERROR_RE = re.compile(r"\b(403|412|429)\b")
 
 
 class BilibiliAdapter:
     source_name = "bilibili"
 
-    def __init__(self, settings: BilibiliSettings, crawl_settings: CrawlSettings) -> None:
+    def __init__(
+        self,
+        settings: BilibiliSettings,
+        crawl_settings: CrawlSettings,
+        *,
+        space_cli: SpaceDiscoveryClient | None = None,
+    ) -> None:
         self.settings = settings
         self.crawl_settings = crawl_settings
         self.api = BilibiliApiClient(settings, crawl_settings)
+        self.space_cli = space_cli or BilibiliCliSpaceDiscoveryClient()
 
     def discover(self, seed: SeedDefinition) -> list[CrawlTask]:
         tasks: list[CrawlTask] = []
@@ -105,6 +117,14 @@ class BilibiliAdapter:
             outcome.errors.append(f"Could not parse Bilibili space mid from {task.url}")
             return outcome
 
+        if self.settings.space_discovery_backend == "cli":
+            return self._fetch_space_via_cli(task, mid)
+
+        return self._fetch_space_via_api(task, mid)
+
+    def _fetch_space_via_api(self, task: CrawlTask, mid: str) -> FetchOutcome:
+        outcome = FetchOutcome()
+
         seen_bvids: set[str] = set()
         page = 1
         page_size = 30
@@ -124,34 +144,13 @@ class BilibiliAdapter:
             if not vlist:
                 break
 
-            new_this_page = 0
-            for video in vlist:
-                if not isinstance(video, dict):
-                    continue
-                bvid = video.get("bvid")
-                if not bvid or bvid in seen_bvids:
-                    continue
-                seen_bvids.add(bvid)
-                new_this_page += 1
-                metadata: dict[str, Any] = {
-                    "video_target": bvid,
-                    "bvid": bvid,
-                    "discovered_from": str(task.url),
-                    "owner_mid": str(mid),
-                }
-                aid = video.get("aid")
-                if aid is not None:
-                    metadata["aid"] = str(aid)
-                outcome.discovered_tasks.append(
-                    CrawlTask(
-                        source=self.source_name,
-                        kind="fetch_post",
-                        url=build_video_url(str(self.settings.web_base_url), str(bvid)),
-                        seed_name=task.seed_name,
-                        priority=180,
-                        metadata=metadata,
-                    )
-                )
+            new_this_page = self._append_space_tasks(
+                outcome=outcome,
+                seen_bvids=seen_bvids,
+                videos=vlist,
+                mid=mid,
+                task=task,
+            )
 
             page_info = data.get("page") or {}
             total = self._optional_int(page_info.get("count"))
@@ -163,6 +162,69 @@ class BilibiliAdapter:
 
         outcome.status_code = last_status
         return outcome
+
+    def _fetch_space_via_cli(self, task: CrawlTask, mid: str) -> FetchOutcome:
+        outcome = FetchOutcome()
+        try:
+            videos = self.space_cli.get_user_videos(
+                uid=int(mid),
+                count=self.settings.space_discovery_max_videos,
+            )
+        except Exception as exc:
+            error_message = str(exc)
+            outcome.blocked = bool(BLOCKED_ERROR_RE.search(error_message))
+            outcome.errors.append(f"Fetch failed for space {mid} via bilibili-cli: {error_message}")
+            return outcome
+
+        seen_bvids: set[str] = set()
+        self._append_space_tasks(
+            outcome=outcome,
+            seen_bvids=seen_bvids,
+            videos=videos,
+            mid=mid,
+            task=task,
+        )
+        outcome.status_code = 200
+        return outcome
+
+    def _append_space_tasks(
+        self,
+        *,
+        outcome: FetchOutcome,
+        seen_bvids: set[str],
+        videos: list[dict[str, Any]],
+        mid: str,
+        task: CrawlTask,
+    ) -> int:
+        discovered = 0
+        for video in videos:
+            if not isinstance(video, dict):
+                continue
+            bvid = video.get("bvid")
+            if not isinstance(bvid, str) or not bvid or bvid in seen_bvids:
+                continue
+            seen_bvids.add(bvid)
+            discovered += 1
+            metadata: dict[str, Any] = {
+                "video_target": bvid,
+                "bvid": bvid,
+                "discovered_from": str(task.url),
+                "owner_mid": str(mid),
+            }
+            aid = self._optional_int(video.get("aid"))
+            if aid is not None and aid > 0:
+                metadata["aid"] = str(aid)
+            outcome.discovered_tasks.append(
+                CrawlTask(
+                    source=self.source_name,
+                    kind="fetch_post",
+                    url=build_video_url(str(self.settings.web_base_url), bvid),
+                    seed_name=task.seed_name,
+                    priority=180,
+                    metadata=metadata,
+                )
+            )
+        return discovered
 
     def refresh_comments(self, item_ref: ItemReference) -> list[NormalizedComment]:
         try:
