@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AlphaPulse dashboard</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>AlphaPulse</h1>
+      <nav>
+        <button data-tab="status" class="tab active">Status</button>
+        <button data-tab="posts" class="tab">Posts</button>
+      </nav>
+      <span id="last-updated" class="meta"></span>
+    </header>
+
+    <main>
+      <section id="status-view" class="view active">
+        <div class="grid">
+          <article id="latest-run" class="card">
+            <h2>Latest run</h2>
+            <div class="body">Loading…</div>
+          </article>
+          <article id="activity" class="card">
+            <h2>Activity (last hour)</h2>
+            <div class="body">Loading…</div>
+          </article>
+        </div>
+        <article class="card">
+          <h2>Recent runs</h2>
+          <div id="recent-runs" class="body">Loading…</div>
+        </article>
+        <article class="card">
+          <h2>Recent errors</h2>
+          <div id="recent-errors" class="body">Loading…</div>
+        </article>
+        <article class="card">
+          <h2>Seed sets</h2>
+          <div id="seed-sets" class="body">Loading…</div>
+        </article>
+      </section>
+
+      <section id="posts-view" class="view">
+        <div class="toolbar">
+          <label>
+            Source
+            <select id="posts-source">
+              <option value="">all</option>
+              <option value="bilibili">bilibili</option>
+              <option value="xueqiu">xueqiu</option>
+            </select>
+          </label>
+          <label>
+            Limit
+            <select id="posts-limit">
+              <option>25</option>
+              <option selected>50</option>
+              <option>100</option>
+            </select>
+          </label>
+          <button id="posts-refresh">Refresh</button>
+          <span id="posts-paging" class="meta"></span>
+          <button id="posts-prev" disabled>&lt; prev</button>
+          <button id="posts-next" disabled>next &gt;</button>
+        </div>
+        <div class="split">
+          <div id="posts-list" class="list">Loading…</div>
+          <div id="post-detail" class="detail">
+            <p class="meta">Select a post on the left to view content + comments.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

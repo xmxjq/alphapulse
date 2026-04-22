@@ -68,3 +68,8 @@ request_interval_max_seconds = 5.0
 
 [sources.bilibili.cookies]
 # SESSDATA = ""
+
+[web]
+# Bind address for `alphapulse web`. Default to loopback; expose intentionally.
+host = "127.0.0.1"
+port = 8000

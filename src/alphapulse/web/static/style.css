@@ -1,0 +1,108 @@
+:root {
+  --bg: #0f1116;
+  --panel: #171a21;
+  --panel-2: #1e222c;
+  --border: #2a2f3a;
+  --text: #e6e8ec;
+  --muted: #8a92a3;
+  --accent: #4ea1ff;
+  --ok: #4fbf6a;
+  --warn: #f1c061;
+  --err: #ef6b6b;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+header h1 { margin: 0; font-size: 16px; letter-spacing: 0.5px; }
+nav { display: flex; gap: 4px; }
+.tab {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+.tab.active, .tab:hover { color: var(--text); background: var(--panel-2); }
+.meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+main { padding: 16px 20px; }
+.view { display: none; }
+.view.active { display: block; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.card h2 { margin: 0 0 8px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); }
+.card .body { font-size: 13px; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.stat { background: var(--panel-2); border-radius: 4px; padding: 6px 10px; }
+.stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.stat .value { font-family: var(--mono); font-size: 16px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; font-size: 11px; }
+td.num { text-align: right; font-family: var(--mono); }
+td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
+
+.status-ok { color: var(--ok); }
+.status-failed { color: var(--err); }
+.status-running { color: var(--warn); }
+
+.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.toolbar label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+.toolbar select, .toolbar button, #post-detail button {
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 4px 10px; font: inherit; cursor: pointer;
+}
+
+.split { display: grid; grid-template-columns: minmax(260px, 420px) 1fr; gap: 12px; }
+.list { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; max-height: calc(100vh - 180px); overflow: auto; }
+.detail { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; min-height: 200px; max-height: calc(100vh - 180px); overflow: auto; }
+
+.post-item {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.post-item:hover { background: var(--panel-2); }
+.post-item.active { background: var(--panel-2); border-left: 2px solid var(--accent); }
+.post-item .title { font-weight: 500; margin-bottom: 4px; }
+.post-item .sub { color: var(--muted); font-size: 11px; display: flex; gap: 8px; justify-content: space-between; }
+
+.detail h3 { margin: 0 0 6px 0; font-size: 16px; }
+.detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+.detail .content { white-space: pre-wrap; line-height: 1.5; margin-bottom: 18px; }
+.detail a { color: var(--accent); }
+
+.comments h4 { margin: 14px 0 8px 0; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+.comment { border-left: 2px solid var(--border); padding: 6px 0 6px 10px; margin-bottom: 6px; }
+.comment.reply { margin-left: 20px; border-left-color: var(--panel-2); }
+.comment .head { color: var(--muted); font-size: 11px; display: flex; gap: 10px; }
+.comment .body { white-space: pre-wrap; margin-top: 2px; }
+
+.empty { color: var(--muted); font-style: italic; padding: 12px; }
+.err { color: var(--err); }

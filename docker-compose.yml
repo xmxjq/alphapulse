@@ -10,6 +10,19 @@ services:
       - ./:/app
     environment:
       PYTHONUNBUFFERED: "1"
+  web:
+    build:
+      context: .
+      dockerfile: docker/crawler/Dockerfile
+    restart: unless-stopped
+    working_dir: /app
+    command: ["uv", "run", "alphapulse", "--config", "/app/settings.toml", "web", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONUNBUFFERED: "1"
   proxy_pool:
     image: jhao104/proxy_pool:latest
     restart: unless-stopped

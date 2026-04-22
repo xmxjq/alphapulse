@@ -29,6 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     sql_parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output.")
     sql_parser.add_argument("sql", nargs="?", help="SQL statement to run. If omitted, start the shell.")
 
+    web_parser = subparsers.add_parser("web", help="Start the read-only web dashboard.")
+    web_parser.add_argument("--host", help="Bind host (overrides settings.web.host).")
+    web_parser.add_argument("--port", type=int, help="Bind port (overrides settings.web.port).")
+
     subparsers.add_parser("validate-config", help="Validate config and print normalized settings.")
     subparsers.add_parser("init-db", help="Create configured storage schema.")
     subparsers.add_parser("health", help="Check configured storage connectivity and local state.")
@@ -70,6 +74,18 @@ def main(argv: list[str] | None = None) -> int:
                 raise SystemExit("No SQL provided on stdin.")
             return run_once(executor, sql, args.pretty)
         return run_repl(executor, args.pretty)
+
+    if args.command == "web":
+        import uvicorn
+
+        from alphapulse.web import create_app
+
+        settings = load_settings(Path(args.config))
+        configure_logging(settings.crawl.log_level)
+        host = args.host or settings.web.host
+        port = args.port or settings.web.port
+        uvicorn.run(create_app(settings), host=host, port=port)
+        return 0
 
     settings, service = _load_runtime(args)
 

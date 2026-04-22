@@ -6,8 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "clickhouse-connect>=0.8.17",
+  "fastapi>=0.115",
   "pydantic>=2.11.3",
   "scrapling[fetchers]>=0.2.99",
+  "uvicorn[standard]>=0.30",
 ]
 
 [project.scripts]
@@ -15,6 +17,7 @@ alphapulse = "alphapulse.cli.app:main"
 
 [dependency-groups]
 dev = [
+  "httpx>=0.27",
   "pytest>=8.3.5",
 ]
 

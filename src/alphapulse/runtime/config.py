@@ -121,6 +121,13 @@ class SourcesSettings(BaseModel):
     bilibili: BilibiliSettings = Field(default_factory=BilibiliSettings)
 
 
+class WebSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=1, le=65535)
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -129,6 +136,7 @@ class Settings(BaseModel):
     rqlite: RqliteSettings = Field(default_factory=RqliteSettings)
     crawl: CrawlSettings = Field(default_factory=CrawlSettings)
     sources: SourcesSettings = Field(default_factory=SourcesSettings)
+    web: WebSettings = Field(default_factory=WebSettings)
 
     @model_validator(mode="after")
     def validate_state_dir(self) -> "Settings":

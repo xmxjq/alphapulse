@@ -19,6 +19,7 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
   - `ClickHouse` for analytical storage
 - Durable local crawl state in SQLite
 - CLI commands for config validation, DB init, health checks, run loop, and backfill
+- Read-only web dashboard for crawl status, seed-set inventory, posts, and comments
 - Docker Compose for the crawler, configured to write to remote `rqlite`
 
 ## Quick start
@@ -78,13 +79,27 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
    docker compose up --build
    ```
 
+   Start the crawler and web dashboard together:
+
+   ```bash
+   docker compose up --build crawler web
+   ```
+
+   Then open `http://localhost:8000`.
+
    If you want to initialize the remote `rqlite` schema from inside the container first:
 
    ```bash
    docker compose run --rm crawler uv run alphapulse --config /app/settings.toml init-db
    ```
 
-7. Optional: start the local proxy pool sidecar when Xueqiu is blocking your crawler IP:
+7. Optional: run the dashboard directly on your workstation:
+
+   ```bash
+   uv run alphapulse --config settings.toml web --host 127.0.0.1 --port 8000
+   ```
+
+8. Optional: start the local proxy pool sidecar when Xueqiu is blocking your crawler IP:
 
    ```bash
    docker compose --profile proxy up -d
@@ -115,11 +130,13 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 ## Storage
 
 - `rqlite` is the default backend in `settings.example.toml` and is intended for lighter remote persistence.
-- The Docker Compose file assumes you are pointing the crawler at an external `rqlite` node via `settings.toml`; it does not start a database container.
+- The Docker Compose file assumes you are pointing the crawler and dashboard at an external `rqlite` or ClickHouse instance via `settings.toml`; it does not start a database container.
 - `ClickHouse` support remains available by setting `storage.backend = "clickhouse"` and pointing the crawler at an existing ClickHouse instance.
 
 ## Notes
 
+- The dashboard is read-only. It serves a small static UI plus JSON endpoints from `alphapulse web`.
+- Posts, comments, runs, and errors are read from the configured storage backend. Seed-set summaries and recent URL activity are read from the local SQLite state file at `crawl.state_path`, so the crawler and dashboard must share the same mounted `.runtime` directory.
 - `xueqiu.com` is behind WAF protection. The default config runs in guest mode, but the config already supports cookie injection and fetch-mode selection.
 - Bilibili video comments use public JSON APIs in guest mode by default. Optional cookies can be supplied under `[sources.bilibili.cookies]` when rate limits or access restrictions appear.
 - Proxy support is provider-based. This repo includes a `proxy_pool` sidecar option, but free proxies can be unstable and may still underperform against Xueqiu WAF.
