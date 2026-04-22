@@ -60,6 +60,11 @@ web_base_url = "https://www.bilibili.com"
 sort_mode = 3
 page_size = 30
 max_pages = 1000
+# Per-request jitter in seconds. Each request sleeps a uniform random value in
+# [min, max] before firing. Keep this conservative when using an authenticated
+# cookie — fast, regular cadence is the fastest way to get the account banned.
+request_interval_min_seconds = 2.0
+request_interval_max_seconds = 5.0
 
 [sources.bilibili.cookies]
 # SESSDATA = ""

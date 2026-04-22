@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -18,9 +19,7 @@ COMMENT_API_PATH = "/x/v2/reply/main"
 REPLY_API_PATH = "/x/v2/reply/reply"
 VIDEO_INFO_API_PATH = "/x/web-interface/view"
 
-REQUEST_DELAY_MIN = 0.1
-REQUEST_DELAY_MAX = 2.0
-REQUEST_DELAY_DEFAULT = 0.15
+REQUEST_BACKOFF_MULTIPLIER_MAX = 16.0
 
 
 @dataclass
@@ -37,7 +36,7 @@ class BilibiliApiClient:
         self.settings = settings
         self.crawl_settings = crawl_settings
         self.proxy_provider = _build_proxy_provider(crawl_settings)
-        self._current_delay = REQUEST_DELAY_DEFAULT
+        self._backoff_multiplier = 1.0
 
     def get_video_info(self, *, bvid: str | None = None, aid: int | None = None) -> BilibiliApiResult:
         params: dict[str, Any] = {}
@@ -183,7 +182,6 @@ class BilibiliApiClient:
 
             code = payload.get("code", -1)
             if code == 0:
-                self._current_delay = max(self._current_delay * 0.8, REQUEST_DELAY_MIN)
                 logger.debug(
                     "Bilibili API ok",
                     extra={
@@ -259,10 +257,14 @@ class BilibiliApiClient:
 
     def _adaptive_sleep(self, *, was_rate_limited: bool) -> None:
         if was_rate_limited:
-            self._current_delay = min(self._current_delay * 2, REQUEST_DELAY_MAX)
+            self._backoff_multiplier = min(self._backoff_multiplier * 2, REQUEST_BACKOFF_MULTIPLIER_MAX)
         else:
-            self._current_delay = max(self._current_delay * 0.8, REQUEST_DELAY_MIN)
-        time.sleep(self._current_delay)
+            self._backoff_multiplier = max(self._backoff_multiplier * 0.5, 1.0)
+        base = random.uniform(
+            self.settings.request_interval_min_seconds,
+            self.settings.request_interval_max_seconds,
+        )
+        time.sleep(base * self._backoff_multiplier)
 
     def _report_bad_proxy(self, lease: ProxyLease, reason: str) -> None:
         if not self.crawl_settings.proxy_pool.report_bad_on_block:

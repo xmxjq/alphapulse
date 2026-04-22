@@ -101,7 +101,17 @@ class BilibiliSettings(BaseModel):
     sort_mode: int = 3
     page_size: int = Field(default=30, ge=1, le=30)
     max_pages: int = Field(default=1000, ge=1)
+    request_interval_min_seconds: float = Field(default=2.0, ge=0.0)
+    request_interval_max_seconds: float = Field(default=5.0, ge=0.0)
     cookies: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_request_interval(self) -> "BilibiliSettings":
+        if self.request_interval_max_seconds < self.request_interval_min_seconds:
+            raise ValueError(
+                "sources.bilibili.request_interval_max_seconds must be >= request_interval_min_seconds"
+            )
+        return self
 
 
 class SourcesSettings(BaseModel):

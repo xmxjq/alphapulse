@@ -28,6 +28,30 @@ def test_bilibili_api_retries_rate_limit_code(monkeypatch: pytest.MonkeyPatch) -
     assert len(sleeps) == 2
 
 
+def test_bilibili_adaptive_sleep_samples_random_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = BilibiliApiClient(
+        BilibiliSettings(request_interval_min_seconds=1.5, request_interval_max_seconds=4.0),
+        CrawlSettings(),
+    )
+    sampled: list[tuple[float, float]] = []
+    sleeps: list[float] = []
+
+    def fake_uniform(low: float, high: float) -> float:
+        sampled.append((low, high))
+        return (low + high) / 2
+
+    monkeypatch.setattr("alphapulse.sources.bilibili.api.random.uniform", fake_uniform)
+    monkeypatch.setattr("alphapulse.sources.bilibili.api.time.sleep", lambda value: sleeps.append(value))
+
+    client._adaptive_sleep(was_rate_limited=False)
+    client._adaptive_sleep(was_rate_limited=True)
+    client._adaptive_sleep(was_rate_limited=True)
+
+    assert sampled == [(1.5, 4.0), (1.5, 4.0), (1.5, 4.0)]
+    mid = (1.5 + 4.0) / 2
+    assert sleeps == [mid * 1.0, mid * 2.0, mid * 4.0]
+
+
 def test_bilibili_api_returns_error_after_retry_exhaustion(monkeypatch: pytest.MonkeyPatch) -> None:
     client = BilibiliApiClient(
         BilibiliSettings(),
