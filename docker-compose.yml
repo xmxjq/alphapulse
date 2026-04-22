@@ -8,6 +8,7 @@ services:
     command: ["uv", "run", "alphapulse", "--config", "/app/settings.toml", "run"]
     volumes:
       - ./:/app
+      - ./.runtime/bilibili-cli:/root/.bilibili-cli
     environment:
       PYTHONUNBUFFERED: "1"
   web:
