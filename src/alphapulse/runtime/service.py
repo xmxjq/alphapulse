@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import heapq
+import itertools
 import logging
 import time
 import uuid
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -20,6 +21,34 @@ from alphapulse.storage.factory import build_store
 
 
 logger = logging.getLogger(__name__)
+
+
+class TaskQueue:
+    """Priority-ordered crawl queue.
+
+    Higher ``task.priority`` wins. Within the same priority, tasks with a
+    larger ``metadata['pubdate_ts']`` (newer content) come first, so bilibili
+    space discovery fetches the newest videos before older ones. FIFO is the
+    final tiebreaker.
+    """
+
+    def __init__(self) -> None:
+        self._heap: list[tuple[int, int, int, CrawlTask]] = []
+        self._counter = itertools.count()
+
+    def push(self, task: CrawlTask) -> None:
+        pubdate_ts = int(task.metadata.get("pubdate_ts") or 0)
+        seq = next(self._counter)
+        heapq.heappush(self._heap, (-task.priority, -pubdate_ts, seq, task))
+
+    def pop(self) -> CrawlTask:
+        return heapq.heappop(self._heap)[3]
+
+    def __bool__(self) -> bool:
+        return bool(self._heap)
+
+    def __len__(self) -> int:
+        return len(self._heap)
 
 
 @dataclass
@@ -105,7 +134,7 @@ class AlphaPulseService:
             },
         )
         try:
-            queue: deque[CrawlTask] = deque()
+            queue = TaskQueue()
             for seed in self._select_seeds(seed_set_name):
                 stats.seeds_processed += 1
                 for adapter in self.sources.values():
@@ -137,7 +166,7 @@ class AlphaPulseService:
             )
 
             while queue:
-                task = queue.popleft()
+                task = queue.pop()
                 if not self.state.try_claim_url(
                     url=str(task.url),
                     source=task.source,
@@ -235,7 +264,7 @@ class AlphaPulseService:
         self,
         task: CrawlTask,
         outcome: FetchOutcome,
-        queue: deque[CrawlTask],
+        queue: TaskQueue,
         stats: RunStats,
     ) -> None:
         stats.pages_fetched += 1
@@ -293,8 +322,8 @@ class AlphaPulseService:
             },
         )
 
-    def _enqueue_task(self, queue: deque[CrawlTask], task: CrawlTask, stats: RunStats) -> None:
-        queue.append(task)
+    def _enqueue_task(self, queue: TaskQueue, task: CrawlTask, stats: RunStats) -> None:
+        queue.push(task)
         stats.tasks_enqueued += 1
 
     def _min_age_for_task(self, task: CrawlTask) -> timedelta:

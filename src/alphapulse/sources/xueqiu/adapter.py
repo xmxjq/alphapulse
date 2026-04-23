@@ -188,7 +188,7 @@ class XueqiuAdapter:
             kind="refresh_comments",
             url=comments_url,
             seed_name=seed_name,
-            priority=90,
+            priority=300,
             metadata={
                 "post_id": post.source_entity_id,
                 "canonical_url": str(post.canonical_url),

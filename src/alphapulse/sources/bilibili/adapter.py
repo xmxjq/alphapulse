@@ -247,6 +247,9 @@ class BilibiliAdapter:
             aid = self._optional_int(video.get("aid"))
             if aid is not None and aid > 0:
                 metadata["aid"] = str(aid)
+            pubdate_ts = self._optional_int(video.get("created") or video.get("pubdate"))
+            if pubdate_ts is not None and pubdate_ts > 0:
+                metadata["pubdate_ts"] = pubdate_ts
             outcome.discovered_tasks.append(
                 CrawlTask(
                     source=self.source_name,
@@ -344,7 +347,7 @@ class BilibiliAdapter:
             kind="refresh_comments",
             url=f"{str(self.settings.api_base_url).rstrip('/')}/x/v2/reply/main?{query}",
             seed_name=seed_name,
-            priority=90,
+            priority=300,
             metadata=metadata,
         )
 

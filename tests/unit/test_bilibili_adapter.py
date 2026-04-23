@@ -242,9 +242,9 @@ def test_bilibili_adapter_fetch_space_via_cli_emits_fetch_post_tasks() -> None:
     settings = BilibiliSettings(space_discovery_backend="cli", space_discovery_max_videos=3)
     cli = FakeSpaceCli(
         videos=[
-            {"bvid": "BV1aaa000001", "aid": 111},
-            {"bvid": "BV1aaa000002", "aid": 222},
-            {"bvid": "BV1aaa000001", "aid": 111},
+            {"bvid": "BV1aaa000001", "aid": 111, "created": 5000},
+            {"bvid": "BV1aaa000002", "aid": 222, "created": 1000},
+            {"bvid": "BV1aaa000001", "aid": 111, "created": 5000},
         ]
     )
     adapter = BilibiliAdapter(settings, CrawlSettings(), space_cli=cli)
@@ -256,6 +256,7 @@ def test_bilibili_adapter_fetch_space_via_cli_emits_fetch_post_tasks() -> None:
     assert cli.calls == [(7033507, 3)]
     assert [t.metadata["bvid"] for t in outcome.discovered_tasks] == ["BV1aaa000001", "BV1aaa000002"]
     assert all(t.metadata["owner_mid"] == "7033507" for t in outcome.discovered_tasks)
+    assert [t.metadata["pubdate_ts"] for t in outcome.discovered_tasks] == [5000, 1000]
 
 
 def test_bilibili_adapter_fetch_space_via_cli_merges_search_results_filtered_by_uid() -> None:
