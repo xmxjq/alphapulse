@@ -15,6 +15,19 @@ password = ""
 queue_writes = true
 queue_timeout_seconds = 10
 
+[mongo]
+# Only used when storage.backend = "mongo". State (url_state, seed_sets, etc.)
+# continues to live in rqlite/sqlite; only posts/comments/authors/crawl_runs
+# move to MongoDB.
+uri = "mongodb://localhost:27017"
+database = "alphapulse"
+authors_collection = "authors"
+posts_collection = "posts"
+comments_collection = "comments"
+crawl_runs_collection = "crawl_runs"
+crawl_errors_collection = "crawl_errors"
+server_selection_timeout_ms = 5000
+
 [crawl]
 # state_backend: "sqlite" (local file, single instance) or "rqlite" (shared, safe for multiple instances)
 state_backend = "sqlite"

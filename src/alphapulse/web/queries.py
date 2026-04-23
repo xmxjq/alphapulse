@@ -308,6 +308,75 @@ class RqliteReader:
         return [_comment_from_row(row) for row in rows]
 
 
+@dataclass
+class MongoReader:
+    db: Any
+    authors_collection: str
+    posts_collection: str
+    comments_collection: str
+    crawl_runs_collection: str
+    crawl_errors_collection: str
+
+    def _posts(self) -> Any:
+        return self.db[self.posts_collection]
+
+    def _comments(self) -> Any:
+        return self.db[self.comments_collection]
+
+    def _runs(self) -> Any:
+        return self.db[self.crawl_runs_collection]
+
+    def _errors(self) -> Any:
+        return self.db[self.crawl_errors_collection]
+
+    def latest_run(self) -> CrawlRun | None:
+        doc = self._runs().find_one(sort=[("started_at", -1)])
+        return _run_from_row(doc) if doc else None
+
+    def list_runs(self, limit: int) -> list[CrawlRun]:
+        cursor = self._runs().find(sort=[("started_at", -1)], limit=limit)
+        return [_run_from_row(doc) for doc in cursor]
+
+    def list_errors(self, limit: int, source: str | None) -> list[CrawlError]:
+        query: dict[str, Any] = {} if source is None else {"source": source}
+        cursor = self._errors().find(query, sort=[("created_at", -1)], limit=limit)
+        return [_error_from_row(doc) for doc in cursor]
+
+    def list_posts(self, source: str | None, limit: int, offset: int) -> list[PostSummary]:
+        query: dict[str, Any] = {} if source is None else {"source": source}
+        projection = {
+            "source": 1,
+            "source_entity_id": 1,
+            "canonical_url": 1,
+            "author_entity_id": 1,
+            "title": 1,
+            "content_text": 1,
+            "published_at": 1,
+            "fetched_at": 1,
+            "like_count": 1,
+            "comment_count": 1,
+        }
+        cursor = self._posts().find(
+            query,
+            projection=projection,
+            sort=[("published_at", -1), ("fetched_at", -1), ("source_entity_id", 1)],
+            skip=offset,
+            limit=limit,
+        )
+        return [_post_summary_from_row(doc) for doc in cursor]
+
+    def get_post(self, source: str, source_entity_id: str) -> PostDetail | None:
+        doc = self._posts().find_one({"source": source, "source_entity_id": source_entity_id})
+        return _post_detail_from_row(doc) if doc else None
+
+    def list_comments_for_post(self, source: str, post_entity_id: str) -> list[Comment]:
+        cursor = self._comments().find(
+            {"source": source, "post_entity_id": post_entity_id},
+            sort=[("published_at", 1), ("fetched_at", 1), ("source_entity_id", 1)],
+        )
+        return [_comment_from_row(doc) for doc in cursor]
+
+
 def build_reader(settings: Settings) -> StorageReader:
     if settings.storage.backend == "clickhouse":
         from alphapulse.storage.clickhouse import _client_from_settings
@@ -320,6 +389,19 @@ def build_reader(settings: Settings) -> StorageReader:
         from alphapulse.storage.rqlite import RqliteClient
 
         return RqliteReader(client=RqliteClient(settings.rqlite))
+    if settings.storage.backend == "mongo":
+        from alphapulse.storage.mongo import _client_from_settings
+
+        mongo = settings.mongo
+        client = _client_from_settings(mongo)
+        return MongoReader(
+            db=client[mongo.database],
+            authors_collection=mongo.authors_collection,
+            posts_collection=mongo.posts_collection,
+            comments_collection=mongo.comments_collection,
+            crawl_runs_collection=mongo.crawl_runs_collection,
+            crawl_errors_collection=mongo.crawl_errors_collection,
+        )
     raise ValueError(f"Unsupported storage backend: {settings.storage.backend}")
 
 

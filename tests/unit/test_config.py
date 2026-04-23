@@ -8,6 +8,9 @@ def test_load_settings_example() -> None:
     settings = load_settings(Path("settings.example.toml"))
     assert settings.storage.backend == "rqlite"
     assert settings.rqlite.url == "http://remote-rqlite.example.com:4001"
+    assert settings.mongo.uri == "mongodb://localhost:27017"
+    assert settings.mongo.database == "alphapulse"
+    assert settings.mongo.posts_collection == "posts"
     assert settings.crawl.proxy.enabled is False
     assert settings.crawl.proxy.provider is None
     assert settings.crawl.proxy_pool.base_url == "http://proxy_pool:5010"

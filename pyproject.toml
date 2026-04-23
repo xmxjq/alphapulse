@@ -9,6 +9,7 @@ dependencies = [
   "clickhouse-connect>=0.8.17",
   "fastapi>=0.115",
   "pydantic>=2.11.3",
+  "pymongo>=4.6",
   "scrapling[fetchers]>=0.2.99",
   "uvicorn[standard]>=0.30",
 ]

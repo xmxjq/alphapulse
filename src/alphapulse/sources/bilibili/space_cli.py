@@ -42,7 +42,7 @@ class BilibiliCliSpaceDiscoveryClient:
         credential = bili_auth.get_credential(mode="read")
         results: list[dict[str, Any]] = []
         page = 1
-        max_pages = 20
+        max_pages = 2
         while len(results) < count and page <= max_pages:
             page_results = asyncio.run(
                 bili_client.search_video(keyword=keyword, page=page)

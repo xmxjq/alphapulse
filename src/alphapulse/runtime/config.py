@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 FetchMode = Literal["static", "dynamic", "stealth"]
-StorageBackend = Literal["clickhouse", "rqlite"]
+StorageBackend = Literal["clickhouse", "rqlite", "mongo"]
 StateBackend = Literal["sqlite", "rqlite"]
 ProxyProviderType = Literal["proxy_pool"]
 SpaceDiscoveryBackend = Literal["api", "cli"]
@@ -37,6 +37,19 @@ class RqliteSettings(BaseModel):
     password: str | None = None
     queue_writes: bool = False
     queue_timeout_seconds: int = 10
+
+
+class MongoSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str = "mongodb://localhost:27017"
+    database: str = "alphapulse"
+    authors_collection: str = "authors"
+    posts_collection: str = "posts"
+    comments_collection: str = "comments"
+    crawl_runs_collection: str = "crawl_runs"
+    crawl_errors_collection: str = "crawl_errors"
+    server_selection_timeout_ms: int = Field(default=5000, ge=100)
 
 
 class CrawlSettings(BaseModel):
@@ -138,6 +151,7 @@ class Settings(BaseModel):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     clickhouse: ClickHouseSettings = Field(default_factory=ClickHouseSettings)
     rqlite: RqliteSettings = Field(default_factory=RqliteSettings)
+    mongo: MongoSettings = Field(default_factory=MongoSettings)
     crawl: CrawlSettings = Field(default_factory=CrawlSettings)
     sources: SourcesSettings = Field(default_factory=SourcesSettings)
     web: WebSettings = Field(default_factory=WebSettings)

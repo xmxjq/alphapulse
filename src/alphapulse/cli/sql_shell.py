@@ -37,6 +37,10 @@ class SqlExecutor:
         elif self.settings.storage.backend == "clickhouse":
             self.backend = "clickhouse"
             self.client = _client_from_settings(self.settings.clickhouse)
+        elif self.settings.storage.backend == "mongo":
+            raise ValueError(
+                "SQL shell is not supported for the mongo backend; use a Mongo client (e.g. mongosh) instead."
+            )
         else:
             raise ValueError(f"Unsupported storage backend: {self.settings.storage.backend}")
 

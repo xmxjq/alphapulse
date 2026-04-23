@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from alphapulse.cli.sql_shell import SqlExecutor, is_read_query, statement_complete
-from alphapulse.runtime.config import load_settings
+from alphapulse.runtime.config import Settings, StorageSettings, load_settings
 
 
 def test_read_query_detection() -> None:
@@ -20,3 +22,9 @@ def test_sql_executor_uses_configured_backend() -> None:
     executor = SqlExecutor(settings)
     assert executor.backend == "rqlite"
     assert "sqlite_master" in executor.tables_sql()
+
+
+def test_sql_executor_rejects_mongo_backend() -> None:
+    settings = Settings(storage=StorageSettings(backend="mongo"))
+    with pytest.raises(ValueError, match="mongo"):
+        SqlExecutor(settings)
