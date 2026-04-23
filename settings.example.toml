@@ -21,6 +21,9 @@ queue_timeout_seconds = 10
 # move to MongoDB.
 uri = "mongodb://localhost:27017"
 database = "alphapulse"
+# Set this when sharing a database with other apps. Actual collections become
+# "{collection_prefix}{posts_collection}", e.g. "alphapulse_posts".
+collection_prefix = ""
 authors_collection = "authors"
 posts_collection = "posts"
 comments_collection = "comments"

@@ -155,3 +155,26 @@ def test_healthcheck_pings_admin() -> None:
     store, client = _make_store()
     assert store.healthcheck() is True
     assert client.admin.pings == 1
+
+
+def test_collection_prefix_scopes_writes() -> None:
+    client = FakeMongoClient()
+    store = MongoStore(MongoSettings(collection_prefix="alphapulse_"), client=client)
+    ts = datetime.now(UTC)
+    store.upsert_posts([
+        NormalizedPost(
+            source="xueqiu",
+            source_entity_id="1",
+            canonical_url="https://xueqiu.com/1/1",
+            content_text="x",
+            fetched_at=ts,
+        )
+    ])
+    store.insert_crawl_error(source="xueqiu", url="https://x", error_message="boom")
+    store.init_db()
+
+    db = client.databases["alphapulse"]
+    assert "alphapulse_posts" in db.collections
+    assert "alphapulse_crawl_errors" in db.collections
+    assert "posts" not in db.collections
+    assert db.collections["alphapulse_posts"].bulk_writes

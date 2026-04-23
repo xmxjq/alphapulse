@@ -44,12 +44,16 @@ class MongoSettings(BaseModel):
 
     uri: str = "mongodb://localhost:27017"
     database: str = "alphapulse"
+    collection_prefix: str = ""
     authors_collection: str = "authors"
     posts_collection: str = "posts"
     comments_collection: str = "comments"
     crawl_runs_collection: str = "crawl_runs"
     crawl_errors_collection: str = "crawl_errors"
     server_selection_timeout_ms: int = Field(default=5000, ge=100)
+
+    def resolved(self, collection: str) -> str:
+        return f"{self.collection_prefix}{collection}"
 
 
 class CrawlSettings(BaseModel):

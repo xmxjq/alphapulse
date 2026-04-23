@@ -77,7 +77,7 @@ class MongoStore:
         self._db = self.client[settings.database]
 
     def _collection(self, name: str):
-        return self._db[name]
+        return self._db[self.settings.resolved(name)]
 
     def init_db(self) -> None:
         posts = self._collection(self.settings.posts_collection)

@@ -396,11 +396,11 @@ def build_reader(settings: Settings) -> StorageReader:
         client = _client_from_settings(mongo)
         return MongoReader(
             db=client[mongo.database],
-            authors_collection=mongo.authors_collection,
-            posts_collection=mongo.posts_collection,
-            comments_collection=mongo.comments_collection,
-            crawl_runs_collection=mongo.crawl_runs_collection,
-            crawl_errors_collection=mongo.crawl_errors_collection,
+            authors_collection=mongo.resolved(mongo.authors_collection),
+            posts_collection=mongo.resolved(mongo.posts_collection),
+            comments_collection=mongo.resolved(mongo.comments_collection),
+            crawl_runs_collection=mongo.resolved(mongo.crawl_runs_collection),
+            crawl_errors_collection=mongo.resolved(mongo.crawl_errors_collection),
         )
     raise ValueError(f"Unsupported storage backend: {settings.storage.backend}")
 
