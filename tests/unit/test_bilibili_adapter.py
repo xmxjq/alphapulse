@@ -115,16 +115,43 @@ class FakeBilibiliApi:
 
 
 class FakeSpaceCli:
-    def __init__(self, videos: list[dict[str, object]] | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        videos: list[dict[str, object]] | None = None,
+        error: Exception | None = None,
+        *,
+        user_info: dict[str, object] | None = None,
+        user_info_error: Exception | None = None,
+        search_videos: list[dict[str, object]] | None = None,
+        search_error: Exception | None = None,
+    ) -> None:
         self.videos = videos or []
         self.error = error
+        self.user_info_payload = user_info
+        self.user_info_error = user_info_error
+        self.search_payload = search_videos or []
+        self.search_error = search_error
         self.calls: list[tuple[int, int]] = []
+        self.user_info_calls: list[int] = []
+        self.search_calls: list[tuple[str, int]] = []
 
     def get_user_videos(self, *, uid: int, count: int) -> list[dict[str, object]]:
         self.calls.append((uid, count))
         if self.error is not None:
             raise self.error
         return self.videos
+
+    def get_user_info(self, *, uid: int) -> dict[str, object]:
+        self.user_info_calls.append(uid)
+        if self.user_info_error is not None:
+            raise self.user_info_error
+        return self.user_info_payload or {}
+
+    def search_videos(self, *, keyword: str, count: int) -> list[dict[str, object]]:
+        self.search_calls.append((keyword, count))
+        if self.search_error is not None:
+            raise self.search_error
+        return self.search_payload
 
 
 def test_bilibili_adapter_discovers_manual_video_targets() -> None:
@@ -229,6 +256,66 @@ def test_bilibili_adapter_fetch_space_via_cli_emits_fetch_post_tasks() -> None:
     assert cli.calls == [(7033507, 3)]
     assert [t.metadata["bvid"] for t in outcome.discovered_tasks] == ["BV1aaa000001", "BV1aaa000002"]
     assert all(t.metadata["owner_mid"] == "7033507" for t in outcome.discovered_tasks)
+
+
+def test_bilibili_adapter_fetch_space_via_cli_merges_search_results_filtered_by_uid() -> None:
+    settings = BilibiliSettings(space_discovery_backend="cli", space_discovery_max_videos=5)
+    cli = FakeSpaceCli(
+        videos=[
+            {"bvid": "BV1aaa000001", "aid": 111},
+            {"bvid": "BV1aaa000002", "aid": 222},
+        ],
+        user_info={"name": "TargetUploader", "mid": 7033507},
+        search_videos=[
+            {"bvid": "BV1aaa000002", "aid": 222, "mid": 7033507},
+            {"bvid": "BV1aaa000003", "aid": 333, "mid": 7033507},
+            {"bvid": "BV1bbb999999", "aid": 999, "mid": 8888888},
+            {"bvid": "BV1aaa000004", "aid": 444, "mid": "7033507"},
+        ],
+    )
+    adapter = BilibiliAdapter(settings, CrawlSettings(), space_cli=cli)
+
+    task = adapter.discover(SeedDefinition(name="bili", bilibili_space_urls=["7033507"]))[0]
+    outcome = adapter.fetch_item(task)
+
+    assert outcome.errors == []
+    assert cli.user_info_calls == [7033507]
+    assert cli.search_calls == [("TargetUploader", 5)]
+    bvids = [t.metadata["bvid"] for t in outcome.discovered_tasks]
+    assert bvids == ["BV1aaa000001", "BV1aaa000002", "BV1aaa000003", "BV1aaa000004"]
+    assert all(t.metadata["owner_mid"] == "7033507" for t in outcome.discovered_tasks)
+
+
+def test_bilibili_adapter_fetch_space_via_cli_skips_search_when_username_missing() -> None:
+    settings = BilibiliSettings(space_discovery_backend="cli", space_discovery_max_videos=3)
+    cli = FakeSpaceCli(
+        videos=[{"bvid": "BV1aaa000001", "aid": 111}],
+        user_info={"mid": 7033507},
+        search_videos=[{"bvid": "BV1aaa000099", "aid": 999, "mid": 7033507}],
+    )
+    adapter = BilibiliAdapter(settings, CrawlSettings(), space_cli=cli)
+
+    task = adapter.discover(SeedDefinition(name="bili", bilibili_space_urls=["7033507"]))[0]
+    outcome = adapter.fetch_item(task)
+
+    assert cli.search_calls == []
+    assert [t.metadata["bvid"] for t in outcome.discovered_tasks] == ["BV1aaa000001"]
+
+
+def test_bilibili_adapter_fetch_space_via_cli_tolerates_search_failures() -> None:
+    settings = BilibiliSettings(space_discovery_backend="cli", space_discovery_max_videos=3)
+    cli = FakeSpaceCli(
+        videos=[{"bvid": "BV1aaa000001", "aid": 111}],
+        user_info={"name": "TargetUploader"},
+        search_error=RuntimeError("upstream timeout"),
+    )
+    adapter = BilibiliAdapter(settings, CrawlSettings(), space_cli=cli)
+
+    task = adapter.discover(SeedDefinition(name="bili", bilibili_space_urls=["7033507"]))[0]
+    outcome = adapter.fetch_item(task)
+
+    assert outcome.errors == []
+    assert [t.metadata["bvid"] for t in outcome.discovered_tasks] == ["BV1aaa000001"]
 
 
 def test_bilibili_adapter_fetch_space_via_cli_marks_blocked_errors() -> None:

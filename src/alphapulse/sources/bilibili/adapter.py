@@ -165,11 +165,11 @@ class BilibiliAdapter:
 
     def _fetch_space_via_cli(self, task: CrawlTask, mid: str) -> FetchOutcome:
         outcome = FetchOutcome()
+        uid_int = int(mid)
+        count = self.settings.space_discovery_max_videos
+
         try:
-            videos = self.space_cli.get_user_videos(
-                uid=int(mid),
-                count=self.settings.space_discovery_max_videos,
-            )
+            videos = self.space_cli.get_user_videos(uid=uid_int, count=count)
         except Exception as exc:
             error_message = str(exc)
             outcome.blocked = bool(BLOCKED_ERROR_RE.search(error_message))
@@ -184,8 +184,41 @@ class BilibiliAdapter:
             mid=mid,
             task=task,
         )
+
+        search_videos = self._search_videos_by_username(uid_int=uid_int, count=count)
+        if search_videos:
+            self._append_space_tasks(
+                outcome=outcome,
+                seen_bvids=seen_bvids,
+                videos=search_videos,
+                mid=mid,
+                task=task,
+            )
+
         outcome.status_code = 200
         return outcome
+
+    def _search_videos_by_username(self, *, uid_int: int, count: int) -> list[dict[str, Any]]:
+        try:
+            user_info = self.space_cli.get_user_info(uid=uid_int)
+        except Exception:
+            return []
+
+        username = user_info.get("name") if isinstance(user_info, dict) else None
+        if not isinstance(username, str) or not username.strip():
+            return []
+
+        try:
+            search_results = self.space_cli.search_videos(keyword=username.strip(), count=count)
+        except Exception:
+            return []
+
+        target_mid = str(uid_int)
+        return [
+            video
+            for video in search_results
+            if isinstance(video, dict) and str(video.get("mid")) == target_mid
+        ]
 
     def _append_space_tasks(
         self,
