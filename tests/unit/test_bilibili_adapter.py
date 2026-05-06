@@ -361,6 +361,127 @@ def test_bilibili_adapter_refresh_comments_stops_on_duplicate_pages_and_maps_rep
     assert comments[1].parent_comment_entity_id == "1001"
 
 
+class FakeThreadApi:
+    """Single-page fake returning configurable root replies and per-root sub-reply lists."""
+
+    def __init__(
+        self,
+        roots: list[dict[str, object]],
+        sub_replies: dict[int, list[dict[str, object]]] | None = None,
+    ) -> None:
+        self.roots = roots
+        self.sub_replies = sub_replies or {}
+        self.comment_calls = 0
+        self.reply_calls: list[int] = []
+
+    def get_comments(self, *, aid: int, next_cursor: int = 0, page: int = 1) -> BilibiliApiResult:
+        del aid, page
+        self.comment_calls += 1
+        if next_cursor > 0 or self.comment_calls > 1:
+            return BilibiliApiResult(
+                payload={"code": 0, "data": {"replies": [], "cursor": {"is_end": True, "next": 0}}},
+                status_code=200,
+            )
+        return BilibiliApiResult(
+            payload={
+                "code": 0,
+                "data": {"replies": self.roots, "cursor": {"is_end": True, "next": 0}},
+            },
+            status_code=200,
+        )
+
+    def get_replies(self, *, aid: int, root_rpid: int, page: int = 1) -> BilibiliApiResult:
+        del aid, page
+        self.reply_calls.append(root_rpid)
+        return BilibiliApiResult(
+            payload={
+                "code": 0,
+                "data": {
+                    "replies": self.sub_replies.get(root_rpid, []),
+                    "cursor": {"is_end": True},
+                },
+            },
+            status_code=200,
+        )
+
+
+def _make_reply(rpid: int, mid: str, message: str, *, parent: int = 0, rcount: int = 0) -> dict[str, object]:
+    return {
+        "rpid": rpid,
+        "parent": parent,
+        "rcount": rcount,
+        "like": 0,
+        "ctime": 1_776_205_308,
+        "member": {"mid": mid},
+        "content": {"message": message},
+    }
+
+
+def test_bilibili_adapter_refresh_comments_keeps_full_thread_when_author_replies() -> None:
+    adapter = BilibiliAdapter(BilibiliSettings(), CrawlSettings())
+    adapter.api = FakeThreadApi(
+        roots=[_make_reply(1001, "7", "outsider asks question", rcount=2)],
+        sub_replies={
+            1001: [
+                _make_reply(2001, "8", "another viewer chimes in", parent=1001),
+                _make_reply(2002, "42", "uploader answers", parent=1001),
+            ]
+        },
+    )
+
+    comments = adapter.refresh_comments(
+        ItemReference(
+            source="bilibili",
+            source_entity_id="123456",
+            canonical_url="https://www.bilibili.com/video/BV1xx411c7mu",
+            metadata={"owner_mid": "42"},
+        )
+    )
+
+    assert [c.source_entity_id for c in comments] == ["1001", "2001", "2002"]
+    assert [c.author_entity_id for c in comments] == ["7", "8", "42"]
+
+
+def test_bilibili_adapter_refresh_comments_drops_threads_without_author() -> None:
+    adapter = BilibiliAdapter(BilibiliSettings(), CrawlSettings())
+    adapter.api = FakeThreadApi(
+        roots=[
+            _make_reply(1001, "7", "no author here", rcount=1),
+            _make_reply(1002, "42", "uploader's own root", rcount=0),
+        ],
+        sub_replies={1001: [_make_reply(2001, "8", "still no author", parent=1001)]},
+    )
+
+    comments = adapter.refresh_comments(
+        ItemReference(
+            source="bilibili",
+            source_entity_id="123456",
+            canonical_url="https://www.bilibili.com/video/BV1xx411c7mu",
+            metadata={"owner_mid": "42"},
+        )
+    )
+
+    assert [c.source_entity_id for c in comments] == ["1002"]
+
+
+def test_bilibili_adapter_refresh_comments_returns_all_when_owner_mid_absent() -> None:
+    adapter = BilibiliAdapter(BilibiliSettings(), CrawlSettings())
+    adapter.api = FakeThreadApi(
+        roots=[_make_reply(1001, "7", "any thread", rcount=1)],
+        sub_replies={1001: [_make_reply(2001, "8", "any reply", parent=1001)]},
+    )
+
+    comments = adapter.refresh_comments(
+        ItemReference(
+            source="bilibili",
+            source_entity_id="123456",
+            canonical_url="https://www.bilibili.com/video/BV1xx411c7mu",
+        )
+    )
+
+    assert [c.source_entity_id for c in comments] == ["1001", "2001"]
+
+
 def test_bilibili_adapter_comment_task_uses_api_endpoint() -> None:
     adapter = BilibiliAdapter(BilibiliSettings(), CrawlSettings())
     task = adapter.comment_task_for_post(
