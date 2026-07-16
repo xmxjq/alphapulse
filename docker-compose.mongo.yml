@@ -1,0 +1,36 @@
+# Standalone MongoDB stack, separate from the crawler compose project.
+#
+#   docker compose -f docker-compose.mongo.yml up -d
+#
+# Set credentials in .env (untracked) next to this file:
+#   MONGO_ROOT_USERNAME=...
+#   MONGO_ROOT_PASSWORD=...
+# Credentials only take effect on FIRST start with an empty data volume;
+# to change them later, recreate the volume or use db.updateUser().
+#
+# Port 27017 is published on all host interfaces so machines on the local
+# network can connect. The crawler containers (separate compose project)
+# reach it via host.docker.internal:27017.
+name: alphapulse-mongo
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-alphapulse}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-change-me}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      # ping does not require auth, so this works with access control enabled
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping: 1}).ok"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  mongo_data:

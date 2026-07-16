@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent that runs scripts/mongo_backup.sh daily at 03:30.
+  Adjust the script path below if the repo lives elsewhere, then install:
+
+    cp scripts/com.alphapulse.mongo-backup.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.alphapulse.mongo-backup.plist
+
+  Must be a LaunchAgent (user session), not a LaunchDaemon: OrbStack's docker
+  socket belongs to the logged-in user.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alphapulse.mongo-backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/xmxjq/workspace/alphapulse/scripts/mongo_backup.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/xmxjq/Library/Logs/alphapulse-mongo-backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/xmxjq/Library/Logs/alphapulse-mongo-backup.log</string>
+</dict>
+</plist>
