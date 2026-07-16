@@ -7,6 +7,18 @@ benches an endpoint for a cooldown when it returns a blocked response.
 
 ## 1. Configure Xray
 
+If you have share links (`vless://`, `vmess://`, `trojan://`), generate the
+whole config from them — one inbound/outbound pair per link:
+
+```bash
+python3 scripts/xray_config_from_links.py 'vless://...' 'vless://...' > xray/config.json
+```
+
+It also prints the matching `[crawl.static_proxies] urls` list for
+`settings.toml`. Quote each link — they contain `?` and `&`.
+
+Or start from the example and fill servers in by hand:
+
 ```bash
 cp xray/config.example.json xray/config.json   # untracked, like settings.toml
 ```
