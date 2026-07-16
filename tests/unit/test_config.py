@@ -23,6 +23,19 @@ def test_load_settings_example() -> None:
     assert settings.sources.bilibili.space_discovery_backend == "api"
     assert settings.sources.bilibili.space_discovery_interval_minutes == 60
     assert settings.sources.bilibili.space_discovery_max_videos == 50
+    assert settings.sources.guba.enabled is False
+    assert str(settings.sources.guba.base_url) == "https://guba.eastmoney.com/"
+    assert settings.sources.guba.max_list_pages == 3
+    assert settings.sources.guba.reply_page_size == 30
+    assert settings.sources.guba.max_reply_pages == 40
+    assert settings.sources.guba.list_recrawl_minutes == 30
+    assert settings.sources.guba.request_interval_min_seconds == 2.0
+    assert settings.sources.guba.request_interval_max_seconds == 6.0
+    assert settings.sources.guba.max_retries == 3
+    assert settings.crawl.raw_store.enabled is False
+    assert settings.crawl.raw_store.root_path.name == "raw"
+    assert settings.crawl.raw_store.root_path.is_absolute()
+    assert settings.crawl.raw_store.compress is True
 
 
 def test_load_seed_catalog_example() -> None:
@@ -32,6 +45,7 @@ def test_load_seed_catalog_example() -> None:
     assert catalog.logical_sets[0].generators == ["cn-core-manual"]
     manual = catalog.generator_map()["cn-core-manual"]
     assert manual.bilibili_video_targets == ["BV1xx411c7mu"]
+    assert manual.guba_board_codes == ["zssh000001", "600519"]
 
 
 def test_load_settings_with_proxy_enabled(tmp_path: Path) -> None:

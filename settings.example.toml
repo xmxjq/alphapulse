@@ -55,6 +55,15 @@ https_only = true
 acquire_timeout_seconds = 3
 report_bad_on_block = true
 
+[crawl.raw_store]
+# Disk archive of raw HTTP responses: gzip blobs content-addressed by sha256
+# under {root_path}/blobs plus a {root_path}/fetch_log.db SQLite index that
+# records status, timing, content hash, block classification, and parser
+# errors per fetch. Used by sources.guba for debugging and reprocessing.
+enabled = false
+root_path = ".runtime/raw"
+compress = true
+
 [sources.xueqiu]
 enabled = true
 base_url = "https://xueqiu.com"
@@ -87,6 +96,25 @@ request_interval_max_seconds = 5.0
 
 [sources.bilibili.cookies]
 # SESSDATA = ""
+
+[sources.guba]
+# Eastmoney Guba (东方财富股吧). Board codes go in the seed catalog as
+# guba_board_codes: stock boards ("600519") and index boards ("zssh000001").
+enabled = false
+base_url = "https://guba.eastmoney.com"
+# List pages fetched per board per discovery cycle (80 posts per page).
+max_list_pages = 3
+reply_page_size = 30
+max_reply_pages = 40
+list_recrawl_minutes = 30
+# Per-request jitter in seconds; every request sleeps uniform(min, max) times
+# an adaptive backoff multiplier before firing. No login or cookies required.
+request_interval_min_seconds = 2.0
+request_interval_max_seconds = 6.0
+max_retries = 3
+# user_agent = "Mozilla/5.0 ..."  # defaults to a desktop browser UA
+
+[sources.guba.cookies]
 
 [web]
 # Bind address for `alphapulse web`. Default to loopback; expose intentionally.

@@ -70,6 +70,7 @@ class CrawlSettings(BaseModel):
     user_agent: str = "AlphaPulseBot/0.1"
     proxy: "CrawlProxySettings" = Field(default_factory=lambda: CrawlProxySettings())
     proxy_pool: "CrawlProxyPoolSettings" = Field(default_factory=lambda: CrawlProxyPoolSettings())
+    raw_store: "RawStoreSettings" = Field(default_factory=lambda: RawStoreSettings())
 
 
 class CrawlProxySettings(BaseModel):
@@ -94,6 +95,14 @@ class CrawlProxyPoolSettings(BaseModel):
     https_only: bool = True
     acquire_timeout_seconds: int = Field(default=3, ge=1)
     report_bad_on_block: bool = True
+
+
+class RawStoreSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    root_path: Path = Path(".runtime/raw")
+    compress: bool = True
 
 
 class XueqiuSettings(BaseModel):
@@ -135,11 +144,36 @@ class BilibiliSettings(BaseModel):
         return self
 
 
+class GubaSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    base_url: HttpUrl = "https://guba.eastmoney.com"
+    max_list_pages: int = Field(default=3, ge=1)
+    reply_page_size: int = Field(default=30, ge=1, le=100)
+    max_reply_pages: int = Field(default=40, ge=1)
+    list_recrawl_minutes: int = Field(default=30, ge=1)
+    request_interval_min_seconds: float = Field(default=2.0, ge=0.0)
+    request_interval_max_seconds: float = Field(default=6.0, ge=0.0)
+    max_retries: int = Field(default=3, ge=1)
+    user_agent: str | None = None
+    cookies: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_request_interval(self) -> "GubaSettings":
+        if self.request_interval_max_seconds < self.request_interval_min_seconds:
+            raise ValueError(
+                "sources.guba.request_interval_max_seconds must be >= request_interval_min_seconds"
+            )
+        return self
+
+
 class SourcesSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     xueqiu: XueqiuSettings = Field(default_factory=XueqiuSettings)
     bilibili: BilibiliSettings = Field(default_factory=BilibiliSettings)
+    guba: GubaSettings = Field(default_factory=GubaSettings)
 
 
 class WebSettings(BaseModel):
@@ -173,6 +207,7 @@ def load_settings(path: Path) -> Settings:
     settings = Settings.model_validate(payload)
     config_dir = path.parent.resolve()
     settings.crawl.state_path = _resolve_path(config_dir, settings.crawl.state_path)
+    settings.crawl.raw_store.root_path = _resolve_path(config_dir, settings.crawl.raw_store.root_path)
     settings.sources.xueqiu.seed_catalog_path = _resolve_path(config_dir, settings.sources.xueqiu.seed_catalog_path)
     if settings.crawl.state_backend == "sqlite":
         settings.crawl.state_path.parent.mkdir(parents=True, exist_ok=True)

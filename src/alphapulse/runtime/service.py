@@ -15,9 +15,11 @@ from alphapulse.runtime.state import StateStore
 from alphapulse.runtime.state_factory import build_state_store
 from alphapulse.seeds.discovery import SeedDiscoveryManager
 from alphapulse.sources.bilibili.adapter import BilibiliAdapter
+from alphapulse.sources.guba.adapter import GubaAdapter
 from alphapulse.sources.xueqiu.adapter import XueqiuAdapter
 from alphapulse.storage.base import StorageStore
 from alphapulse.storage.factory import build_store
+from alphapulse.storage.rawstore import build_raw_store
 
 
 logger = logging.getLogger(__name__)
@@ -330,6 +332,8 @@ class AlphaPulseService:
         if task.kind == "discover":
             if task.source == "bilibili" and task.metadata.get("seed_kind") == "space":
                 return timedelta(minutes=self.settings.sources.bilibili.space_discovery_interval_minutes)
+            if task.source == "guba":
+                return timedelta(minutes=self.settings.sources.guba.list_recrawl_minutes)
             return timedelta(minutes=self.settings.crawl.comment_refresh_minutes)
         if task.kind == "refresh_comments":
             return timedelta(minutes=self.settings.crawl.comment_refresh_minutes)
@@ -345,6 +349,12 @@ class AlphaPulseService:
             sources["xueqiu"] = XueqiuAdapter(self.settings.sources.xueqiu, self.settings.crawl)
         if self.settings.sources.bilibili.enabled:
             sources["bilibili"] = BilibiliAdapter(self.settings.sources.bilibili, self.settings.crawl)
+        if self.settings.sources.guba.enabled:
+            sources["guba"] = GubaAdapter(
+                self.settings.sources.guba,
+                self.settings.crawl,
+                raw_store=build_raw_store(self.settings),
+            )
         return sources
 
     def _adapter_for_task(self, task: CrawlTask) -> SourceAdapter:

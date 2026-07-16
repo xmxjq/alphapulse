@@ -332,3 +332,76 @@ bilibili_video_targets = ["BV1xx411c7mu"]
     assert stats.comments_written == 2
     assert store.posts[0].source == "bilibili"
     assert store.comments[1].parent_comment_entity_id == "1001"
+
+
+class FakeGubaClient:
+    def __init__(self, fixtures: Path) -> None:
+        self.fixtures = fixtures
+
+    def get(self, url: str):
+        from alphapulse.sources.guba.api import GubaHttpResult
+
+        if "/list," in url:
+            text = (self.fixtures / "list_stock.html").read_text(encoding="utf-8")
+        else:
+            text = (self.fixtures / "post_detail.html").read_text(encoding="utf-8")
+        return GubaHttpResult(url=url, status_code=200, text=text, duration_ms=10)
+
+    def post_replies(self, *, post_id: str, board_code: str, page: int):
+        from alphapulse.sources.guba.api import GubaHttpResult
+
+        del post_id, board_code, page
+        text = (self.fixtures / "replies.json").read_text(encoding="utf-8")
+        return GubaHttpResult(
+            url="https://guba.eastmoney.com/interface/GetData.aspx",
+            status_code=200,
+            text=text,
+            duration_ms=10,
+        )
+
+
+def test_service_runs_guba_cycle(tmp_path: Path) -> None:
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.xueqiu.enabled = False
+    settings.sources.bilibili.enabled = False
+    settings.sources.guba.enabled = True
+    settings.sources.guba.max_list_pages = 1
+    settings.crawl.raw_store.enabled = True
+    settings.crawl.raw_store.root_path = tmp_path / "raw"
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "guba-core"
+generators = ["manual-guba"]
+
+[[generators]]
+name = "manual-guba"
+type = "manual"
+guba_board_codes = ["600519"]
+""".strip()
+    )
+
+    store = FakeStore()
+    service = AlphaPulseService(settings, store=store)
+    service.sources["guba"].client = FakeGubaClient(Path("tests/fixtures/guba"))
+
+    stats = service.run_cycle(seed_set_name="guba-core")
+
+    # The list fixture has 3 entries; every detail fetch serves the same
+    # fixture post. Two entries carry comment counts, so two reply refreshes
+    # run (3 comments each: 2 live top-level + 1 nested child).
+    assert stats.posts_written == 3
+    assert stats.comments_written == 6
+    assert stats.blocked_responses == 0
+    assert store.posts[0].source == "guba"
+    assert {comment.post_entity_id for comment in store.comments} == {"1743987733", "1743507860"}
+    assert any(comment.parent_comment_entity_id == "9926112093" for comment in store.comments)
+    assert (tmp_path / "raw" / "fetch_log.db").exists()
+
+    # Second cycle within the recrawl windows: everything is claim-gated.
+    second = service.run_cycle(seed_set_name="guba-core")
+    assert second.posts_written == 0
+    assert second.comments_written == 0

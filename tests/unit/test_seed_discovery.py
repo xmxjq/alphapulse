@@ -236,6 +236,29 @@ def test_manual_seed_generator_emits_bilibili_space_urls() -> None:
     ]
 
 
+def test_manual_seed_generator_emits_guba_board_codes() -> None:
+    generator = ManualSeedGenerator()
+    items = generator.generate(
+        ManualGeneratorDefinition(name="manual", guba_board_codes=["zssh000001", "600519"]),
+        datetime.now(UTC),
+    )
+    assert [(item.kind, item.value) for item in items] == [
+        ("guba_board_code", "zssh000001"),
+        ("guba_board_code", "600519"),
+    ]
+
+
+def test_seed_compiler_preserves_guba_board_codes() -> None:
+    compiled = SeedCompiler().compile(
+        "cn-core",
+        [
+            GeneratedSeedItem(kind="guba_board_code", value="zssh000001"),
+            GeneratedSeedItem(kind="guba_board_code", value="600519"),
+        ],
+    )
+    assert compiled.guba_board_codes == ["600519", "zssh000001"]
+
+
 def test_seed_compiler_preserves_bilibili_targets() -> None:
     compiled = SeedCompiler().compile(
         "cn-core",

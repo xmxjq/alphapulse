@@ -67,6 +67,10 @@ class ManualSeedGenerator:
             GeneratedSeedItem(kind="bilibili_space_url", value=value)
             for value in definition.bilibili_space_urls
         )
+        items.extend(
+            GeneratedSeedItem(kind="guba_board_code", value=value)
+            for value in definition.guba_board_codes
+        )
         items.extend(GeneratedSeedItem(kind="stock_id", value=value) for value in definition.stock_ids)
         items.extend(GeneratedSeedItem(kind="topic_id", value=value) for value in definition.topic_ids)
         items.extend(GeneratedSeedItem(kind="user_id", value=value) for value in definition.user_ids)
@@ -150,6 +154,7 @@ class SeedCompiler:
             "post_url": set(),
             "bilibili_video_target": set(),
             "bilibili_space_url": set(),
+            "guba_board_code": set(),
             "stock_id": set(),
             "topic_id": set(),
             "user_id": set(),
@@ -168,6 +173,7 @@ class SeedCompiler:
             post_urls=sorted(buckets["post_url"]),
             bilibili_video_targets=sorted(buckets["bilibili_video_target"]),
             bilibili_space_urls=sorted(buckets["bilibili_space_url"]),
+            guba_board_codes=sorted(buckets["guba_board_code"]),
             stock_ids=sorted(buckets["stock_id"]),
             topic_ids=sorted(buckets["topic_id"]),
             user_ids=sorted(buckets["user_id"]),
