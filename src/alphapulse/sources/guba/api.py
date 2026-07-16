@@ -66,7 +66,7 @@ class GubaClient:
     def __init__(self, settings: GubaSettings, crawl_settings: CrawlSettings) -> None:
         self.settings = settings
         self.crawl_settings = crawl_settings
-        self.proxy_provider = _build_proxy_provider(crawl_settings)
+        self.proxy_provider = _build_proxy_provider(crawl_settings, source="guba")
         self._backoff_multiplier = 1.0
 
     def get(self, url: str) -> GubaHttpResult:

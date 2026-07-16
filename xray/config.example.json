@@ -1,0 +1,67 @@
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "tag": "in-tunnel-1",
+      "listen": "0.0.0.0",
+      "port": 10809,
+      "protocol": "http"
+    },
+    {
+      "tag": "in-tunnel-2",
+      "listen": "0.0.0.0",
+      "port": 10810,
+      "protocol": "http"
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "out-tunnel-1",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "server-1.example.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "REPLACE-WITH-UUID",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": { "serverName": "server-1.example.com" }
+      }
+    },
+    {
+      "tag": "out-tunnel-2",
+      "protocol": "vmess",
+      "settings": {
+        "vnext": [
+          {
+            "address": "server-2.example.com",
+            "port": 443,
+            "users": [{ "id": "REPLACE-WITH-UUID", "alterId": 0 }]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "wsSettings": { "path": "/ws" }
+      }
+    }
+  ],
+  "routing": {
+    "rules": [
+      { "type": "field", "inboundTag": ["in-tunnel-1"], "outboundTag": "out-tunnel-1" },
+      { "type": "field", "inboundTag": ["in-tunnel-2"], "outboundTag": "out-tunnel-2" }
+    ]
+  }
+}

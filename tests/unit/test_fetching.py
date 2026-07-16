@@ -8,7 +8,9 @@ from alphapulse.sources.fetching import (
     ProxyLease,
     ProxyPoolProvider,
     ScraplingClient,
+    StaticListProxyProvider,
     _browser_cookies,
+    _build_proxy_provider,
     _response_text,
 )
 
@@ -266,3 +268,77 @@ def test_scrapling_client_returns_error_after_retry_exhaustion(monkeypatch: pyte
     assert result.error_message == "dial tcp failed"
     assert result.proxy_url == "http://2.2.2.2:8080"
     assert reported == ["1.1.1.1:8080", "2.2.2.2:8080"]
+
+
+def _static_settings(**overrides) -> CrawlSettings:
+    payload = {
+        "proxy": {"enabled": True, "provider": "static_list"},
+        "static_proxies": {"urls": ["http://xray:10809", "xray:10810"], "cooldown_seconds": 60},
+    }
+    payload.update(overrides)
+    return CrawlSettings.model_validate(payload)
+
+
+def test_static_list_provider_rotates_round_robin() -> None:
+    provider = StaticListProxyProvider(_static_settings().static_proxies)
+
+    acquired = [provider.acquire().proxy_url for _ in range(4)]
+
+    assert acquired == [
+        "http://xray:10809",
+        "http://xray:10810",
+        "http://xray:10809",
+        "http://xray:10810",
+    ]
+
+
+def test_static_list_provider_benches_bad_proxy_until_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = StaticListProxyProvider(_static_settings().static_proxies)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("alphapulse.sources.fetching.time.monotonic", lambda: clock["now"])
+
+    first = provider.acquire()
+    provider.report_bad(first, "blocked status=403")
+
+    assert [provider.acquire().proxy_url for _ in range(2)] == [
+        "http://xray:10810",
+        "http://xray:10810",
+    ]
+
+    clock["now"] += 61
+    assert provider.acquire().proxy_url == "http://xray:10809"
+
+
+def test_static_list_provider_uses_soonest_recovering_proxy_when_all_benched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = StaticListProxyProvider(_static_settings().static_proxies)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("alphapulse.sources.fetching.time.monotonic", lambda: clock["now"])
+
+    first = provider.acquire()
+    provider.report_bad(first, "blocked")
+    clock["now"] += 10
+    second = provider.acquire()
+    provider.report_bad(second, "blocked")
+
+    assert provider.acquire().proxy_url == "http://xray:10809"
+
+
+def test_build_proxy_provider_scopes_to_configured_sources() -> None:
+    settings = _static_settings(
+        proxy={"enabled": True, "provider": "static_list", "sources": ["guba"]}
+    )
+
+    assert isinstance(_build_proxy_provider(settings, source="guba"), StaticListProxyProvider)
+    assert _build_proxy_provider(settings, source="bilibili") is None
+    assert isinstance(_build_proxy_provider(settings), StaticListProxyProvider)
+
+
+def test_static_list_provider_requires_urls_when_selected() -> None:
+    with pytest.raises(ValueError):
+        CrawlSettings.model_validate(
+            {"proxy": {"enabled": True, "provider": "static_list"}, "static_proxies": {"urls": []}}
+        )

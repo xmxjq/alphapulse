@@ -45,15 +45,30 @@ user_agent = "AlphaPulseBot/0.1 (+https://github.com/xmxjq/alphapulse)"
 
 [crawl.proxy]
 enabled = false
-# provider = "proxy_pool"
+# provider: "proxy_pool" (rotating public proxies via the proxy_pool service)
+# or "static_list" (fixed upstreams from [crawl.static_proxies], e.g. xray
+# tunnels — see docs/xray-proxy.md).
+# provider = "static_list"
 max_attempts = 2
 fail_open = false
+# Restrict which sources go through the proxy; empty = all sources. Keep
+# cookie-authenticated sources (bilibili, xueqiu) OFF rotating exits — the
+# same session hopping between IPs is a fast path to an account ban.
+sources = []
 
 [crawl.proxy_pool]
 base_url = "http://proxy_pool:5010"
 https_only = true
 acquire_timeout_seconds = 3
 report_bad_on_block = true
+
+[crawl.static_proxies]
+# Fixed proxy endpoints rotated round-robin, e.g. one HTTP inbound per xray
+# tunnel (see xray/config.example.json and the compose "xray" profile).
+# A proxy that returns a blocked/failed response sits out cooldown_seconds.
+urls = []
+# urls = ["http://xray:10809", "http://xray:10810"]
+cooldown_seconds = 300
 
 [crawl.raw_store]
 # Disk archive of raw HTTP responses: gzip blobs content-addressed by sha256

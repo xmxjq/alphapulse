@@ -24,6 +24,16 @@ services:
       - "8000:8000"
     environment:
       PYTHONUNBUFFERED: "1"
+  # Local xray client exposing one HTTP-proxy inbound per tunnel; pair with
+  # crawl.proxy.provider = "static_list" in settings.toml. Config is untracked:
+  #   cp xray/config.example.json xray/config.json   # then fill in your servers
+  #   docker compose --profile xray up -d xray
+  xray:
+    image: teddysun/xray:latest
+    restart: unless-stopped
+    profiles: ["xray"]
+    volumes:
+      - ./xray/config.json:/etc/xray/config.json:ro
   proxy_pool:
     image: jhao104/proxy_pool:latest
     restart: unless-stopped

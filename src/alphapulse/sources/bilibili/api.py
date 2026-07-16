@@ -58,7 +58,7 @@ class BilibiliApiClient:
     def __init__(self, settings: BilibiliSettings, crawl_settings: CrawlSettings) -> None:
         self.settings = settings
         self.crawl_settings = crawl_settings
-        self.proxy_provider = _build_proxy_provider(crawl_settings)
+        self.proxy_provider = _build_proxy_provider(crawl_settings, source="bilibili")
         self._backoff_multiplier = 1.0
         self._wbi_keys: tuple[str, str] | None = None
         self._wbi_keys_fetched_at: float = 0.0

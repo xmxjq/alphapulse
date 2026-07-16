@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib import parse, request
 from urllib.parse import urlparse
 
-from alphapulse.runtime.config import CrawlSettings, CrawlProxyPoolSettings, FetchMode, XueqiuSettings
+from alphapulse.runtime.config import (
+    CrawlSettings,
+    CrawlProxyPoolSettings,
+    CrawlStaticProxySettings,
+    FetchMode,
+    XueqiuSettings,
+)
 
 
 def _response_text(response: Any) -> str:
@@ -137,11 +145,55 @@ class ProxyPoolProvider:
         return url
 
 
+class StaticListProxyProvider:
+    """Rotates round-robin over a fixed proxy list (e.g. local xray tunnels).
+
+    A proxy reported bad sits out ``cooldown_seconds`` before re-entering the
+    rotation; if every proxy is cooling down, the one closest to recovery is
+    used anyway so a small pool never stalls the crawl.
+    """
+
+    provider_name = "static_list"
+
+    def __init__(self, settings: CrawlStaticProxySettings) -> None:
+        self.settings = settings
+        self._urls = [_proxy_url(url) for url in settings.urls]
+        self._benched_until: dict[str, float] = {}
+        self._next_index = 0
+        self._lock = threading.Lock()
+
+    def acquire(self) -> ProxyLease | None:
+        with self._lock:
+            if not self._urls:
+                return None
+            now = time.monotonic()
+            for _ in range(len(self._urls)):
+                url = self._urls[self._next_index % len(self._urls)]
+                self._next_index += 1
+                if self._benched_until.get(url, 0.0) <= now:
+                    return self._lease(url)
+            return self._lease(min(self._urls, key=lambda url: self._benched_until.get(url, 0.0)))
+
+    def report_bad(self, lease: ProxyLease, reason: str) -> None:
+        del reason
+        with self._lock:
+            self._benched_until[lease.proxy_url] = (
+                time.monotonic() + self.settings.cooldown_seconds
+            )
+
+    def _lease(self, url: str) -> ProxyLease:
+        return ProxyLease(
+            proxy_url=url,
+            delete_key=_proxy_delete_key(url),
+            provider_name=self.provider_name,
+        )
+
+
 class ScraplingClient:
     def __init__(self, source_settings: XueqiuSettings, crawl_settings: CrawlSettings) -> None:
         self.source_settings = source_settings
         self.crawl_settings = crawl_settings
-        self.proxy_provider = _build_proxy_provider(crawl_settings)
+        self.proxy_provider = _build_proxy_provider(crawl_settings, source="xueqiu")
 
     def fetch(self, url: str) -> FetchResult:
         attempts = self.crawl_settings.proxy.max_attempts if self.proxy_provider is not None else 1
@@ -256,9 +308,16 @@ class ScraplingClient:
         )
 
 
-def _build_proxy_provider(crawl_settings: CrawlSettings) -> ProxyProvider | None:
-    if not crawl_settings.proxy.enabled:
+def _build_proxy_provider(
+    crawl_settings: CrawlSettings, source: str | None = None
+) -> ProxyProvider | None:
+    proxy = crawl_settings.proxy
+    if not proxy.enabled:
         return None
-    if crawl_settings.proxy.provider == "proxy_pool":
+    if source is not None and proxy.sources and source not in proxy.sources:
+        return None
+    if proxy.provider == "proxy_pool":
         return ProxyPoolProvider(crawl_settings.proxy_pool)
+    if proxy.provider == "static_list":
+        return StaticListProxyProvider(crawl_settings.static_proxies)
     return None

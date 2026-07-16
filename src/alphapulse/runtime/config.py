@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 FetchMode = Literal["static", "dynamic", "stealth"]
 StorageBackend = Literal["clickhouse", "rqlite", "mongo"]
 StateBackend = Literal["sqlite", "rqlite"]
-ProxyProviderType = Literal["proxy_pool"]
+ProxyProviderType = Literal["proxy_pool", "static_list"]
 SpaceDiscoveryBackend = Literal["api", "cli"]
 
 
@@ -70,7 +70,22 @@ class CrawlSettings(BaseModel):
     user_agent: str = "AlphaPulseBot/0.1"
     proxy: "CrawlProxySettings" = Field(default_factory=lambda: CrawlProxySettings())
     proxy_pool: "CrawlProxyPoolSettings" = Field(default_factory=lambda: CrawlProxyPoolSettings())
+    static_proxies: "CrawlStaticProxySettings" = Field(
+        default_factory=lambda: CrawlStaticProxySettings()
+    )
     raw_store: "RawStoreSettings" = Field(default_factory=lambda: RawStoreSettings())
+
+    @model_validator(mode="after")
+    def validate_static_proxy_urls(self) -> "CrawlSettings":
+        if (
+            self.proxy.enabled
+            and self.proxy.provider == "static_list"
+            and not self.static_proxies.urls
+        ):
+            raise ValueError(
+                "crawl.static_proxies.urls must be non-empty when crawl.proxy.provider is 'static_list'"
+            )
+        return self
 
 
 class CrawlProxySettings(BaseModel):
@@ -80,6 +95,11 @@ class CrawlProxySettings(BaseModel):
     provider: ProxyProviderType | None = None
     max_attempts: int = Field(default=2, ge=1)
     fail_open: bool = False
+    # Source names ("guba", "xueqiu", "bilibili") that should use the proxy.
+    # Empty means all sources. Scoping matters when a source carries an
+    # authenticated cookie: routing it through rotating exits looks like
+    # account sharing to the site.
+    sources: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_enabled_provider(self) -> "CrawlProxySettings":
@@ -95,6 +115,17 @@ class CrawlProxyPoolSettings(BaseModel):
     https_only: bool = True
     acquire_timeout_seconds: int = Field(default=3, ge=1)
     report_bad_on_block: bool = True
+
+
+class CrawlStaticProxySettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Fixed upstream proxies (e.g. local xray tunnel inbounds), rotated
+    # round-robin. Bare "host:port" entries are treated as http proxies.
+    urls: list[str] = Field(default_factory=list)
+    # How long a proxy sits out after a blocked/failed request before it
+    # re-enters the rotation.
+    cooldown_seconds: int = Field(default=300, ge=0)
 
 
 class RawStoreSettings(BaseModel):
