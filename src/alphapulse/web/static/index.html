@@ -12,6 +12,7 @@
       <nav>
         <button data-tab="status" class="tab active">Status</button>
         <button data-tab="posts" class="tab">Posts</button>
+        <button data-tab="guba" class="tab">Guba</button>
       </nav>
       <span id="last-updated" class="meta"></span>
     </header>
@@ -49,6 +50,7 @@
             <select id="posts-source">
               <option value="">all</option>
               <option value="bilibili">bilibili</option>
+              <option value="guba">guba</option>
               <option value="xueqiu">xueqiu</option>
             </select>
           </label>
@@ -71,6 +73,43 @@
             <p class="meta">Select a post on the left to view content + comments.</p>
           </div>
         </div>
+      </section>
+
+      <section id="guba-view" class="view">
+        <div class="toolbar">
+          <label>
+            Errors to analyze
+            <select id="guba-limit">
+              <option>50</option>
+              <option selected>100</option>
+              <option>200</option>
+            </select>
+          </label>
+          <button id="guba-refresh">Refresh</button>
+          <span id="guba-meta" class="meta"></span>
+        </div>
+        <div class="grid">
+          <article id="guba-summary" class="card">
+            <h2>Guba crawl summary</h2>
+            <div class="body">Loading…</div>
+          </article>
+          <article id="guba-latest-run" class="card">
+            <h2>Latest run (all sources)</h2>
+            <div class="body">Loading…</div>
+          </article>
+        </div>
+        <article class="card">
+          <h2>Error patterns</h2>
+          <div id="guba-error-patterns" class="body">Loading…</div>
+        </article>
+        <article class="card">
+          <h2>Recent guba errors</h2>
+          <div id="guba-errors" class="body">Loading…</div>
+        </article>
+        <article class="card">
+          <h2>Latest guba posts</h2>
+          <div id="guba-posts" class="body">Loading…</div>
+        </article>
       </section>
     </main>
 

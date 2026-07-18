@@ -154,6 +154,12 @@ def test_posts_rejects_unknown_source(tmp_path: Path) -> None:
     assert response.status_code == 400
 
 
+def test_posts_and_errors_accept_guba_source(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    assert client.get("/api/posts", params={"source": "guba"}).status_code == 200
+    assert client.get("/api/errors", params={"source": "guba"}).status_code == 200
+
+
 def test_post_detail_returns_post_with_comments(tmp_path: Path) -> None:
     reader = FakeReader()
     reader.post_details[("bilibili", "123")] = _post_detail("123")

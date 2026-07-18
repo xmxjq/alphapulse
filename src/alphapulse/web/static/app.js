@@ -8,6 +8,7 @@ const state = {
   postsOffset: 0,
   selectedPostKey: null,
   statusTimer: null,
+  gubaLimit: 100,
 };
 
 function el(tag, attrs = {}, children = []) {
@@ -55,8 +56,7 @@ function setLastUpdated() {
   document.getElementById("last-updated").textContent = `updated ${new Date().toLocaleTimeString()}`;
 }
 
-function renderLatestRun(run) {
-  const target = document.querySelector("#latest-run .body");
+function renderRunStats(target, run) {
   target.innerHTML = "";
   if (!run) { target.appendChild(el("div", { class: "empty" }, "No runs recorded yet.")); return; }
   target.appendChild(el("div", { class: "stats" }, [
@@ -67,6 +67,10 @@ function renderLatestRun(run) {
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Comments"), el("div", { class: "value" }, String(run.comments_written))]),
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Errors"), el("div", { class: "value" }, String(run.errors))]),
   ]));
+}
+
+function renderLatestRun(run) {
+  renderRunStats(document.querySelector("#latest-run .body"), run);
 }
 
 function renderActivity(statusPayload) {
@@ -243,11 +247,92 @@ async function openPost(source, entityId) {
   }
 }
 
+function normalizeErrorMessage(message) {
+  return (message || "")
+    .replace(/https?:\/\/\S+/g, "<url>")
+    .replace(/\b[0-9a-f]{8,}\b/gi, "<id>")
+    .replace(/\d+/g, "<n>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200) || "(empty message)";
+}
+
+function renderGubaSummary(errors, posts) {
+  const target = document.querySelector("#guba-summary .body");
+  target.innerHTML = "";
+  const patterns = new Set(errors.map(e => normalizeErrorMessage(e.error_message)));
+  const lastError = errors.length ? errors[0].created_at : null;
+  const lastPost = posts.length ? posts[0].fetched_at : null;
+  target.appendChild(el("div", { class: "stats" }, [
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Errors fetched"), el("div", { class: "value" }, String(errors.length))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Error patterns"), el("div", { class: "value" }, String(patterns.size))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Last error"), el("div", { class: "value" }, fmtDate(lastError))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Last post fetched"), el("div", { class: "value" }, fmtDate(lastPost))]),
+  ]));
+}
+
+function renderGubaErrorPatterns(errors) {
+  const target = document.getElementById("guba-error-patterns");
+  target.innerHTML = "";
+  if (!errors.length) { target.appendChild(el("div", { class: "empty" }, "No guba errors recorded.")); return; }
+  const groups = new Map();
+  for (const e of errors) {
+    const key = normalizeErrorMessage(e.error_message);
+    if (!groups.has(key)) groups.set(key, { count: 0, lastSeen: e.created_at, sample: e });
+    const g = groups.get(key);
+    g.count += 1;
+    if (e.created_at > g.lastSeen) { g.lastSeen = e.created_at; g.sample = e; }
+  }
+  const sorted = [...groups.entries()].sort((a, b) => b[1].count - a[1].count);
+  const head = el("tr", {}, ["Count", "Pattern", "Last seen", "Sample URL"].map(h => el("th", {}, h)));
+  const rows = sorted.map(([pattern, g]) => el("tr", {}, [
+    el("td", { class: "num" }, String(g.count)),
+    el("td", { class: "err" }, pattern),
+    el("td", { class: "mono" }, fmtDate(g.lastSeen)),
+    el("td", { class: "mono" }, g.sample.url),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
+function renderGubaPosts(posts) {
+  const target = document.getElementById("guba-posts");
+  target.innerHTML = "";
+  if (!posts.length) { target.appendChild(el("div", { class: "empty" }, "No guba posts stored yet.")); return; }
+  const head = el("tr", {}, ["Fetched", "Title", "Likes", "Comments"].map(h => el("th", {}, h)));
+  const rows = posts.map(p => el("tr", {}, [
+    el("td", { class: "mono" }, fmtDate(p.fetched_at)),
+    el("td", {}, el("a", { href: p.canonical_url, target: "_blank", rel: "noopener" }, p.title || p.content_preview || "(untitled)")),
+    el("td", { class: "num" }, String(p.like_count ?? 0)),
+    el("td", { class: "num" }, String(p.comment_count ?? 0)),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
+async function refreshGuba() {
+  const meta = document.getElementById("guba-meta");
+  try {
+    const [errorsPayload, statusPayload, postsPayload] = await Promise.all([
+      fetchJSON(`/api/errors?source=guba&limit=${state.gubaLimit}`),
+      fetchJSON("/api/status"),
+      fetchJSON("/api/posts?source=guba&limit=10"),
+    ]);
+    renderGubaSummary(errorsPayload.errors, postsPayload.posts);
+    renderRunStats(document.querySelector("#guba-latest-run .body"), statusPayload.latest_run);
+    renderGubaErrorPatterns(errorsPayload.errors);
+    renderErrorsTable(document.getElementById("guba-errors"), errorsPayload.errors);
+    renderGubaPosts(postsPayload.posts);
+    meta.textContent = `updated ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    meta.textContent = `error: ${err.message}`;
+  }
+}
+
 function switchTab(tab) {
   state.activeTab = tab;
   for (const b of document.querySelectorAll(".tab")) b.classList.toggle("active", b.dataset.tab === tab);
   for (const v of document.querySelectorAll(".view")) v.classList.toggle("active", v.id === `${tab}-view`);
   if (tab === "posts") refreshPosts();
+  if (tab === "guba") refreshGuba();
 }
 
 function wireEvents() {
@@ -273,12 +358,20 @@ function wireEvents() {
     state.postsOffset += state.postsLimit;
     refreshPosts();
   });
+  document.getElementById("guba-limit").addEventListener("change", (e) => {
+    state.gubaLimit = Number(e.target.value);
+    refreshGuba();
+  });
+  document.getElementById("guba-refresh").addEventListener("click", refreshGuba);
 }
 
 function start() {
   wireEvents();
   refreshStatus();
-  state.statusTimer = setInterval(refreshStatus, POLL_INTERVAL_MS);
+  state.statusTimer = setInterval(() => {
+    refreshStatus();
+    if (state.activeTab === "guba") refreshGuba();
+  }, POLL_INTERVAL_MS);
 }
 
 document.addEventListener("DOMContentLoaded", start);

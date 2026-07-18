@@ -20,7 +20,7 @@ from alphapulse.web.models import (
 
 
 RECENT_URL_WINDOW = timedelta(hours=1)
-ALLOWED_SOURCES = {"bilibili", "xueqiu"}
+ALLOWED_SOURCES = {"bilibili", "xueqiu", "guba"}
 CONTENT_PREVIEW_CHARS = 280
 
 
