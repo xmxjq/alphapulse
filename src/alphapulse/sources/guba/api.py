@@ -23,7 +23,7 @@ DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
 
-BLOCKED_KINDS = {"http_403", "http_429", "captcha", "login_redirect"}
+BLOCKED_KINDS = {"http_403", "http_429", "captcha", "login_redirect", "soft_block"}
 
 
 def classify_block(status_code: int, text: str, final_url: str) -> str | None:
@@ -69,8 +69,8 @@ class GubaClient:
         self.proxy_provider = _build_proxy_provider(crawl_settings, source="guba")
         self._backoff_multiplier = 1.0
 
-    def get(self, url: str) -> GubaHttpResult:
-        return self._request("GET", url, form=None)
+    def get(self, url: str, *, expect_marker: str | None = None) -> GubaHttpResult:
+        return self._request("GET", url, form=None, expect_marker=expect_marker)
 
     def post_replies(self, *, post_id: str, board_code: str, page: int) -> GubaHttpResult:
         base = str(self.settings.base_url)
@@ -92,6 +92,7 @@ class GubaClient:
         *,
         form: dict[str, str] | None,
         referer: str | None = None,
+        expect_marker: str | None = None,
     ) -> GubaHttpResult:
         attempts = max(1, self.settings.max_retries)
         last_result: GubaHttpResult | None = None
@@ -175,6 +176,18 @@ class GubaClient:
 
             duration_ms = int((time.monotonic() - started) * 1000)
             block_kind = classify_block(status_code, text, final_url)
+            if (
+                block_kind is None
+                and expect_marker is not None
+                and expect_marker not in text
+                and "/error" not in final_url.lower()
+            ):
+                # An HTTP 200 page missing its expected data payload is a
+                # WAF/soft-block page classify_block cannot recognize by
+                # status or shape; flagging it blocked engages retries,
+                # adaptive backoff, and proxy rotation instead of letting it
+                # surface downstream as a parse error.
+                block_kind = "soft_block"
             blocked = block_kind in BLOCKED_KINDS
             result = GubaHttpResult(
                 url=final_url,

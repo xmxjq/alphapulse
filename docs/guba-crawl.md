@@ -21,6 +21,12 @@ This guide shows how to enable and run the Eastmoney Guba (东方财富股吧) c
   with the full content, `post_mod_count`/`post_mod_time` (edit tracking), and
   `post_state`. Deleted/missing posts redirect to `/error?type=2` and are
   recorded with `block_kind = "deleted"`.
+- **Soft blocks**: some egress IPs get served an HTTP 200 page without the
+  `article_list` payload. The client detects the missing payload on list
+  pages, records `block_kind = "soft_block"`, and retries with adaptive
+  backoff and proxy rotation (up to `max_retries`). If every retry fails,
+  the run records `Blocked (soft_block)` — switch egress (see
+  `docs/xray-proxy.md`) or wait out the block.
 - **Replies** come from a form-encoded POST to `/interface/GetData.aspx`
   (`path=reply/api/Reply/ArticleNewReplyList`), returning plain JSON.
 - **Resurfacing**: posts bumped by new replies reappear at the top of list
@@ -89,6 +95,14 @@ any captcha/login redirect.
 uv run python scripts/guba_live_check.py --boards zssh000001,600519 --list-pages 2 --details 15 --reply-posts 5
 ```
 
+To test through an xray tunnel (or any HTTP proxy) using the same
+`static_list` provider the crawler uses in production, pass `--proxy`
+(repeatable for a rotating pool):
+
+```bash
+uv run python scripts/guba_live_check.py --boards 600900 --list-pages 1 --details 4 --proxy http://127.0.0.1:10809
+```
+
 ## Raw Store Layout
 
 - Blobs: `{root_path}/blobs/{sha256[:2]}/{sha256}.gz` — content-addressed, so
@@ -97,6 +111,6 @@ uv run python scripts/guba_live_check.py --boards zssh000001,600519 --list-pages
 - Fetch log: `{root_path}/fetch_log.db` (SQLite) — one row per HTTP request
   with `fetched_at`, `url`, `method`, `task_kind`, `status_code`,
   `duration_ms`, `content_sha256`, `block_kind`
-  (`http_403 | http_429 | http_5xx | captcha | login_redirect | empty_payload | deleted`),
+  (`http_403 | http_429 | http_5xx | captcha | login_redirect | soft_block | empty_payload | deleted`),
   `parser_error`, and a `meta_json` blob (`post_id`, `board_code`, `page`,
   `post_mod_count`, ...).

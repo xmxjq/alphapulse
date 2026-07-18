@@ -37,6 +37,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--raw-dir", default=".runtime/raw-livecheck", help="Raw store directory")
     parser.add_argument("--interval-min", type=float, default=2.0)
     parser.add_argument("--interval-max", type=float, default=6.0)
+    parser.add_argument(
+        "--proxy",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="Route requests through this proxy via the static_list provider "
+        "(e.g. http://127.0.0.1:10809); repeat for a rotating pool",
+    )
     return parser.parse_args()
 
 
@@ -50,8 +58,13 @@ def main() -> int:
         request_interval_min_seconds=args.interval_min,
         request_interval_max_seconds=args.interval_max,
     )
+    crawl_settings = CrawlSettings()
+    if args.proxy:
+        crawl_settings.proxy.enabled = True
+        crawl_settings.proxy.provider = "static_list"
+        crawl_settings.static_proxies.urls = list(args.proxy)
     raw_store = RawResponseStore(Path(args.raw_dir))
-    adapter = GubaAdapter(settings, CrawlSettings(), raw_store=raw_store)
+    adapter = GubaAdapter(settings, crawl_settings, raw_store=raw_store)
 
     started = datetime.now(UTC)
     posts_parsed = 0
@@ -162,6 +175,8 @@ def main() -> int:
     print("GUBA LIVE CHECK REPORT")
     print("=" * 62)
     print(f"boards:            {', '.join(boards)}")
+    if args.proxy:
+        print(f"egress:            static_list proxies: {', '.join(args.proxy)}")
     print(f"wall time:         {wall_seconds:.0f}s")
     print(f"requests:          {total}")
     print(f"success rate:      {success_rate:.1f}%")

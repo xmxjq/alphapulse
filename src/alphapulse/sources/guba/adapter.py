@@ -77,7 +77,10 @@ class GubaAdapter:
         return tasks
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
-        response = self.client.get(str(task.url))
+        # List pages always embed `var article_list=`; its absence on a 200
+        # response means a soft-block page, so let the client retry it.
+        expect_marker = "var article_list" if task.kind == "discover" else None
+        response = self.client.get(str(task.url), expect_marker=expect_marker)
 
         if response.status_code == 0:
             self._save_raw(response, task.kind, requested_url=str(task.url))

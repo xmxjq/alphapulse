@@ -28,10 +28,12 @@ class FakeGubaClient:
         self.get_responses = get_responses or {}
         self.reply_pages = reply_pages or {}
         self.get_calls: list[str] = []
+        self.get_markers: list[str | None] = []
         self.reply_calls: list[tuple[str, str, int]] = []
 
-    def get(self, url: str) -> GubaHttpResult:
+    def get(self, url: str, *, expect_marker: str | None = None) -> GubaHttpResult:
         self.get_calls.append(url)
+        self.get_markers.append(expect_marker)
         return self.get_responses[url]
 
     def post_replies(self, *, post_id: str, board_code: str, page: int) -> GubaHttpResult:
@@ -328,6 +330,90 @@ def test_classify_block() -> None:
     normal_page = "<html>" + "content " * 2000 + "em_capt.js 验证码</html>"
     assert classify_block(200, normal_page, "https://guba.eastmoney.com/list,600519.html") is None
     assert classify_block(200, "<html>ok</html>", "https://guba.eastmoney.com/x") is None
+
+
+def test_discover_requests_pass_article_list_marker(tmp_path) -> None:
+    list_url = f"{BASE}/list,600519.html"
+    detail_url = f"{BASE}/news,600519,1743987733.html"
+    client = FakeGubaClient(
+        {
+            list_url: _ok(list_url, _read("list_stock.html")),
+            detail_url: _ok(detail_url, _read("post_detail.html")),
+        }
+    )
+    adapter = _adapter(tmp_path, client)
+
+    adapter.fetch_item(_discover_task(list_url, "600519"))
+    adapter.fetch_item(
+        CrawlTask(
+            source="guba",
+            kind="fetch_post",
+            url=detail_url,
+            seed_name="test-seed",
+            metadata={"post_id": "1743987733", "board_code": "600519"},
+        )
+    )
+    assert client.get_markers == ["var article_list", None]
+
+
+def _client_with_dispatch(monkeypatch, pages: list[tuple[int, str, str]], max_retries: int = 3):
+    from alphapulse.sources.guba import api as guba_api
+
+    settings = GubaSettings(
+        enabled=True,
+        max_retries=max_retries,
+        request_interval_min_seconds=0.0,
+        request_interval_max_seconds=0.0,
+    )
+    client = guba_api.GubaClient(settings, CrawlSettings())
+    calls: list[str] = []
+
+    def fake_dispatch(method, url, form, referer, proxy_url):
+        calls.append(url)
+        return pages[min(len(calls), len(pages)) - 1]
+
+    monkeypatch.setattr(client, "_dispatch", fake_dispatch)
+    monkeypatch.setattr(guba_api.time, "sleep", lambda _: None)
+    return client, calls
+
+
+def test_soft_block_when_expected_marker_missing(monkeypatch) -> None:
+    url = f"{BASE}/list,600519.html"
+    client, calls = _client_with_dispatch(
+        monkeypatch, [(200, "<html>access denied by waf</html>", url)], max_retries=3
+    )
+    result = client.get(url, expect_marker="var article_list")
+
+    assert result.blocked
+    assert result.block_kind == "soft_block"
+    assert len(calls) == 3  # retried up to max_retries
+
+
+def test_soft_block_recovers_on_retry(monkeypatch) -> None:
+    url = f"{BASE}/list,600519.html"
+    good = "<html><script>var article_list={\"re\":[]};</script></html>"
+    client, calls = _client_with_dispatch(
+        monkeypatch,
+        [(200, "<html>access denied</html>", url), (200, good, url)],
+        max_retries=3,
+    )
+    result = client.get(url, expect_marker="var article_list")
+
+    assert not result.blocked
+    assert result.block_kind is None
+    assert len(calls) == 2
+
+
+def test_marker_check_skips_error_redirects(monkeypatch) -> None:
+    url = f"{BASE}/news,600519,999.html"
+    client, calls = _client_with_dispatch(
+        monkeypatch, [(200, "<html>gone</html>", f"{BASE}/error?type=2")]
+    )
+    result = client.get(url, expect_marker="var article_list")
+
+    assert not result.blocked
+    assert result.block_kind is None
+    assert len(calls) == 1
 
 
 def test_adaptive_sleep_backoff(monkeypatch) -> None:
