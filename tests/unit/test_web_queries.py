@@ -291,6 +291,69 @@ def test_web_queries_annotates_guba_boards_with_seed_sets(tmp_path: Path) -> Non
     assert boards[1].seed_sets == []
 
 
+def test_web_queries_predicts_next_guba_crawl(tmp_path: Path) -> None:
+    state = StateStore(tmp_path / "state.db")
+    now = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
+    with state.connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO url_state (url, source, kind, seed_name, first_seen_at, last_seen_at, last_fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                # List page fetched 10 min ago: not due for 30m default interval.
+                ("https://guba.eastmoney.com/list,600900.html", "guba", "discover", "cn-core",
+                 now.isoformat(), now.isoformat(), (now - timedelta(minutes=10)).isoformat()),
+                # List page fetched 45 min ago: past the 30m gate, due now.
+                ("https://guba.eastmoney.com/list,zssh000001.html", "guba", "discover", "cn-core",
+                 now.isoformat(), now.isoformat(), (now - timedelta(minutes=45)).isoformat()),
+                # Deeper list page must not create its own board entry.
+                ("https://guba.eastmoney.com/list,600900_2.html", "guba", "discover", "cn-core",
+                 now.isoformat(), now.isoformat(), (now - timedelta(minutes=45)).isoformat()),
+                # Post fetched 1h ago: 360m gate, not due.
+                ("https://guba.eastmoney.com/news,600900,111.html", "guba", "fetch_post", "cn-core",
+                 now.isoformat(), now.isoformat(), (now - timedelta(hours=1)).isoformat()),
+                # Comment refresh fetched 2h ago: 60m gate, due now.
+                ("https://guba.eastmoney.com/news,600900,111.html#comments", "guba", "refresh_comments",
+                 "cn-core", now.isoformat(), now.isoformat(), (now - timedelta(hours=2)).isoformat()),
+            ],
+        )
+    state.store_compiled_seed_set(
+        SeedDefinition(name="cn-core", guba_board_codes=["600900", "zssh000001", "300750"]),
+        refreshed_at=now,
+    )
+    reader = StubReader()
+    reader.latest = CrawlRun(
+        run_id="r1",
+        started_at=now - timedelta(minutes=6),
+        finished_at=now - timedelta(minutes=2),
+        status="succeeded",
+        seeds_processed=1, tasks_enqueued=0, pages_fetched=0, posts_written=0,
+        comments_written=0, authors_written=0, blocked_responses=0, errors=0, skipped_tasks=0,
+    )
+    queries = WebQueries(reader=reader, state=state)
+
+    plan = queries.guba_next_crawl(now=now)
+
+    by_code = {b.board_code: b for b in plan.boards}
+    assert set(by_code) == {"600900", "zssh000001", "300750"}
+    assert not by_code["600900"].due_now
+    assert by_code["600900"].eligible_at == now + timedelta(minutes=20)
+    assert by_code["zssh000001"].due_now
+    assert by_code["300750"].due_now  # seeded but never crawled
+    assert by_code["300750"].last_fetched_at is None
+    # Due boards sort ahead of waiting boards.
+    assert plan.boards[-1].board_code == "600900"
+
+    forecasts = {f.kind: f for f in plan.task_forecasts}
+    assert forecasts["fetch_post"].tracked == 1
+    assert forecasts["fetch_post"].due_now == 0
+    assert forecasts["fetch_post"].next_eligible_at == now + timedelta(hours=5)
+    assert forecasts["refresh_comments"].due_now == 1
+    # Next cycle estimated from run end + default 300s poll interval.
+    assert plan.next_cycle_at == now + timedelta(minutes=3)
+
+
 def test_web_queries_status_counts_recent_url_activity(tmp_path: Path) -> None:
     state = StateStore(tmp_path / "state.db")
     now = datetime(2026, 4, 22, 12, 0, tzinfo=UTC)

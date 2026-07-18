@@ -62,6 +62,38 @@ class GubaBoardsResponse(BaseModel):
     boards: list[GubaBoardSummary]
 
 
+class NextCrawlBoard(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    board_code: str
+    seed_name: str | None
+    last_fetched_at: datetime | None
+    eligible_at: datetime | None
+    due_now: bool
+
+
+class TaskKindForecast(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    tracked: int
+    due_now: int
+    next_eligible_at: datetime | None
+
+
+class GubaNextCrawlResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: datetime
+    next_cycle_at: datetime | None
+    poll_interval_seconds: int
+    list_recrawl_minutes: int
+    post_recrawl_minutes: int
+    comment_refresh_minutes: int
+    boards: list[NextCrawlBoard]
+    task_forecasts: list[TaskKindForecast]
+
+
 class StatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

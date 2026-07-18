@@ -1,28 +1,35 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
-from alphapulse.runtime.config import Settings
+from alphapulse.runtime.config import CrawlSettings, GubaSettings, Settings
 from alphapulse.runtime.state import StateStore
 from alphapulse.web.models import (
     Comment,
     CrawlError,
     CrawlRun,
     GubaBoardSummary,
+    GubaNextCrawlResponse,
+    NextCrawlBoard,
     PostDetail,
     PostDetailResponse,
     PostSummary,
     SeedSetSummary,
     StatusResponse,
+    TaskKindForecast,
 )
 
 
 RECENT_URL_WINDOW = timedelta(hours=1)
 ALLOWED_SOURCES = {"bilibili", "xueqiu", "guba"}
 CONTENT_PREVIEW_CHARS = 280
+# Page-1 board list URLs only; deeper pages (list,{code}_{N}.html) are
+# re-discovered from page 1, so page 1 is what drives the next crawl.
+GUBA_LIST_URL_RE = re.compile(r"/list,([A-Za-z0-9]+)\.html$")
 
 
 class StorageReader(Protocol):
@@ -470,6 +477,7 @@ def build_reader(settings: Settings) -> StorageReader:
 class WebQueries:
     reader: StorageReader
     state: StateStore
+    settings: Settings | None = None
 
     def recent_url_activity(self, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)
@@ -508,6 +516,87 @@ class WebQueries:
             seed_sets=self.seed_set_summaries(),
         )
 
+    def guba_next_crawl(self, now: datetime | None = None) -> GubaNextCrawlResponse:
+        """Predict the crawler's next guba work from url_state claim gates.
+
+        A URL is re-fetched on the first cycle after last_fetched_at plus the
+        kind's min-age (mirrors CrawlerService._min_age_for_task); URLs never
+        fetched are due immediately.
+        """
+        now = now or datetime.now(UTC)
+        guba = self.settings.sources.guba if self.settings else GubaSettings()
+        crawl = self.settings.crawl if self.settings else CrawlSettings()
+        ages = {
+            "discover": timedelta(minutes=guba.list_recrawl_minutes),
+            "fetch_post": timedelta(minutes=crawl.post_recrawl_minutes),
+            "refresh_comments": timedelta(minutes=crawl.comment_refresh_minutes),
+        }
+
+        with self.state.connection() as conn:
+            rows = conn.execute(
+                "SELECT url, kind, seed_name, last_fetched_at FROM url_state WHERE source = 'guba'"
+            ).fetchall()
+
+        boards: dict[str, NextCrawlBoard] = {}
+        task_eligibles: dict[str, list[datetime | None]] = {"fetch_post": [], "refresh_comments": []}
+        for row in rows:
+            kind = str(row["kind"])
+            fetched = _coerce_datetime(row["last_fetched_at"]) if row["last_fetched_at"] else None
+            if kind == "discover":
+                match = GUBA_LIST_URL_RE.search(str(row["url"]))
+                if match is None:
+                    continue
+                eligible = fetched + ages["discover"] if fetched else None
+                boards[match.group(1)] = NextCrawlBoard(
+                    board_code=match.group(1),
+                    seed_name=row["seed_name"],
+                    last_fetched_at=fetched,
+                    eligible_at=eligible,
+                    due_now=eligible is None or eligible <= now,
+                )
+            elif kind in task_eligibles:
+                task_eligibles[kind].append(fetched + ages[kind] if fetched else None)
+
+        # Seeded boards with no url_state row yet have never been crawled.
+        for seed in self.state.load_compiled_seed_sets():
+            for code in seed.guba_board_codes:
+                if code not in boards:
+                    boards[code] = NextCrawlBoard(
+                        board_code=code,
+                        seed_name=seed.name,
+                        last_fetched_at=None,
+                        eligible_at=None,
+                        due_now=True,
+                    )
+
+        forecasts = []
+        for kind, eligibles in task_eligibles.items():
+            future = [e for e in eligibles if e is not None and e > now]
+            forecasts.append(
+                TaskKindForecast(
+                    kind=kind,
+                    tracked=len(eligibles),
+                    due_now=len(eligibles) - len(future),
+                    next_eligible_at=min(future) if future else None,
+                )
+            )
+
+        latest = self.reader.latest_run()
+        next_cycle_at = None
+        if latest is not None and latest.finished_at is not None:
+            next_cycle_at = latest.finished_at + timedelta(seconds=crawl.poll_interval_seconds)
+
+        return GubaNextCrawlResponse(
+            generated_at=now,
+            next_cycle_at=next_cycle_at,
+            poll_interval_seconds=crawl.poll_interval_seconds,
+            list_recrawl_minutes=guba.list_recrawl_minutes,
+            post_recrawl_minutes=crawl.post_recrawl_minutes,
+            comment_refresh_minutes=crawl.comment_refresh_minutes,
+            boards=sorted(boards.values(), key=lambda b: (not b.due_now, b.eligible_at or now)),
+            task_forecasts=forecasts,
+        )
+
     def guba_boards(self, limit: int = 50) -> list[GubaBoardSummary]:
         boards = self.reader.list_guba_boards(limit)
         membership: dict[str, list[str]] = {}
@@ -531,4 +620,5 @@ def build_queries(settings: Settings) -> WebQueries:
     return WebQueries(
         reader=build_reader(settings),
         state=StateStore(settings.crawl.state_path),
+        settings=settings,
     )

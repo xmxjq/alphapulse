@@ -11,6 +11,7 @@ from alphapulse.runtime.config import Settings
 from alphapulse.web.models import (
     ErrorsResponse,
     GubaBoardsResponse,
+    GubaNextCrawlResponse,
     PostDetailResponse,
     PostsResponse,
     RunsResponse,
@@ -84,6 +85,10 @@ def create_app(settings: Settings, queries: WebQueries | None = None) -> FastAPI
         q: WebQueries = Depends(get_queries),
     ) -> GubaBoardsResponse:
         return GubaBoardsResponse(boards=q.guba_boards(limit))
+
+    @app.get("/api/guba/next-crawl", response_model=GubaNextCrawlResponse)
+    def guba_next_crawl(q: WebQueries = Depends(get_queries)) -> GubaNextCrawlResponse:
+        return q.guba_next_crawl()
 
     @app.get("/api/posts/{source}/{entity_id}", response_model=PostDetailResponse)
     def post_detail(

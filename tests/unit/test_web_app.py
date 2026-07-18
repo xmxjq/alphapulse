@@ -165,6 +165,17 @@ def test_posts_and_errors_accept_guba_source(tmp_path: Path) -> None:
     assert client.get("/api/errors", params={"source": "guba"}).status_code == 200
 
 
+def test_guba_next_crawl_returns_plan(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    response = client.get("/api/guba/next-crawl")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["boards"] == []
+    assert payload["next_cycle_at"] is None
+    kinds = {f["kind"] for f in payload["task_forecasts"]}
+    assert kinds == {"fetch_post", "refresh_comments"}
+
+
 def test_guba_boards_returns_grouped_results(tmp_path: Path) -> None:
     reader = FakeReader()
     reader.guba_boards = [

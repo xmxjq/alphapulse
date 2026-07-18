@@ -308,6 +308,64 @@ function setGubaBoardFilter(code) {
   renderGubaPosts();
 }
 
+function fmtEta(iso, nowMs) {
+  if (!iso) return "now";
+  const ms = new Date(iso).getTime() - nowMs;
+  if (ms <= 0) return "now";
+  if (ms < 60_000) return `in ${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `in ${Math.round(ms / 60_000)}m`;
+  return `in ${(ms / 3_600_000).toFixed(1)}h`;
+}
+
+function renderGubaNextCrawl(plan) {
+  const target = document.getElementById("guba-next-crawl");
+  target.innerHTML = "";
+  const nowMs = new Date(plan.generated_at).getTime();
+  const dueBoards = plan.boards.filter(b => b.due_now).length;
+  const posts = plan.task_forecasts.find(f => f.kind === "fetch_post") || { due_now: 0, tracked: 0, next_eligible_at: null };
+  const comments = plan.task_forecasts.find(f => f.kind === "refresh_comments") || { due_now: 0, tracked: 0, next_eligible_at: null };
+
+  target.appendChild(el("div", { class: "stats" }, [
+    el("div", { class: "stat" }, [
+      el("div", { class: "label" }, "Next cycle"),
+      el("div", { class: "value" }, plan.next_cycle_at ? fmtEta(plan.next_cycle_at, nowMs) : "unknown"),
+    ]),
+    el("div", { class: "stat" }, [
+      el("div", { class: "label" }, "Boards due"),
+      el("div", { class: "value" }, `${dueBoards} / ${plan.boards.length}`),
+    ]),
+    el("div", { class: "stat" }, [
+      el("div", { class: "label" }, "Posts due"),
+      el("div", { class: "value" }, `${posts.due_now} / ${posts.tracked}`),
+    ]),
+    el("div", { class: "stat" }, [
+      el("div", { class: "label" }, "Comment refreshes due"),
+      el("div", { class: "value" }, `${comments.due_now} / ${comments.tracked}`),
+    ]),
+  ]));
+
+  if (plan.boards.length) {
+    const head = el("tr", {}, ["Board", "Seed", "Last crawled", "Next list crawl"].map(h => el("th", {}, h)));
+    const rows = plan.boards.map(b => el("tr", {}, [
+      el("td", { class: "mono" }, b.board_code),
+      el("td", {}, b.seed_name || "—"),
+      el("td", { class: "mono" }, b.last_fetched_at ? fmtDate(b.last_fetched_at) : "never"),
+      el("td", { class: b.due_now ? "status-ok" : "" },
+        b.due_now ? "next cycle" : `${fmtEta(b.eligible_at, nowMs)} (${fmtDate(b.eligible_at)})`),
+    ]));
+    target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+  } else {
+    target.appendChild(el("div", { class: "empty" }, "No guba boards seeded or tracked yet."));
+  }
+
+  target.appendChild(el("div", { class: "meta" }, [
+    `recrawl intervals: lists ${plan.list_recrawl_minutes}m · posts ${plan.post_recrawl_minutes}m · `
+    + `comments ${plan.comment_refresh_minutes}m · cycle every ${plan.poll_interval_seconds}s`
+    + (posts.next_eligible_at ? ` · next post due ${fmtEta(posts.next_eligible_at, nowMs)}` : "")
+    + (comments.next_eligible_at ? ` · next comment refresh due ${fmtEta(comments.next_eligible_at, nowMs)}` : ""),
+  ]));
+}
+
 function renderGubaBoards() {
   const target = document.getElementById("guba-boards");
   target.innerHTML = "";
@@ -368,16 +426,18 @@ function renderGubaPosts() {
 async function refreshGuba() {
   const meta = document.getElementById("guba-meta");
   try {
-    const [errorsPayload, statusPayload, postsPayload, boardsPayload] = await Promise.all([
+    const [errorsPayload, statusPayload, postsPayload, boardsPayload, nextCrawlPayload] = await Promise.all([
       fetchJSON(`/api/errors?source=guba&limit=${state.gubaLimit}`),
       fetchJSON("/api/status"),
       fetchJSON("/api/posts?source=guba&limit=100"),
       fetchJSON("/api/guba/boards?limit=50"),
+      fetchJSON("/api/guba/next-crawl"),
     ]);
     state.gubaPosts = postsPayload.posts;
     state.gubaBoards = boardsPayload.boards;
     renderGubaSummary(errorsPayload.errors, postsPayload.posts);
     renderRunStats(document.querySelector("#guba-latest-run .body"), statusPayload.latest_run);
+    renderGubaNextCrawl(nextCrawlPayload);
     renderGubaBoards();
     renderGubaErrorPatterns(errorsPayload.errors);
     renderErrorsTable(document.getElementById("guba-errors"), errorsPayload.errors);

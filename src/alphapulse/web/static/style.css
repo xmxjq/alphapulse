@@ -107,6 +107,9 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
 .empty { color: var(--muted); font-style: italic; padding: 12px; }
 .err { color: var(--err); }
 
+#guba-next-crawl .stats { margin-bottom: 10px; }
+#guba-next-crawl table { margin-bottom: 8px; }
+
 .board-row { cursor: pointer; }
 .board-row:hover td { background: var(--panel-2); }
 .board-row.active td { background: var(--panel-2); }
