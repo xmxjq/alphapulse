@@ -9,6 +9,9 @@ const state = {
   selectedPostKey: null,
   statusTimer: null,
   gubaLimit: 100,
+  gubaBoards: [],
+  gubaPosts: [],
+  gubaBoardFilter: "",
 };
 
 function el(tag, attrs = {}, children = []) {
@@ -294,13 +297,67 @@ function renderGubaErrorPatterns(errors) {
   target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
 }
 
-function renderGubaPosts(posts) {
+function postBoardCode(post) {
+  const match = /\/news,([^,]+),/.exec(post.canonical_url || "");
+  return match ? match[1] : "";
+}
+
+function setGubaBoardFilter(code) {
+  state.gubaBoardFilter = state.gubaBoardFilter === code ? "" : code;
+  renderGubaBoards();
+  renderGubaPosts();
+}
+
+function renderGubaBoards() {
+  const target = document.getElementById("guba-boards");
+  target.innerHTML = "";
+  if (!state.gubaBoards.length) {
+    target.appendChild(el("div", { class: "empty" }, "No guba posts stored yet."));
+    return;
+  }
+  const head = el("tr", {}, ["Board", "Seed sets", "Posts", "Comments", "Latest post", "Last fetched"].map(h => el("th", {}, h)));
+  const rows = state.gubaBoards.map(b => el("tr", {
+    class: `board-row ${b.board_code === state.gubaBoardFilter ? "active" : ""}`,
+    onclick: () => setGubaBoardFilter(b.board_code),
+  }, [
+    el("td", {}, [
+      el("a", {
+        href: `https://guba.eastmoney.com/list,${encodeURIComponent(b.board_code)}.html`,
+        target: "_blank", rel: "noopener",
+        onclick: (e) => e.stopPropagation(),
+      }, b.board_code),
+    ]),
+    el("td", {}, b.seed_sets.join(", ") || "—"),
+    el("td", { class: "num" }, String(b.post_count)),
+    el("td", { class: "num" }, String(b.comment_count)),
+    el("td", { class: "mono" }, fmtDate(b.latest_published_at)),
+    el("td", { class: "mono" }, fmtDate(b.latest_fetched_at)),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
+function renderGubaPosts() {
   const target = document.getElementById("guba-posts");
   target.innerHTML = "";
-  if (!posts.length) { target.appendChild(el("div", { class: "empty" }, "No guba posts stored yet.")); return; }
-  const head = el("tr", {}, ["Fetched", "Title", "Likes", "Comments"].map(h => el("th", {}, h)));
-  const rows = posts.map(p => el("tr", {}, [
+  const filtered = state.gubaBoardFilter
+    ? state.gubaPosts.filter(p => postBoardCode(p) === state.gubaBoardFilter)
+    : state.gubaPosts;
+  if (state.gubaBoardFilter) {
+    target.appendChild(el("div", { class: "filter-chip" }, [
+      el("span", {}, `board ${state.gubaBoardFilter} (${filtered.length} of last ${state.gubaPosts.length} fetched)`),
+      el("button", { onclick: () => setGubaBoardFilter(state.gubaBoardFilter) }, "clear"),
+    ]));
+  }
+  if (!filtered.length) {
+    target.appendChild(el("div", { class: "empty" }, state.gubaBoardFilter
+      ? "No posts for this board in the latest fetch window."
+      : "No guba posts stored yet."));
+    return;
+  }
+  const head = el("tr", {}, ["Fetched", "Board", "Title", "Likes", "Comments"].map(h => el("th", {}, h)));
+  const rows = filtered.slice(0, 15).map(p => el("tr", {}, [
     el("td", { class: "mono" }, fmtDate(p.fetched_at)),
+    el("td", { class: "mono" }, postBoardCode(p) || "—"),
     el("td", {}, el("a", { href: p.canonical_url, target: "_blank", rel: "noopener" }, p.title || p.content_preview || "(untitled)")),
     el("td", { class: "num" }, String(p.like_count ?? 0)),
     el("td", { class: "num" }, String(p.comment_count ?? 0)),
@@ -311,16 +368,20 @@ function renderGubaPosts(posts) {
 async function refreshGuba() {
   const meta = document.getElementById("guba-meta");
   try {
-    const [errorsPayload, statusPayload, postsPayload] = await Promise.all([
+    const [errorsPayload, statusPayload, postsPayload, boardsPayload] = await Promise.all([
       fetchJSON(`/api/errors?source=guba&limit=${state.gubaLimit}`),
       fetchJSON("/api/status"),
-      fetchJSON("/api/posts?source=guba&limit=10"),
+      fetchJSON("/api/posts?source=guba&limit=100"),
+      fetchJSON("/api/guba/boards?limit=50"),
     ]);
+    state.gubaPosts = postsPayload.posts;
+    state.gubaBoards = boardsPayload.boards;
     renderGubaSummary(errorsPayload.errors, postsPayload.posts);
     renderRunStats(document.querySelector("#guba-latest-run .body"), statusPayload.latest_run);
+    renderGubaBoards();
     renderGubaErrorPatterns(errorsPayload.errors);
     renderErrorsTable(document.getElementById("guba-errors"), errorsPayload.errors);
-    renderGubaPosts(postsPayload.posts);
+    renderGubaPosts();
     meta.textContent = `updated ${new Date().toLocaleTimeString()}`;
   } catch (err) {
     meta.textContent = `error: ${err.message}`;

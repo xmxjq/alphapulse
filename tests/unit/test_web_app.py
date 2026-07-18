@@ -10,6 +10,7 @@ from alphapulse.web.models import (
     Comment,
     CrawlError,
     CrawlRun,
+    GubaBoardSummary,
     PostDetail,
     PostDetailResponse,
     PostSummary,
@@ -26,6 +27,7 @@ class FakeReader:
         self.posts_by_source: dict[str | None, list[PostSummary]] = {}
         self.post_details: dict[tuple[str, str], PostDetail] = {}
         self.comments_by_post: dict[tuple[str, str], list[Comment]] = {}
+        self.guba_boards: list[GubaBoardSummary] = []
 
     def latest_run(self) -> CrawlRun | None:
         return self.runs[0] if self.runs else None
@@ -45,6 +47,9 @@ class FakeReader:
 
     def list_comments_for_post(self, source: str, post_entity_id: str) -> list[Comment]:
         return self.comments_by_post.get((source, post_entity_id), [])
+
+    def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]:
+        return self.guba_boards[:limit]
 
 
 def _build_client(tmp_path: Path, reader: FakeReader) -> TestClient:
@@ -158,6 +163,31 @@ def test_posts_and_errors_accept_guba_source(tmp_path: Path) -> None:
     client = _build_client(tmp_path, FakeReader())
     assert client.get("/api/posts", params={"source": "guba"}).status_code == 200
     assert client.get("/api/errors", params={"source": "guba"}).status_code == 200
+
+
+def test_guba_boards_returns_grouped_results(tmp_path: Path) -> None:
+    reader = FakeReader()
+    reader.guba_boards = [
+        GubaBoardSummary(
+            board_code="600900",
+            seed_sets=[],
+            post_count=42,
+            comment_count=310,
+            latest_published_at=datetime(2026, 7, 18, tzinfo=UTC),
+            latest_fetched_at=datetime(2026, 7, 18, 1, tzinfo=UTC),
+        )
+    ]
+    client = _build_client(tmp_path, reader)
+
+    response = client.get("/api/guba/boards")
+    assert response.status_code == 200
+    boards = response.json()["boards"]
+    assert len(boards) == 1
+    assert boards[0]["board_code"] == "600900"
+    assert boards[0]["post_count"] == 42
+
+    assert client.get("/api/guba/boards", params={"limit": 0}).status_code == 422
+    assert client.get("/api/guba/boards", params={"limit": 500}).status_code == 422
 
 
 def test_post_detail_returns_post_with_comments(tmp_path: Path) -> None:

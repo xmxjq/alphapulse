@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from alphapulse.runtime.config import Settings
 from alphapulse.web.models import (
     ErrorsResponse,
+    GubaBoardsResponse,
     PostDetailResponse,
     PostsResponse,
     RunsResponse,
@@ -76,6 +77,13 @@ def create_app(settings: Settings, queries: WebQueries | None = None) -> FastAPI
     ) -> PostsResponse:
         items = q.reader.list_posts(_validate_source(source), limit, offset)
         return PostsResponse(posts=items, limit=limit, offset=offset)
+
+    @app.get("/api/guba/boards", response_model=GubaBoardsResponse)
+    def guba_boards(
+        limit: int = Query(default=50, ge=1, le=200),
+        q: WebQueries = Depends(get_queries),
+    ) -> GubaBoardsResponse:
+        return GubaBoardsResponse(boards=q.guba_boards(limit))
 
     @app.get("/api/posts/{source}/{entity_id}", response_model=PostDetailResponse)
     def post_detail(

@@ -3,7 +3,14 @@ from pathlib import Path
 
 from alphapulse.pipeline.contracts import SeedDefinition
 from alphapulse.runtime.state import StateStore
-from alphapulse.web.models import Comment, CrawlError, CrawlRun, PostDetail, PostSummary
+from alphapulse.web.models import (
+    Comment,
+    CrawlError,
+    CrawlRun,
+    GubaBoardSummary,
+    PostDetail,
+    PostSummary,
+)
 from alphapulse.web.queries import (
     ClickHouseReader,
     RqliteReader,
@@ -187,6 +194,7 @@ class StubReader:
         self.latest = None
         self.runs: list[CrawlRun] = []
         self.errors: list[CrawlError] = []
+        self.guba_boards: list[GubaBoardSummary] = []
 
     def latest_run(self) -> CrawlRun | None:
         return self.latest
@@ -206,6 +214,81 @@ class StubReader:
 
     def list_comments_for_post(self, source, post_entity_id):  # noqa: ANN001
         return []
+
+    def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]:
+        return self.guba_boards[:limit]
+
+
+def test_clickhouse_reader_lists_guba_boards() -> None:
+    client = FakeClickHouseClient(
+        FakeClickHouseResult(
+            columns=[
+                "board_code", "post_count", "comment_count",
+                "latest_published_at", "latest_fetched_at",
+            ],
+            rows=[["600900", 42, 310, datetime(2026, 7, 18, tzinfo=UTC),
+                   datetime(2026, 7, 18, 1, tzinfo=UTC)]],
+        )
+    )
+    reader = ClickHouseReader(client=client, database="alphapulse")
+
+    boards = reader.list_guba_boards(limit=50)
+
+    assert len(boards) == 1
+    assert isinstance(boards[0], GubaBoardSummary)
+    assert boards[0].board_code == "600900"
+    assert boards[0].post_count == 42
+    assert boards[0].comment_count == 310
+    assert client.calls[0][1] == {"limit": 50}
+    assert "GROUP BY board_code" in client.calls[0][0]
+
+
+def test_rqlite_reader_lists_guba_boards() -> None:
+    client = FakeRqliteClient(
+        response={
+            "results": [{
+                "columns": [
+                    "board_code", "post_count", "comment_count",
+                    "latest_published_at", "latest_fetched_at",
+                ],
+                "values": [["zssh000001", 7, 15, "2026-07-18T00:00:00Z", "2026-07-18T01:00:00Z"]],
+            }]
+        }
+    )
+    reader = RqliteReader(client=client)
+
+    boards = reader.list_guba_boards(limit=10)
+
+    assert len(boards) == 1
+    assert boards[0].board_code == "zssh000001"
+    assert boards[0].post_count == 7
+    assert client.calls[0][1:] == [10]
+    assert "json_extract" in client.calls[0][0]
+
+
+def test_web_queries_annotates_guba_boards_with_seed_sets(tmp_path: Path) -> None:
+    state = StateStore(tmp_path / "state.db")
+    state.store_compiled_seed_set(
+        SeedDefinition(name="cn-core", guba_board_codes=["600900", "zssh000001"]),
+        refreshed_at=datetime(2026, 7, 18, tzinfo=UTC),
+    )
+    reader = StubReader()
+    reader.guba_boards = [
+        GubaBoardSummary(
+            board_code="600900", seed_sets=[], post_count=1, comment_count=0,
+            latest_published_at=None, latest_fetched_at=None,
+        ),
+        GubaBoardSummary(
+            board_code="999999", seed_sets=[], post_count=1, comment_count=0,
+            latest_published_at=None, latest_fetched_at=None,
+        ),
+    ]
+    queries = WebQueries(reader=reader, state=state)
+
+    boards = queries.guba_boards()
+
+    assert boards[0].seed_sets == ["cn-core"]
+    assert boards[1].seed_sets == []
 
 
 def test_web_queries_status_counts_recent_url_activity(tmp_path: Path) -> None:

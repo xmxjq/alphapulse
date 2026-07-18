@@ -45,6 +45,23 @@ class SeedSetSummary(BaseModel):
     post_url_count: int
 
 
+class GubaBoardSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    board_code: str
+    seed_sets: list[str]
+    post_count: int
+    comment_count: int
+    latest_published_at: datetime | None
+    latest_fetched_at: datetime | None
+
+
+class GubaBoardsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    boards: list[GubaBoardSummary]
+
+
 class StatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

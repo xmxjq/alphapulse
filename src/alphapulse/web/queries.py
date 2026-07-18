@@ -11,6 +11,7 @@ from alphapulse.web.models import (
     Comment,
     CrawlError,
     CrawlRun,
+    GubaBoardSummary,
     PostDetail,
     PostDetailResponse,
     PostSummary,
@@ -36,6 +37,8 @@ class StorageReader(Protocol):
     def get_post(self, source: str, source_entity_id: str) -> PostDetail | None: ...
 
     def list_comments_for_post(self, source: str, post_entity_id: str) -> list[Comment]: ...
+
+    def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]: ...
 
 
 def _content_preview(text: str | None) -> str:
@@ -142,6 +145,17 @@ def _post_detail_from_row(row: dict[str, Any]) -> PostDetail:
     )
 
 
+def _guba_board_from_row(row: dict[str, Any]) -> GubaBoardSummary:
+    return GubaBoardSummary(
+        board_code=str(row["board_code"]),
+        seed_sets=[],
+        post_count=int(row.get("post_count") or 0),
+        comment_count=int(row.get("comment_count") or 0),
+        latest_published_at=_coerce_datetime(row.get("latest_published_at")),
+        latest_fetched_at=_coerce_datetime(row.get("latest_fetched_at")),
+    )
+
+
 def _comment_from_row(row: dict[str, Any]) -> Comment:
     return Comment(
         source=str(row["source"]),
@@ -230,6 +244,21 @@ class ClickHouseReader:
         )
         return [_comment_from_row(row) for row in rows]
 
+    def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]:
+        rows = self._rows(
+            f"SELECT raw_topic_ids[1] AS board_code, count() AS post_count, "
+            f"sum(coalesce(comment_count, 0)) AS comment_count, "
+            f"max(published_at) AS latest_published_at, "
+            f"max(fetched_at) AS latest_fetched_at "
+            f"FROM {self.database}.posts FINAL "
+            f"WHERE source = 'guba' AND notEmpty(raw_topic_ids) "
+            f"GROUP BY board_code "
+            f"ORDER BY post_count DESC, board_code "
+            f"LIMIT {{limit:UInt32}}",
+            {"limit": limit},
+        )
+        return [_guba_board_from_row(row) for row in rows]
+
 
 @dataclass
 class RqliteReader:
@@ -307,6 +336,20 @@ class RqliteReader:
         )
         return [_comment_from_row(row) for row in rows]
 
+    def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]:
+        rows = self._rows(
+            "SELECT json_extract(raw_topic_ids_json, '$[0]') AS board_code, "
+            "COUNT(*) AS post_count, "
+            "SUM(COALESCE(comment_count, 0)) AS comment_count, "
+            "MAX(published_at) AS latest_published_at, "
+            "MAX(fetched_at) AS latest_fetched_at "
+            "FROM posts "
+            "WHERE source = 'guba' AND json_extract(raw_topic_ids_json, '$[0]') IS NOT NULL "
+            "GROUP BY board_code ORDER BY post_count DESC, board_code LIMIT ?",
+            [limit],
+        )
+        return [_guba_board_from_row(row) for row in rows]
+
 
 @dataclass
 class MongoReader:
@@ -375,6 +418,24 @@ class MongoReader:
             sort=[("published_at", 1), ("fetched_at", 1), ("source_entity_id", 1)],
         )
         return [_comment_from_row(doc) for doc in cursor]
+
+    def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]:
+        pipeline = [
+            {"$match": {"source": "guba", "raw_topic_ids.0": {"$exists": True}}},
+            {
+                "$group": {
+                    "_id": {"$arrayElemAt": ["$raw_topic_ids", 0]},
+                    "post_count": {"$sum": 1},
+                    "comment_count": {"$sum": {"$ifNull": ["$comment_count", 0]}},
+                    "latest_published_at": {"$max": "$published_at"},
+                    "latest_fetched_at": {"$max": "$fetched_at"},
+                }
+            },
+            {"$sort": {"post_count": -1, "_id": 1}},
+            {"$limit": limit},
+        ]
+        docs = self._posts().aggregate(pipeline)
+        return [_guba_board_from_row({**doc, "board_code": doc["_id"]}) for doc in docs]
 
 
 def build_reader(settings: Settings) -> StorageReader:
@@ -446,6 +507,17 @@ class WebQueries:
             in_flight_urls=self.recent_url_activity(),
             seed_sets=self.seed_set_summaries(),
         )
+
+    def guba_boards(self, limit: int = 50) -> list[GubaBoardSummary]:
+        boards = self.reader.list_guba_boards(limit)
+        membership: dict[str, list[str]] = {}
+        for seed in self.state.load_compiled_seed_sets():
+            for code in seed.guba_board_codes:
+                membership.setdefault(code, []).append(seed.name)
+        return [
+            board.model_copy(update={"seed_sets": membership.get(board.board_code, [])})
+            for board in boards
+        ]
 
     def post_detail(self, source: str, source_entity_id: str) -> PostDetailResponse | None:
         post = self.reader.get_post(source, source_entity_id)

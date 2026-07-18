@@ -106,3 +106,18 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
 
 .empty { color: var(--muted); font-style: italic; padding: 12px; }
 .err { color: var(--err); }
+
+.board-row { cursor: pointer; }
+.board-row:hover td { background: var(--panel-2); }
+.board-row.active td { background: var(--panel-2); }
+.board-row.active td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+
+.filter-chip {
+  display: inline-flex; gap: 8px; align-items: center; margin-bottom: 8px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 3px 8px; font-size: 12px; color: var(--muted);
+}
+.filter-chip button {
+  background: transparent; color: var(--accent); border: none;
+  font: inherit; cursor: pointer; padding: 0;
+}
