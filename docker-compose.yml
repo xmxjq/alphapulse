@@ -25,13 +25,17 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
   # Local xray client exposing one HTTP-proxy inbound per tunnel; pair with
-  # crawl.proxy.provider = "static_list" in settings.toml. Config is untracked:
+  # crawl.proxy.provider = "static_list" in settings.toml, e.g.
+  #   crawl.static_proxies.urls = ["http://host.docker.internal:10809"]
+  # Config is untracked:
   #   cp xray/config.example.json xray/config.json   # then fill in your servers
   #   docker compose --profile xray up -d xray
   xray:
     image: teddysun/xray:latest
     restart: unless-stopped
     profiles: ["xray"]
+    ports:
+      - "10809:10809"
     volumes:
       - ./xray/config.json:/etc/xray/config.json:ro
   proxy_pool:
