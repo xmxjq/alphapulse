@@ -28,8 +28,17 @@ class FakeStore:
     def upsert_authors(self, authors):
         self.authors.extend(authors)
 
-    def insert_crawl_error(self, *, source: str, url: str, error_message: str) -> None:
-        self.errors.append((source, url, error_message))
+    def insert_crawl_error(
+        self,
+        *,
+        source: str,
+        url: str,
+        error_message: str,
+        status_code: int | None = None,
+        task_kind: str | None = None,
+        error_kind: str | None = None,
+    ) -> None:
+        self.errors.append((source, url, error_message, status_code, task_kind, error_kind))
 
     def insert_crawl_run(self, *, run_id: str, started_at, finished_at, stats, status: str) -> None:
         return None
@@ -240,7 +249,10 @@ post_urls = ["https://xueqiu.com/1234567890/987654321"]
 
     assert stats.errors == 1
     assert stats.posts_written == 0
-    assert store.errors[0][2].startswith("Fetch failed for https://xueqiu.com/1234567890/987654321")
+    source, url, message, status_code, task_kind, error_kind = store.errors[0]
+    assert message.startswith("Fetch failed for https://xueqiu.com/1234567890/987654321")
+    assert error_kind == "fetch_failed"
+    assert task_kind == "fetch_post"
 
 
 def test_service_counts_blocked_responses(tmp_path: Path) -> None:
@@ -270,6 +282,7 @@ post_urls = ["https://xueqiu.com/1234567890/987654321"]
     assert stats.blocked_responses == 1
     assert stats.errors == 1
     assert store.errors[0][2] == "Blocked response from https://xueqiu.com/1234567890/987654321"
+    assert store.errors[0][5] == "blocked"
 
 
 def test_service_stops_comment_refresh_on_fetch_failure(tmp_path: Path) -> None:
@@ -338,7 +351,8 @@ class FakeGubaClient:
     def __init__(self, fixtures: Path) -> None:
         self.fixtures = fixtures
 
-    def get(self, url: str):
+    def get(self, url: str, *, expect_marker: str | None = None):
+        del expect_marker
         from alphapulse.sources.guba.api import GubaHttpResult
 
         if "/list," in url:

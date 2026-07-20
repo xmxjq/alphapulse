@@ -77,9 +77,14 @@ class GubaAdapter:
         return tasks
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
-        # List pages always embed `var article_list=`; its absence on a 200
-        # response means a soft-block page, so let the client retry it.
-        expect_marker = "var article_list" if task.kind == "discover" else None
+        # Both page types embed a data payload on a healthy 200: list pages
+        # carry `var article_list=`, post pages `var post_article=`. Its
+        # absence on a 200 marks a WAF/soft-block page, so hand the marker to
+        # the client and let it retry/rotate instead of surfacing downstream
+        # as a parse error. Deleted posts redirect to `/error`, which the
+        # client's soft-block check excludes, so they still fall through to
+        # the `/error` handling in `_handle_post_detail`.
+        expect_marker = "var article_list" if task.kind == "discover" else "var post_article"
         response = self.client.get(str(task.url), expect_marker=expect_marker)
 
         if response.status_code == 0:

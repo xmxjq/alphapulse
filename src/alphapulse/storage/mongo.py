@@ -143,7 +143,16 @@ class MongoStore:
         ]
         self._collection(self.settings.comments_collection).bulk_write(operations, ordered=False)
 
-    def insert_crawl_error(self, *, source: str, url: str, error_message: str) -> None:
+    def insert_crawl_error(
+        self,
+        *,
+        source: str,
+        url: str,
+        error_message: str,
+        status_code: int | None = None,
+        task_kind: str | None = None,
+        error_kind: str | None = None,
+    ) -> None:
         from datetime import UTC
 
         self._collection(self.settings.crawl_errors_collection).insert_one(
@@ -152,6 +161,9 @@ class MongoStore:
                 "source": source,
                 "url": url,
                 "error_message": error_message,
+                "status_code": status_code,
+                "task_kind": task_kind,
+                "error_kind": error_kind,
             }
         )
 

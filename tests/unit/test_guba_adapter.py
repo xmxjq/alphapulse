@@ -332,7 +332,7 @@ def test_classify_block() -> None:
     assert classify_block(200, "<html>ok</html>", "https://guba.eastmoney.com/x") is None
 
 
-def test_discover_requests_pass_article_list_marker(tmp_path) -> None:
+def test_fetches_pass_soft_block_markers(tmp_path) -> None:
     list_url = f"{BASE}/list,600519.html"
     detail_url = f"{BASE}/news,600519,1743987733.html"
     client = FakeGubaClient(
@@ -353,7 +353,7 @@ def test_discover_requests_pass_article_list_marker(tmp_path) -> None:
             metadata={"post_id": "1743987733", "board_code": "600519"},
         )
     )
-    assert client.get_markers == ["var article_list", None]
+    assert client.get_markers == ["var article_list", "var post_article"]
 
 
 def _client_with_dispatch(monkeypatch, pages: list[tuple[int, str, str]], max_retries: int = 3):

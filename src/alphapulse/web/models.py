@@ -30,6 +30,9 @@ class CrawlError(BaseModel):
     source: str
     url: str
     error_message: str
+    status_code: int | None = None
+    task_kind: str | None = None
+    error_kind: str | None = None
 
 
 class SeedSetSummary(BaseModel):

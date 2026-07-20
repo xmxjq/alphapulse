@@ -37,7 +37,7 @@ async function fetchJSON(path) {
 
 function fmtDate(value) {
   if (!value) return "—";
-  try { return new Date(value).toLocaleString(); } catch { return value; }
+  try { return new Date(value).toLocaleString(undefined, { hour12: false }); } catch { return value; }
 }
 
 function fmtDuration(startIso, endIso) {
@@ -56,7 +56,7 @@ function statusClass(status) {
 }
 
 function setLastUpdated() {
-  document.getElementById("last-updated").textContent = `updated ${new Date().toLocaleTimeString()}`;
+  document.getElementById("last-updated").textContent = `updated ${new Date().toLocaleTimeString(undefined, { hour12: false })}`;
 }
 
 function renderRunStats(target, run) {
@@ -101,13 +101,21 @@ function renderRunsTable(target, runs) {
   target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
 }
 
+function fmtErrorKind(e) {
+  const parts = [];
+  if (e.error_kind) parts.push(e.error_kind);
+  if (e.status_code) parts.push(`HTTP ${e.status_code}`);
+  return parts.length ? parts.join(" · ") : "—";
+}
+
 function renderErrorsTable(target, errors) {
   target.innerHTML = "";
   if (!errors.length) { target.appendChild(el("div", { class: "empty" }, "No errors.")); return; }
-  const head = el("tr", {}, ["When", "Source", "URL", "Message"].map(h => el("th", {}, h)));
+  const head = el("tr", {}, ["When", "Source", "Kind", "URL", "Message"].map(h => el("th", {}, h)));
   const rows = errors.map(e => el("tr", {}, [
     el("td", { class: "mono" }, fmtDate(e.created_at)),
     el("td", {}, e.source),
+    el("td", {}, fmtErrorKind(e)),
     el("td", { class: "mono" }, e.url),
     el("td", { class: "err" }, e.error_message),
   ]));
@@ -442,7 +450,7 @@ async function refreshGuba() {
     renderGubaErrorPatterns(errorsPayload.errors);
     renderErrorsTable(document.getElementById("guba-errors"), errorsPayload.errors);
     renderGubaPosts();
-    meta.textContent = `updated ${new Date().toLocaleTimeString()}`;
+    meta.textContent = `updated ${new Date().toLocaleTimeString(undefined, { hour12: false })}`;
   } catch (err) {
     meta.textContent = `error: ${err.message}`;
   }

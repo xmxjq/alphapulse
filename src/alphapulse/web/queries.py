@@ -111,11 +111,15 @@ def _run_from_row(row: dict[str, Any]) -> CrawlRun:
 
 
 def _error_from_row(row: dict[str, Any]) -> CrawlError:
+    status_code = row.get("status_code")
     return CrawlError(
         created_at=_coerce_datetime(row["created_at"]),
         source=str(row.get("source") or ""),
         url=str(row.get("url") or ""),
         error_message=str(row.get("error_message") or ""),
+        status_code=int(status_code) if status_code is not None else None,
+        task_kind=str(row["task_kind"]) if row.get("task_kind") else None,
+        error_kind=str(row["error_kind"]) if row.get("error_kind") else None,
     )
 
 

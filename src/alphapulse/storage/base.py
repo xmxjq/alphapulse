@@ -17,7 +17,16 @@ class StorageStore(Protocol):
 
     def upsert_comments(self, comments: list[NormalizedComment]) -> None: ...
 
-    def insert_crawl_error(self, *, source: str, url: str, error_message: str) -> None: ...
+    def insert_crawl_error(
+        self,
+        *,
+        source: str,
+        url: str,
+        error_message: str,
+        status_code: int | None = None,
+        task_kind: str | None = None,
+        error_kind: str | None = None,
+    ) -> None: ...
 
     def insert_crawl_run(
         self,

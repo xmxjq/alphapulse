@@ -200,7 +200,19 @@ class RqliteStore:
         ]
         self.client.execute(statements)
 
-    def insert_crawl_error(self, *, source: str, url: str, error_message: str) -> None:
+    def insert_crawl_error(
+        self,
+        *,
+        source: str,
+        url: str,
+        error_message: str,
+        status_code: int | None = None,
+        task_kind: str | None = None,
+        error_kind: str | None = None,
+    ) -> None:
+        # The richer diagnostics (status_code/task_kind/error_kind) are stored
+        # by the schemaless Mongo backend; rqlite keeps the base columns to
+        # avoid a schema migration on existing crawl_errors tables.
         self.client.execute(
             [[
                 """

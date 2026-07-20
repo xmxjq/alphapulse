@@ -25,6 +25,28 @@ from alphapulse.storage.rawstore import build_raw_store
 logger = logging.getLogger(__name__)
 
 
+def classify_crawl_error(message: str) -> str:
+    """Bucket a free-text adapter error into a stable kind for the dashboard.
+
+    Adapters emit human-readable error strings; grouping them by kind lets the
+    dashboard tell a transient block from a genuine parse failure or a deleted
+    post at a glance, without parsing prose. Order matters: the more specific
+    prefixes are checked before the generic ones.
+    """
+    lowered = message.lower()
+    if lowered.startswith("blocked"):
+        return "blocked"
+    if "deleted or missing" in lowered:
+        return "deleted"
+    if "(removed/hidden)" in lowered or lowered.startswith("post state "):
+        return "removed"
+    if lowered.startswith("fetch failed"):
+        return "fetch_failed"
+    if "could not parse" in lowered or "no article_list payload" in lowered:
+        return "parse_error"
+    return "other"
+
+
 class TaskQueue:
     """Priority-ordered crawl queue.
 
@@ -281,6 +303,9 @@ class AlphaPulseService:
                     source=task.source,
                     url=str(task.url),
                     error_message=error,
+                    status_code=outcome.status_code,
+                    task_kind=task.kind,
+                    error_kind=classify_crawl_error(error),
                 )
 
         if outcome.authors:
