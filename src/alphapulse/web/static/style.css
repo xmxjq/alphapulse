@@ -40,6 +40,8 @@ nav { display: flex; gap: 4px; }
   font: inherit;
 }
 .tab.active, .tab:hover { color: var(--text); background: var(--panel-2); }
+a.tab { text-decoration: none; display: inline-block; }
+.report-link { margin-left: 12px; border-color: var(--accent); color: var(--accent); }
 .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
 
 main { padding: 16px 20px; }
