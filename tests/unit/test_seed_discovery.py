@@ -269,3 +269,86 @@ def test_seed_compiler_preserves_bilibili_targets() -> None:
     )
     assert compiled.bilibili_video_targets == ["BV1xx411c7mu"]
     assert compiled.bilibili_space_urls == ["https://space.bilibili.com/7033507"]
+
+
+def test_guba_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> None:
+    from alphapulse.runtime.config import GubaSettings
+    from alphapulse.sources.guba.api import GubaHttpResult
+    from alphapulse.seeds.catalog import GubaHotBoardsGeneratorDefinition
+    from alphapulse.seeds.discovery import GubaHotBoardsSeedGenerator
+
+    fixtures = Path(__file__).parent.parent / "fixtures" / "guba"
+
+    class FakeClient:
+        def _match(self, url: str) -> GubaHttpResult:
+            table = {
+                "stockrank": "rank_hot_stock.json",
+                "clist": "rank_hot_concept.json",
+                "HomePageListRead": "rank_hot_theme.js",
+            }
+            for marker, name in table.items():
+                if marker in url:
+                    return GubaHttpResult(url=url, status_code=200, text=(fixtures / name).read_text(encoding="utf-8"))
+            return GubaHttpResult(url=url, status_code=404, text="")
+
+        def get(self, url, *, expect_marker=None):
+            return self._match(url)
+
+        def post_json(self, url, payload):
+            return self._match(url)
+
+    state = StateStore(tmp_path / "state.db")
+    generator = GubaHotBoardsSeedGenerator(GubaSettings(enabled=True), None, state, client=FakeClient())
+    definition = GubaHotBoardsGeneratorDefinition(name="guba-hot")
+
+    generated_at = datetime(2026, 7, 21, 3, 0, 0, tzinfo=UTC)  # 11:00 Beijing
+    items = generator.generate(definition, generated_at)
+
+    assert all(item.kind == "guba_board_code" for item in items)
+    codes = [item.value for item in items]
+    # Stock (人气榜), concept (push2), and theme concept-member (BK0505 only from a
+    # theme's StockListNew) all seed board codes; theme stock members are dropped.
+    assert "600584" in codes and "BK1036" in codes and "BK0505" in codes
+    assert "688981" not in codes
+
+    snapshot = state.get_guba_ranking("2026-07-21")
+    sections = {row["section"] for row in snapshot}
+    assert sections == {"hot_stock", "hot_concept", "hot_theme"}
+    theme_rows = [r for r in snapshot if r["section"] == "hot_theme"]
+    assert theme_rows[0]["code"].startswith("ht")
+    assert theme_rows[0]["members"]
+
+
+def test_guba_hot_boards_generator_respects_section_filter(tmp_path: Path) -> None:
+    from alphapulse.runtime.config import GubaSettings
+    from alphapulse.sources.guba.api import GubaHttpResult
+    from alphapulse.seeds.catalog import GubaHotBoardsGeneratorDefinition
+    from alphapulse.seeds.discovery import GubaHotBoardsSeedGenerator
+
+    fixtures = Path(__file__).parent.parent / "fixtures" / "guba"
+
+    class FakeClient:
+        def _match(self, url: str) -> GubaHttpResult:
+            table = {"stockrank": "rank_hot_stock.json", "clist": "rank_hot_concept.json", "HomePageListRead": "rank_hot_theme.js"}
+            for marker, name in table.items():
+                if marker in url:
+                    return GubaHttpResult(url=url, status_code=200, text=(fixtures / name).read_text(encoding="utf-8"))
+            return GubaHttpResult(url=url, status_code=404, text="")
+
+        def get(self, url, *, expect_marker=None):
+            return self._match(url)
+
+        def post_json(self, url, payload):
+            return self._match(url)
+
+    state = StateStore(tmp_path / "state.db")
+    generator = GubaHotBoardsSeedGenerator(GubaSettings(enabled=True), None, state, client=FakeClient())
+    definition = GubaHotBoardsGeneratorDefinition(name="guba-hot", sections=["hot_stock"])
+
+    items = generator.generate(definition, datetime(2026, 7, 21, 3, 0, 0, tzinfo=UTC))
+    codes = {item.value for item in items}
+    # Only stock codes; no concept/theme-member codes.
+    assert "600584" in codes
+    assert "BK1036" not in codes
+    snapshot_sections = {row["section"] for row in state.get_guba_ranking("2026-07-21")}
+    assert snapshot_sections == {"hot_stock"}

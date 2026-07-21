@@ -25,10 +25,12 @@ def test_load_settings_example() -> None:
     assert settings.sources.bilibili.space_discovery_max_videos == 50
     assert settings.sources.guba.enabled is False
     assert str(settings.sources.guba.base_url) == "https://guba.eastmoney.com/"
-    assert settings.sources.guba.max_list_pages == 3
+    assert settings.sources.guba.max_list_pages == 50
     assert settings.sources.guba.reply_page_size == 30
     assert settings.sources.guba.max_reply_pages == 40
     assert settings.sources.guba.list_recrawl_minutes == 30
+    assert settings.sources.guba.day_scoped is True
+    assert settings.sources.guba.hot_boards_per_section == 12
     assert settings.sources.guba.request_interval_min_seconds == 2.0
     assert settings.sources.guba.request_interval_max_seconds == 6.0
     assert settings.sources.guba.max_retries == 3
@@ -42,10 +44,13 @@ def test_load_seed_catalog_example() -> None:
     settings = load_settings(Path("settings.example.toml"))
     catalog = SeedCatalogLoader(settings.sources.xueqiu.seed_catalog_path).load()
     assert [item.name for item in catalog.logical_sets] == ["cn-core"]
-    assert catalog.logical_sets[0].generators == ["cn-core-manual"]
+    assert catalog.logical_sets[0].generators == ["cn-core-manual", "guba-hot"]
     manual = catalog.generator_map()["cn-core-manual"]
     assert manual.bilibili_video_targets == ["BV1xx411c7mu"]
-    assert manual.guba_board_codes == ["zssh000001", "600519"]
+    assert manual.guba_board_codes == []
+    guba_hot = catalog.generator_map()["guba-hot"]
+    assert guba_hot.type == "guba_hot_boards"
+    assert guba_hot.sections == ["hot_stock", "hot_concept", "hot_theme"]
 
 
 def test_load_settings_with_proxy_enabled(tmp_path: Path) -> None:

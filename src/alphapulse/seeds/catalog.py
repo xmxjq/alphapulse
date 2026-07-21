@@ -111,8 +111,23 @@ class LonghubangGeneratorDefinition(BaseModel):
         return self
 
 
+class GubaHotBoardsGeneratorDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: Literal["guba_hot_boards"] = "guba_hot_boards"
+    # Which homepage rankings to seed from; defaults to all three. Values are
+    # rankings section keys: "hot_stock", "hot_concept", "hot_theme".
+    sections: list[str] = Field(
+        default_factory=lambda: ["hot_stock", "hot_concept", "hot_theme"]
+    )
+
+
 GeneratorDefinition = Annotated[
-    ManualGeneratorDefinition | StockUniverseGeneratorDefinition | LonghubangGeneratorDefinition,
+    ManualGeneratorDefinition
+    | StockUniverseGeneratorDefinition
+    | LonghubangGeneratorDefinition
+    | GubaHotBoardsGeneratorDefinition,
     Field(discriminator="type"),
 ]
 

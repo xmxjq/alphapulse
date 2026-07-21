@@ -180,10 +180,27 @@ class GubaSettings(BaseModel):
 
     enabled: bool = False
     base_url: HttpUrl = "https://guba.eastmoney.com"
-    max_list_pages: int = Field(default=3, ge=1)
+    # In day-scoped mode `max_list_pages` is a safety ceiling, not the primary
+    # stop: pagination for a board halts once a list page holds no post still
+    # active on the target day (see GubaAdapter._handle_list_page).
+    max_list_pages: int = Field(default=50, ge=1)
     reply_page_size: int = Field(default=30, ge=1, le=100)
     max_reply_pages: int = Field(default=40, ge=1)
     list_recrawl_minutes: int = Field(default=30, ge=1)
+    # Day-grouped, homepage-ranking-driven crawling.
+    day_scoped: bool = True
+    ranking_timezone: str = "Asia/Shanghai"
+    hot_boards_per_section: int = Field(default=12, ge=1, le=100)
+    theme_member_cap: int = Field(default=8, ge=0, le=100)
+    ranking_stock_url: HttpUrl = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList"
+    ranking_concept_url: HttpUrl = (
+        "https://push2.eastmoney.com/api/qt/clist/get"
+        "?ut=8dec03ba335b81bf4ebdf7b29ec27d15&dpt=gb.rmbk&fltt=2&invt=3"
+        "&fields=f12,f14,f3&fs=m:90+t:3+e:3&np=1&pn=1&pz=30&po=1&fid=f3"
+    )
+    ranking_theme_url: HttpUrl = (
+        "https://gbcdn.dfcfw.com/gbapi/newtopic_api_Topic_HomePageListRead.js?ps=30&p=1&type=0"
+    )
     request_interval_min_seconds: float = Field(default=2.0, ge=0.0)
     request_interval_max_seconds: float = Field(default=6.0, ge=0.0)
     max_retries: int = Field(default=3, ge=1)

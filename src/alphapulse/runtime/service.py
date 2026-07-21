@@ -118,7 +118,12 @@ class AlphaPulseService:
             self.sources = self._build_sources()
         if self.seed_discovery is None:
             assert self.state is not None
-            self.seed_discovery = SeedDiscoveryManager(self.settings.sources.xueqiu, self.state)
+            self.seed_discovery = SeedDiscoveryManager(
+                self.settings.sources.xueqiu,
+                self.state,
+                guba_settings=self.settings.sources.guba,
+                crawl_settings=self.settings.crawl,
+            )
 
     def run_forever(self) -> None:
         logger.info(

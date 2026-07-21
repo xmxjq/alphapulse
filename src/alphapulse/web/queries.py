@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from alphapulse.runtime.config import CrawlSettings, GubaSettings, Settings
 from alphapulse.runtime.state import StateStore
@@ -14,6 +15,9 @@ from alphapulse.web.models import (
     CrawlRun,
     GubaBoardSummary,
     GubaNextCrawlResponse,
+    GubaReportBoard,
+    GubaReportResponse,
+    GubaReportSection,
     NextCrawlBoard,
     PostDetail,
     PostDetailResponse,
@@ -22,6 +26,14 @@ from alphapulse.web.models import (
     StatusResponse,
     TaskKindForecast,
 )
+
+
+# Ordered (section-key, display title) pairs for the daily report.
+GUBA_REPORT_SECTIONS = [
+    ("hot_stock", "热门个股吧"),
+    ("hot_concept", "热门概念吧"),
+    ("hot_theme", "热门主题吧"),
+]
 
 
 RECENT_URL_WINDOW = timedelta(hours=1)
@@ -46,6 +58,10 @@ class StorageReader(Protocol):
     def list_comments_for_post(self, source: str, post_entity_id: str) -> list[Comment]: ...
 
     def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]: ...
+
+    def list_guba_posts_in_range(
+        self, start: datetime, end: datetime, limit: int
+    ) -> list[PostSummary]: ...
 
 
 def _content_preview(text: str | None) -> str:
@@ -270,6 +286,11 @@ class ClickHouseReader:
         )
         return [_guba_board_from_row(row) for row in rows]
 
+    def list_guba_posts_in_range(
+        self, start: datetime, end: datetime, limit: int
+    ) -> list[PostSummary]:
+        raise NotImplementedError("guba daily report requires the mongo storage backend")
+
 
 @dataclass
 class RqliteReader:
@@ -361,6 +382,11 @@ class RqliteReader:
         )
         return [_guba_board_from_row(row) for row in rows]
 
+    def list_guba_posts_in_range(
+        self, start: datetime, end: datetime, limit: int
+    ) -> list[PostSummary]:
+        raise NotImplementedError("guba daily report requires the mongo storage backend")
+
 
 @dataclass
 class MongoReader:
@@ -447,6 +473,37 @@ class MongoReader:
         ]
         docs = self._posts().aggregate(pipeline)
         return [_guba_board_from_row({**doc, "board_code": doc["_id"]}) for doc in docs]
+
+    def list_guba_posts_in_range(
+        self, start: datetime, end: datetime, limit: int
+    ) -> list[PostSummary]:
+        projection = {
+            "source": 1,
+            "source_entity_id": 1,
+            "canonical_url": 1,
+            "author_entity_id": 1,
+            "title": 1,
+            "content_text": 1,
+            "published_at": 1,
+            "fetched_at": 1,
+            "like_count": 1,
+            "comment_count": 1,
+            "raw_topic_ids": 1,
+        }
+        cursor = self._posts().find(
+            {"source": "guba", "published_at": {"$gte": start, "$lt": end}},
+            projection=projection,
+            sort=[("published_at", 1), ("source_entity_id", 1)],
+            limit=limit,
+        )
+        posts: list[PostSummary] = []
+        for doc in cursor:
+            summary = _post_summary_from_row(doc)
+            topic_ids = doc.get("raw_topic_ids") or []
+            if topic_ids:
+                summary = summary.model_copy(update={"board_code": str(topic_ids[0])})
+            posts.append(summary)
+        return posts
 
 
 def build_reader(settings: Settings) -> StorageReader:
@@ -618,6 +675,107 @@ class WebQueries:
             return None
         comments = self.reader.list_comments_for_post(source, source_entity_id)
         return PostDetailResponse(post=post, comments=comments)
+
+    def guba_daily_report(self, day: str, *, limit: int = 20_000) -> GubaReportResponse:
+        """Assemble a per-day newspaper: the ranking snapshot joined with the day's posts.
+
+        `day` is a Beijing-local (ranking timezone) calendar date "YYYY-MM-DD".
+        Posts are grouped by board; comments are loaded lazily by the UI via the
+        post-detail endpoint. Falls back to grouping all crawled boards when no
+        ranking snapshot exists for the day.
+        """
+        guba = self.settings.sources.guba if self.settings else GubaSettings()
+        tz_name = guba.ranking_timezone
+        tz = ZoneInfo(tz_name)
+        day_date = date.fromisoformat(day)
+        start_local = datetime(day_date.year, day_date.month, day_date.day, tzinfo=tz)
+        start = start_local.astimezone(UTC)
+        end = (start_local + timedelta(days=1)).astimezone(UTC)
+
+        posts = self.reader.list_guba_posts_in_range(start, end, limit)
+        by_board: dict[str, list[PostSummary]] = {}
+        for post in posts:
+            by_board.setdefault(post.board_code or "", []).append(post)
+        total_posts = len(posts)
+        total_comments = sum(post.comment_count or 0 for post in posts)
+
+        base = str(guba.base_url).rstrip("/")
+
+        def board_entry(
+            code: str, name: str | None, url: str | None, rank: int | None
+        ) -> GubaReportBoard:
+            bposts = by_board.get(code, [])
+            return GubaReportBoard(
+                kind="board",
+                rank=rank,
+                code=code,
+                name=name,
+                url=url or f"{base}/list,{code}.html",
+                post_count=len(bposts),
+                comment_count=sum(p.comment_count or 0 for p in bposts),
+                posts=bposts,
+            )
+
+        snapshot = self.state.get_guba_ranking(day)
+        sections: list[GubaReportSection] = []
+        if snapshot:
+            rows_by_section: dict[str, list[dict[str, Any]]] = {}
+            for row in snapshot:
+                rows_by_section.setdefault(str(row["section"]), []).append(row)
+            for key, title in GUBA_REPORT_SECTIONS:
+                rows = rows_by_section.get(key, [])
+                if not rows:
+                    continue
+                entries: list[GubaReportBoard] = []
+                for row in rows:
+                    if key == "hot_theme":
+                        members = [
+                            board_entry(str(code), None, None, None)
+                            for code in (row.get("members") or [])
+                        ]
+                        members = [m for m in members if m.post_count > 0]
+                        entries.append(
+                            GubaReportBoard(
+                                kind="theme",
+                                rank=int(row["rank"]),
+                                code=str(row["code"]),
+                                name=row.get("name"),
+                                url=row.get("url"),
+                                post_count=sum(m.post_count for m in members),
+                                comment_count=sum(m.comment_count for m in members),
+                                members=members,
+                            )
+                        )
+                    else:
+                        entries.append(
+                            board_entry(
+                                str(row["code"]),
+                                row.get("name"),
+                                row.get("url"),
+                                int(row["rank"]),
+                            )
+                        )
+                sections.append(GubaReportSection(key=key, title=title, entries=entries))
+        else:
+            entries = [
+                board_entry(code, None, None, None)
+                for code in sorted(by_board)
+                if code
+            ]
+            entries.sort(key=lambda e: e.post_count, reverse=True)
+            sections.append(
+                GubaReportSection(key="all", title="全部板块", entries=entries)
+            )
+
+        return GubaReportResponse(
+            day=day,
+            timezone=tz_name,
+            generated_at=datetime.now(UTC),
+            has_snapshot=bool(snapshot),
+            total_posts=total_posts,
+            total_comments=total_comments,
+            sections=sections,
+        )
 
 
 def build_queries(settings: Settings) -> WebQueries:

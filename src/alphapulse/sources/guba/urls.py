@@ -30,6 +30,11 @@ def getdata_url(base_url: str) -> str:
     return f"{base_url.rstrip('/')}/interface/GetData.aspx"
 
 
+def topic_url(htid: str | int) -> str:
+    """Public URL of a guba theme/topic (话题) discussion page."""
+    return f"https://gubatopic.eastmoney.com/topic_v3.html?htid={htid}"
+
+
 def extract_post_ref(url: str) -> tuple[str, str] | None:
     """Return (board_code, post_id) from a post detail URL."""
     match = POST_DETAIL_RE.search(url)

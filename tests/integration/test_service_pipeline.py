@@ -381,6 +381,8 @@ def test_service_runs_guba_cycle(tmp_path: Path) -> None:
     settings.sources.bilibili.enabled = False
     settings.sources.guba.enabled = True
     settings.sources.guba.max_list_pages = 1
+    # This test exercises the classic path against a fixed-date fixture.
+    settings.sources.guba.day_scoped = False
     settings.crawl.raw_store.enabled = True
     settings.crawl.raw_store.root_path = tmp_path / "raw"
     settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"

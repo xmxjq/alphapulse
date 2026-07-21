@@ -1,6 +1,6 @@
 [[logical_sets]]
 name = "cn-core"
-generators = ["cn-core-manual"]
+generators = ["cn-core-manual", "guba-hot"]
 
 [[generators]]
 name = "cn-core-manual"
@@ -11,8 +11,20 @@ bilibili_video_targets = ["BV1xx411c7mu"]
 # Accepts full URLs (https://space.bilibili.com/<mid>) or bare numeric mids.
 bilibili_space_urls = ["https://space.bilibili.com/7033507"]
 post_urls = []
-# Eastmoney Guba boards: bare stock codes ("600519") or index codes ("zssh000001").
-guba_board_codes = ["zssh000001", "600519"]
+# Manual Guba boards are optional now that guba-hot seeds boards automatically;
+# keep any you always want crawled. Bare stock codes ("600519") or index
+# codes ("zssh000001").
+guba_board_codes = []
 stock_ids = ["SH600519", "SZ000858"]
 topic_ids = ["新能源"]
 user_ids = []
+
+# Guba day crawl: seeds boards from the three homepage rankings — 热门个股吧,
+# 热门概念吧, 热门主题吧 (top `hot_boards_per_section`, configured under
+# [sources.guba]). Theme entries expand into their constituent concept (BK)
+# boards. Each refresh also snapshots the day's ranking for the /report page.
+[[generators]]
+name = "guba-hot"
+type = "guba_hot_boards"
+# Optional: restrict to a subset. Defaults to all three.
+# sections = ["hot_stock", "hot_concept", "hot_theme"]

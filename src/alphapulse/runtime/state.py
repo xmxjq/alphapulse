@@ -84,8 +84,73 @@ class StateStore:
                     seed_json TEXT NOT NULL,
                     refreshed_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS guba_daily_ranking (
+                    day TEXT NOT NULL,
+                    section TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    code TEXT NOT NULL,
+                    name TEXT,
+                    url TEXT,
+                    members TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (day, section, rank)
+                );
                 """
             )
+
+    def replace_guba_ranking(self, day: str, rows: list[dict[str, object]]) -> None:
+        """Replace the whole ranking snapshot for a Beijing day (latest refresh wins)."""
+        now = datetime.now(UTC).isoformat()
+        with self.connection() as conn:
+            conn.execute("DELETE FROM guba_daily_ranking WHERE day = ?", (day,))
+            conn.executemany(
+                """
+                INSERT INTO guba_daily_ranking
+                    (day, section, rank, code, name, url, members, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        day,
+                        str(row["section"]),
+                        int(row["rank"]),  # type: ignore[arg-type]
+                        str(row["code"]),
+                        row.get("name"),
+                        row.get("url"),
+                        json.dumps(row["members"], ensure_ascii=True)
+                        if row.get("members")
+                        else None,
+                        now,
+                    )
+                    for row in rows
+                ],
+            )
+
+    def get_guba_ranking(self, day: str) -> list[dict[str, object]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT section, rank, code, name, url, members
+                FROM guba_daily_ranking
+                WHERE day = ?
+                ORDER BY section, rank
+                """,
+                (day,),
+            ).fetchall()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            result.append(
+                {
+                    "section": row["section"],
+                    "rank": row["rank"],
+                    "code": row["code"],
+                    "name": row["name"],
+                    "url": row["url"],
+                    "members": json.loads(row["members"]) if row["members"] else [],
+                }
+            )
+        return result
 
     def try_claim_url(
         self,

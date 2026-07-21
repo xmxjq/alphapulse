@@ -4,6 +4,9 @@ This guide shows how to enable and run the Eastmoney Guba (东方财富股吧) c
 
 ## What It Supports
 
+- **Day-grouped, ranking-driven crawling** — each day's seed boards come from the
+  three guba homepage rankings, and the day's posts feed a newspaper-style report
+  (see [Day Crawl & Daily Report](#day-crawl--daily-report))
 - Stock boards (`600519`) and index boards (`zssh000001`) via `guba_board_codes` seeds
 - Direct post URLs (`https://guba.eastmoney.com/news,600519,<post_id>.html`) via `post_urls` seeds
 - Post lists, post details, and full reply threads (nested child replies flattened with parent links)
@@ -46,10 +49,14 @@ This guide shows how to enable and run the Eastmoney Guba (东方财富股吧) c
 [sources.guba]
 enabled = true
 base_url = "https://guba.eastmoney.com"
-max_list_pages = 3
+max_list_pages = 50           # safety ceiling; day-scoping usually stops earlier
 reply_page_size = 30
 max_reply_pages = 40
 list_recrawl_minutes = 30
+day_scoped = true             # crawl the current day's posts (set false for classic)
+ranking_timezone = "Asia/Shanghai"
+hot_boards_per_section = 12
+theme_member_cap = 8
 request_interval_min_seconds = 2.0
 request_interval_max_seconds = 6.0
 max_retries = 3
@@ -67,11 +74,22 @@ rates from a single fixed IP, so no proxy pool is needed.
 
 ## 2. Add Boards To The Seed Catalog
 
+Seed boards automatically from the homepage rankings (recommended):
+
 ```toml
 [[logical_sets]]
 name = "cn-core"
-generators = ["cn-core-manual"]
+generators = ["guba-hot"]
 
+[[generators]]
+name = "guba-hot"
+type = "guba_hot_boards"
+# sections = ["hot_stock", "hot_concept", "hot_theme"]  # optional subset
+```
+
+Or pin boards manually (works alongside `guba_hot_boards`):
+
+```toml
 [[generators]]
 name = "cn-core-manual"
 type = "manual"
@@ -83,6 +101,52 @@ guba_board_codes = ["zssh000001", "600519"]
 ```bash
 uv run alphapulse run --once
 ```
+
+## Day Crawl & Daily Report
+
+By default (`day_scoped = true`) the guba crawl is organized around the calendar
+day in `ranking_timezone` (Asia/Shanghai):
+
+1. **Seeds from the homepage rankings.** The `guba_hot_boards` seed generator reads
+   the three homepage rankings and seeds their boards:
+   - **热门个股吧** — the 人气榜 popularity API (`emappdata` `getAllCurrentList`);
+     ranked security ids map to 6-digit board codes.
+   - **热门概念吧** — the push2 concept-sector list (`dpt=gb.rmbk`); `f12` is the
+     `BK` board code.
+   - **热门主题吧** — the theme list (`HomePageListRead`). A theme is a topic on a
+     separate SPA, so each is expanded into the **concept (`BK`) boards** in its
+     `StockListNew` basket (individual stocks dropped; capped by `theme_member_cap`).
+
+   Only the top `hot_boards_per_section` (~12, "the render part") of each ranking
+   are taken. Sourcing uses stable public East Money endpoints rather than the
+   homepage's encrypted/CMS widgets, so ordering may differ slightly from the live
+   page but does not break when East Money rotates its client-side code.
+
+2. **Day-scoped pagination.** For each seed board the adapter emits `fetch_post`
+   tasks only for posts *published today*, and keeps paginating while a list page
+   still holds a post active today (`post_last_time >= today 00:00`). Because
+   `last_time >= publish_time`, every post published today sorts above the first
+   all-stale page, so the full day is captured. `max_list_pages` is a safety
+   ceiling, not the primary stop.
+
+3. **Ranking snapshot.** Every generator refresh records the day's ordered ranking
+   membership (per section, plus each theme's member boards) in the crawler state
+   DB, so the report can reproduce it even after the live rankings change.
+
+### Daily report page
+
+Run the web dashboard and open `/report/<YYYY-MM-DD>` (defaults to today):
+
+```bash
+uv run alphapulse --config settings.toml web
+# then browse http://127.0.0.1:8000/report/2026-07-21
+```
+
+The report is a light, print-friendly "newspaper": one section per ranking →
+ranked boards (themes show their member boards) → the day's posts, with comment
+threads loaded on demand. Backed by `GET /api/guba/report/{date}` (requires the
+mongo storage backend). Snapshots come from the crawler state DB and posts from
+storage; a day with no snapshot falls back to grouping crawled posts by board.
 
 ## Live Smoke Test
 

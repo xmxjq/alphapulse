@@ -4,13 +4,15 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from alphapulse.pipeline.contracts import SeedDefinition
-from alphapulse.runtime.config import XueqiuSettings
+from alphapulse.runtime.config import CrawlSettings, GubaSettings, XueqiuSettings
 from alphapulse.runtime.state import StateStore
 from alphapulse.seeds.catalog import (
     GeneratedSeedItem,
     GeneratorDefinition,
+    GubaHotBoardsGeneratorDefinition,
     LonghubangGeneratorDefinition,
     LonghubangRecord,
     ManualGeneratorDefinition,
@@ -22,6 +24,14 @@ from alphapulse.seeds.catalog import (
     load_stock_dataset,
 )
 from alphapulse.seeds.eastmoney import fetch_eastmoney_longhubang_page, parse_eastmoney_longhubang_page
+from alphapulse.sources.guba.api import GubaClient
+from alphapulse.sources.guba.rankings import (
+    SECTION_HOT_CONCEPT,
+    SECTION_HOT_STOCK,
+    SECTION_HOT_THEME,
+    HotRankings,
+    fetch_hot_rankings,
+)
 
 
 class SeedGenerator(Protocol):
@@ -148,6 +158,115 @@ class LonghubangSeedGenerator:
         return [GeneratedSeedItem(kind="stock_id", value=item) for item in stock_ids]
 
 
+class GubaHotBoardsSeedGenerator:
+    """Seed guba boards from the three homepage "hot" rankings and snapshot them.
+
+    Emits ordinary ``guba_board_code`` items (consumed unchanged by the adapter)
+    and, as a side effect, records the ordered ranking membership for the current
+    Beijing day so the daily report can reproduce it.
+    """
+
+    def __init__(
+        self,
+        settings: GubaSettings | None,
+        crawl_settings: CrawlSettings | None,
+        state: StateStore | None,
+        client: GubaClient | None = None,
+    ) -> None:
+        self.settings = settings
+        self.crawl_settings = crawl_settings
+        self.state = state
+        self._client = client
+
+    def _get_client(self) -> GubaClient:
+        if self._client is not None:
+            return self._client
+        if self.settings is None or self.crawl_settings is None:
+            raise RuntimeError(
+                "guba_hot_boards generator requires guba/crawl settings to be wired"
+            )
+        self._client = GubaClient(self.settings, self.crawl_settings)
+        return self._client
+
+    def generate(
+        self, definition: GeneratorDefinition, generated_at: datetime
+    ) -> list[GeneratedSeedItem]:
+        assert isinstance(definition, GubaHotBoardsGeneratorDefinition)
+        if self.settings is None:
+            raise RuntimeError("guba_hot_boards generator requires guba settings to be wired")
+        sections = set(definition.sections)
+        rankings = fetch_hot_rankings(self._get_client(), self.settings)
+
+        if self.state is not None:
+            day = (
+                generated_at.astimezone(ZoneInfo(self.settings.ranking_timezone))
+                .date()
+                .isoformat()
+            )
+            self.state.replace_guba_ranking(day, _ranking_snapshot_rows(rankings, sections))
+
+        codes: list[str] = []
+        seen: set[str] = set()
+        for board in rankings.hot_stock if SECTION_HOT_STOCK in sections else []:
+            if board.board_code not in seen:
+                seen.add(board.board_code)
+                codes.append(board.board_code)
+        for board in rankings.hot_concept if SECTION_HOT_CONCEPT in sections else []:
+            if board.board_code not in seen:
+                seen.add(board.board_code)
+                codes.append(board.board_code)
+        if SECTION_HOT_THEME in sections:
+            for theme in rankings.hot_theme:
+                for code in theme.member_board_codes:
+                    if code not in seen:
+                        seen.add(code)
+                        codes.append(code)
+        return [GeneratedSeedItem(kind="guba_board_code", value=code) for code in codes]
+
+
+def _ranking_snapshot_rows(
+    rankings: HotRankings, sections: set[str]
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    if SECTION_HOT_STOCK in sections:
+        for board in rankings.hot_stock:
+            rows.append(
+                {
+                    "section": board.section,
+                    "rank": board.rank,
+                    "code": board.board_code,
+                    "name": board.name,
+                    "url": board.url,
+                    "members": None,
+                }
+            )
+    if SECTION_HOT_CONCEPT in sections:
+        for board in rankings.hot_concept:
+            rows.append(
+                {
+                    "section": board.section,
+                    "rank": board.rank,
+                    "code": board.board_code,
+                    "name": board.name,
+                    "url": board.url,
+                    "members": None,
+                }
+            )
+    if SECTION_HOT_THEME in sections:
+        for theme in rankings.hot_theme:
+            rows.append(
+                {
+                    "section": SECTION_HOT_THEME,
+                    "rank": theme.rank,
+                    "code": f"ht{theme.htid}",
+                    "name": theme.name,
+                    "url": theme.url,
+                    "members": theme.member_board_codes,
+                }
+            )
+    return rows
+
+
 class SeedCompiler:
     def compile(self, seed_name: str, items: list[GeneratedSeedItem]) -> SeedDefinition:
         buckets: dict[str, set[str]] = {
@@ -203,6 +322,8 @@ class SeedDiscoveryManager:
         state: StateStore,
         loader: SeedCatalogLoader | None = None,
         compiler: SeedCompiler | None = None,
+        guba_settings: GubaSettings | None = None,
+        crawl_settings: CrawlSettings | None = None,
     ) -> None:
         self.settings = settings
         self.state = state
@@ -212,6 +333,9 @@ class SeedDiscoveryManager:
             "manual": ManualSeedGenerator(),
             "stock_universe": StockUniverseSeedGenerator(),
             "longhubang": LonghubangSeedGenerator(),
+            "guba_hot_boards": GubaHotBoardsSeedGenerator(
+                guba_settings, crawl_settings, state
+            ),
         }
 
     def load_catalog(self) -> SeedCatalog:
