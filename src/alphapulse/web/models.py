@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from __future__ import annotations
+
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CrawlRun(BaseModel):
@@ -120,6 +122,7 @@ class PostSummary(BaseModel):
     fetched_at: datetime
     like_count: int | None
     comment_count: int | None
+    board_code: str | None = None
 
 
 class PostDetail(BaseModel):
@@ -185,3 +188,38 @@ class SeedsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     seed_sets: list[SeedSetSummary]
+
+
+class GubaReportBoard(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str  # "board" | "theme"
+    rank: int | None
+    code: str
+    name: str | None
+    url: str | None
+    post_count: int
+    comment_count: int
+    posts: list[PostSummary] = Field(default_factory=list)
+    # Populated only for theme entries: the boards making up the theme.
+    members: list[GubaReportBoard] = Field(default_factory=list)
+
+
+class GubaReportSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    title: str
+    entries: list[GubaReportBoard] = Field(default_factory=list)
+
+
+class GubaReportResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day: str
+    timezone: str
+    generated_at: datetime
+    has_snapshot: bool
+    total_posts: int
+    total_comments: int
+    sections: list[GubaReportSection] = Field(default_factory=list)

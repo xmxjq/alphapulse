@@ -72,6 +72,10 @@ class GubaClient:
     def get(self, url: str, *, expect_marker: str | None = None) -> GubaHttpResult:
         return self._request("GET", url, form=None, expect_marker=expect_marker)
 
+    def post_json(self, url: str, payload: dict[str, Any]) -> GubaHttpResult:
+        """POST a JSON body (used by ranking APIs that reject form-encoded input)."""
+        return self._request("POST", url, form=None, json_body=json.dumps(payload))
+
     def post_replies(self, *, post_id: str, board_code: str, page: int) -> GubaHttpResult:
         base = str(self.settings.base_url)
         param = (
@@ -93,6 +97,7 @@ class GubaClient:
         form: dict[str, str] | None,
         referer: str | None = None,
         expect_marker: str | None = None,
+        json_body: str | None = None,
     ) -> GubaHttpResult:
         attempts = max(1, self.settings.max_retries)
         last_result: GubaHttpResult | None = None
@@ -119,7 +124,9 @@ class GubaClient:
             started = time.monotonic()
             try:
                 self._adaptive_sleep(was_rate_limited=was_rate_limited)
-                status_code, text, final_url = self._dispatch(method, url, form, referer, proxy_url)
+                status_code, text, final_url = self._dispatch(
+                    method, url, form, referer, proxy_url, json_body
+                )
             except error.HTTPError as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 body = exc.read().decode("utf-8", errors="ignore")
@@ -227,6 +234,7 @@ class GubaClient:
         form: dict[str, str] | None,
         referer: str | None,
         proxy_url: str | None,
+        json_body: str | None = None,
     ) -> tuple[int, str, str]:
         opener = request.build_opener()
         if proxy_url is not None:
@@ -235,7 +243,10 @@ class GubaClient:
             )
         headers = self._headers(referer)
         data = None
-        if form is not None:
+        if json_body is not None:
+            data = json_body.encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        elif form is not None:
             data = parse.urlencode(form).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         req = request.Request(url, data=data, headers=headers, method=method)

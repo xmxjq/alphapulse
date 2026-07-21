@@ -45,7 +45,44 @@ def parse_args() -> argparse.Namespace:
         help="Route requests through this proxy via the static_list provider "
         "(e.g. http://127.0.0.1:10809); repeat for a rotating pool",
     )
+    parser.add_argument(
+        "--rankings",
+        action="store_true",
+        help="Fetch the three homepage rankings (热门个股吧/概念吧/主题吧) and exit",
+    )
     return parser.parse_args()
+
+
+def _run_rankings(settings: GubaSettings, crawl_settings: CrawlSettings) -> int:
+    from alphapulse.sources.guba.api import GubaClient
+    from alphapulse.sources.guba.rankings import fetch_hot_rankings
+
+    client = GubaClient(settings, crawl_settings)
+    rankings = fetch_hot_rankings(client, settings)
+    print(f"热门个股吧 ({len(rankings.hot_stock)}):")
+    for board in rankings.hot_stock:
+        print(f"  #{board.rank:<2} {board.board_code:<10} {board.name}")
+    print(f"热门概念吧 ({len(rankings.hot_concept)}):")
+    for board in rankings.hot_concept:
+        print(f"  #{board.rank:<2} {board.board_code:<10} {board.name}")
+    print(f"热门主题吧 ({len(rankings.hot_theme)}):")
+    for theme in rankings.hot_theme:
+        members = ",".join(theme.member_board_codes[:8])
+        print(f"  #{theme.rank:<2} ht{theme.htid:<8} {theme.name}  [{members}]")
+    print(f"\nTotal crawlable board codes: {len(rankings.board_codes())}")
+    empty = [
+        name
+        for name, items in (
+            ("hot_stock", rankings.hot_stock),
+            ("hot_concept", rankings.hot_concept),
+            ("hot_theme", rankings.hot_theme),
+        )
+        if not items
+    ]
+    if empty:
+        print(f"WARNING: empty sections (blocked/unreachable): {', '.join(empty)}")
+        return 1
+    return 0
 
 
 def main() -> int:
@@ -63,6 +100,10 @@ def main() -> int:
         crawl_settings.proxy.enabled = True
         crawl_settings.proxy.provider = "static_list"
         crawl_settings.static_proxies.urls = list(args.proxy)
+
+    if args.rankings:
+        return _run_rankings(settings, crawl_settings)
+
     raw_store = RawResponseStore(Path(args.raw_dir))
     adapter = GubaAdapter(settings, crawl_settings, raw_store=raw_store)
 

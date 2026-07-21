@@ -42,6 +42,9 @@ class FakeGubaClient:
 
 
 def _adapter(tmp_path, client: FakeGubaClient, **settings_overrides) -> GubaAdapter:
+    # These tests exercise the classic (total-count based) pagination path;
+    # day-scoping is covered by its own tests below.
+    settings_overrides.setdefault("day_scoped", False)
     settings = GubaSettings(enabled=True, **settings_overrides)
     return GubaAdapter(
         settings,
@@ -145,6 +148,67 @@ def test_list_pagination_stops_at_max_pages(tmp_path) -> None:
 
     outcome = adapter.fetch_item(_discover_task(list_url, "600519", page=3))
     assert all(task.kind != "discover" for task in outcome.discovered_tasks)
+
+
+def _list_html(entries: list[dict]) -> str:
+    payload = {"bar_code": "600519", "bar_name": "贵州茅台", "count": 5000, "re": entries}
+    return f"<html><script>var article_list={json.dumps(payload, ensure_ascii=False)};</script></html>"
+
+
+def _entry(post_id: str, publish: str, last: str, *, comments: int = 0) -> dict:
+    return {
+        "post_id": post_id,
+        "post_title": f"title {post_id}",
+        "stockbar_code": "600519",
+        "user_id": "1",
+        "user_nickname": "u",
+        "post_click_count": 1,
+        "post_comment_count": comments,
+        "post_publish_time": publish,
+        "post_last_time": last,
+        "post_type": 0,
+        "post_state": 0,
+    }
+
+
+def _bj_now():
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("Asia/Shanghai"))
+
+
+def test_day_scoped_emits_only_todays_posts(tmp_path) -> None:
+    today = _bj_now().strftime("%Y-%m-%d")
+    list_url = f"{BASE}/list,600519.html"
+    entries = [
+        _entry("today1", f"{today} 09:30:00", f"{today} 10:00:00", comments=3),
+        _entry("stale1", "2020-01-01 09:30:00", "2020-01-01 09:30:00"),
+    ]
+    client = FakeGubaClient({list_url: _ok(list_url, _list_html(entries))})
+    adapter = _adapter(tmp_path, client, day_scoped=True)
+
+    outcome = adapter.fetch_item(_discover_task(list_url, "600519"))
+
+    posts = [t.metadata["post_id"] for t in outcome.discovered_tasks if t.kind == "fetch_post"]
+    assert posts == ["today1"]
+    # The one comment-bearing today post gets a refresh task; stale one does not.
+    assert [t.metadata["post_id"] for t in outcome.discovered_tasks if t.kind == "refresh_comments"] == ["today1"]
+    # A page holding a post active today keeps paginating.
+    assert any(t.kind == "discover" for t in outcome.discovered_tasks)
+
+
+def test_day_scoped_stops_when_page_all_stale(tmp_path) -> None:
+    list_url = f"{BASE}/list,600519.html"
+    entries = [
+        _entry("stale1", "2020-01-01 09:30:00", "2020-01-02 09:30:00"),
+        _entry("stale2", "2019-05-01 09:30:00", "2019-05-01 09:30:00"),
+    ]
+    client = FakeGubaClient({list_url: _ok(list_url, _list_html(entries))})
+    adapter = _adapter(tmp_path, client, day_scoped=True)
+
+    outcome = adapter.fetch_item(_discover_task(list_url, "600519"))
+
+    assert [t.kind for t in outcome.discovered_tasks] == []
 
 
 def test_list_page_without_payload_records_empty_payload(tmp_path) -> None:
@@ -368,7 +432,7 @@ def _client_with_dispatch(monkeypatch, pages: list[tuple[int, str, str]], max_re
     client = guba_api.GubaClient(settings, CrawlSettings())
     calls: list[str] = []
 
-    def fake_dispatch(method, url, form, referer, proxy_url):
+    def fake_dispatch(method, url, form, referer, proxy_url, json_body=None):
         calls.append(url)
         return pages[min(len(calls), len(pages)) - 1]
 

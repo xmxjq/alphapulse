@@ -113,15 +113,31 @@ request_interval_max_seconds = 5.0
 # SESSDATA = ""
 
 [sources.guba]
-# Eastmoney Guba (东方财富股吧). Board codes go in the seed catalog as
-# guba_board_codes: stock boards ("600519") and index boards ("zssh000001").
+# Eastmoney Guba (东方财富股吧). Boards are seeded automatically by the
+# `guba_hot_boards` generator (see seed_catalog.example.toml) from the three
+# homepage rankings; you may also pin boards manually via guba_board_codes.
 enabled = false
 base_url = "https://guba.eastmoney.com"
-# List pages fetched per board per discovery cycle (80 posts per page).
-max_list_pages = 3
+# Safety ceiling on list pages per board per cycle (80 posts/page). In
+# day_scoped mode pagination normally stops earlier — once a page holds no post
+# still active on the current day.
+max_list_pages = 50
 reply_page_size = 30
 max_reply_pages = 40
 list_recrawl_minutes = 30
+# Day-grouped crawl: only publish posts from the current day (in ranking_timezone)
+# and paginate to that day's boundary. Set false for the classic fixed-page crawl.
+day_scoped = true
+ranking_timezone = "Asia/Shanghai"
+# Top-N boards taken from each homepage ranking ("the render part", ~12).
+hot_boards_per_section = 12
+# Max concept (BK) boards crawled per hot theme (from its StockListNew basket).
+theme_member_cap = 8
+# Ranking data sources (stable public East Money endpoints). Override only if
+# East Money changes them.
+# ranking_stock_url = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList"
+# ranking_concept_url = "https://push2.eastmoney.com/api/qt/clist/get?...dpt=gb.rmbk..."
+# ranking_theme_url = "https://gbcdn.dfcfw.com/gbapi/newtopic_api_Topic_HomePageListRead.js?ps=30&p=1&type=0"
 # Per-request jitter in seconds; every request sleeps uniform(min, max) times
 # an adaptive backoff multiplier before firing. No login or cookies required.
 request_interval_min_seconds = 2.0

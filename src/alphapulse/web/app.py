@@ -12,6 +12,7 @@ from alphapulse.web.models import (
     ErrorsResponse,
     GubaBoardsResponse,
     GubaNextCrawlResponse,
+    GubaReportResponse,
     PostDetailResponse,
     PostsResponse,
     RunsResponse,
@@ -23,6 +24,7 @@ from alphapulse.web.queries import ALLOWED_SOURCES, WebQueries, build_queries
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 ENTITY_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _validate_source(source: str | None) -> str | None:
@@ -90,6 +92,17 @@ def create_app(settings: Settings, queries: WebQueries | None = None) -> FastAPI
     def guba_next_crawl(q: WebQueries = Depends(get_queries)) -> GubaNextCrawlResponse:
         return q.guba_next_crawl()
 
+    @app.get("/api/guba/report/{date}", response_model=GubaReportResponse)
+    def guba_report(date: str, q: WebQueries = Depends(get_queries)) -> GubaReportResponse:
+        if not DATE_RE.match(date):
+            raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+        try:
+            return q.guba_daily_report(date)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+
     @app.get("/api/posts/{source}/{entity_id}", response_model=PostDetailResponse)
     def post_detail(
         source: str,
@@ -108,5 +121,10 @@ def create_app(settings: Settings, queries: WebQueries | None = None) -> FastAPI
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/report", include_in_schema=False)
+    @app.get("/report/{date}", include_in_schema=False)
+    def report(date: str | None = None) -> FileResponse:
+        return FileResponse(STATIC_DIR / "report.html")
 
     return app

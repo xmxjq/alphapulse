@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from alphapulse.pipeline.contracts import (
     CrawlTask,
@@ -134,6 +135,7 @@ class GubaAdapter:
         )
 
         base = str(self.settings.base_url)
+        day_start = self._day_start()
         seen_post_ids: set[str] = set()
         for entry in article_list.entries:
             if entry.post_id in seen_post_ids:
@@ -141,6 +143,13 @@ class GubaAdapter:
             seen_post_ids.add(entry.post_id)
             code = entry.stockbar_code or board_code
             if not code:
+                continue
+            # Day-scoped crawl: only publish today's posts. List pages are sorted
+            # by last-reply time, so old posts bumped by fresh replies resurface
+            # near the top; filter by publish time to keep only today's.
+            if day_start is not None and not (
+                entry.publish_time is not None and entry.publish_time >= day_start
+            ):
                 continue
             detail_url = post_detail_url(base, code, entry.post_id)
             pubdate_ts = self._entry_ts(entry)
@@ -179,8 +188,21 @@ class GubaAdapter:
                     )
                 )
 
-        total = article_list.total_count or 0
-        if page < self.settings.max_list_pages and page * LIST_PAGE_SIZE < total:
+        if day_start is not None:
+            # Keep paginating while this page still holds a post active today
+            # (last_time >= day start). Because last_time >= publish_time, every
+            # post published today sorts above the first all-stale page, so this
+            # reliably reaches the full day. max_list_pages is a safety ceiling.
+            page_has_today = any(
+                entry.last_time is not None and entry.last_time >= day_start
+                for entry in article_list.entries
+            )
+            should_paginate = page < self.settings.max_list_pages and page_has_today
+        else:
+            total = article_list.total_count or 0
+            should_paginate = page < self.settings.max_list_pages and page * LIST_PAGE_SIZE < total
+
+        if should_paginate:
             outcome.discovered_tasks.append(
                 CrawlTask(
                     source=self.source_name,
@@ -192,6 +214,13 @@ class GubaAdapter:
                 )
             )
         return outcome
+
+    def _day_start(self) -> datetime | None:
+        """Start of the current day in the ranking timezone, or None if not day-scoped."""
+        if not self.settings.day_scoped:
+            return None
+        now = datetime.now(ZoneInfo(self.settings.ranking_timezone))
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     def _handle_post_detail(self, task: CrawlTask, response: GubaHttpResult) -> FetchOutcome:
         outcome = FetchOutcome(status_code=response.status_code)

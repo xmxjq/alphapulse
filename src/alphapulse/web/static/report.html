@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>股吧日报 · Guba Daily</title>
+  <link rel="stylesheet" href="/static/report.css" />
+</head>
+<body>
+  <div id="paper">
+    <header class="masthead">
+      <div class="masthead-top">
+        <span class="edition">东方财富 · 股吧</span>
+        <span id="dateline" class="dateline">—</span>
+      </div>
+      <h1 class="title">股 吧 日 报</h1>
+      <div class="subtitle">Guba Daily · 热门个股吧 · 热门概念吧 · 热门主题吧</div>
+      <div class="controls">
+        <button id="prev-day" type="button" title="前一天">◀</button>
+        <input id="day-picker" type="date" />
+        <button id="next-day" type="button" title="后一天">▶</button>
+        <span id="summary" class="summary"></span>
+      </div>
+    </header>
+    <main id="report">
+      <p class="loading">Loading…</p>
+    </main>
+    <footer class="colophon">
+      Generated from crawled guba posts. Rankings are a snapshot of the day's hot boards.
+    </footer>
+  </div>
+  <script src="/static/common.js"></script>
+  <script src="/static/report.js"></script>
+</body>
+</html>
