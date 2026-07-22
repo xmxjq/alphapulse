@@ -26,7 +26,7 @@ class FakeRankingClient:
         self._by_marker = {
             "stockrank": _read("rank_hot_stock.json"),
             "clist": _read("rank_hot_concept.json"),
-            "HomePageListRead": _read("rank_hot_theme.js"),
+            "getBulletin": _read("rank_hot_theme.html"),
         }
         self.get_calls: list[str] = []
         self.post_calls: list[tuple[str, dict]] = []
@@ -68,14 +68,14 @@ def test_fetch_hot_rankings_parses_all_sections() -> None:
     ]
     assert all(b.section == SECTION_HOT_CONCEPT for b in rankings.hot_concept)
 
-    # 主题: htid + expanded concept (BK) members only (stocks & US/HK tokens dropped).
-    assert [(t.htid, t.name) for t in rankings.hot_theme] == [
-        ("11759", "半导体产业链狂飙"),
-        ("9432", "国家队出手"),
+    # 主题: whole theme boards parsed from the bulletin fragment (each a /list board).
+    assert [(b.rank, b.board_code, b.name) for b in rankings.hot_theme] == [
+        (1, "gssz", "股市实战吧"),
+        (2, "cjpl", "财经评论吧"),
+        (3, "zssh000001", "上证指数吧"),
     ]
-    assert rankings.hot_theme[0].member_board_codes == ["BK1036"]
-    assert rankings.hot_theme[1].member_board_codes == ["BK0505"]
-    assert rankings.hot_theme[0].url == "https://gubatopic.eastmoney.com/topic_v3.html?htid=11759"
+    assert all(b.section == SECTION_HOT_THEME for b in rankings.hot_theme)
+    assert rankings.hot_theme[0].url.endswith("/list,gssz.html")
 
 
 def test_board_codes_dedupes_across_sections() -> None:
@@ -84,20 +84,22 @@ def test_board_codes_dedupes_across_sections() -> None:
     rankings = fetch_hot_rankings(client, settings)  # type: ignore[arg-type]
 
     codes = rankings.board_codes()
-    # Ordered stock → concept → theme concept-members, de-duplicated (BK1036 once).
-    assert codes == ["001309", "600584", "430047", "BK1036", "BK0966", "BK0505"]
+    # Ordered stock → concept → theme boards, de-duplicated.
+    assert codes == [
+        "001309", "600584", "430047", "BK1036", "BK0966", "gssz", "cjpl", "zssh000001",
+    ]
     assert len(codes) == len(set(codes))
 
 
-def test_per_section_limit_and_theme_cap_are_respected() -> None:
-    settings = GubaSettings(enabled=True, hot_boards_per_section=1, theme_member_cap=1)
+def test_per_section_limit_is_respected() -> None:
+    settings = GubaSettings(enabled=True, hot_boards_per_section=1)
     client = FakeRankingClient(settings)
     rankings = fetch_hot_rankings(client, settings)  # type: ignore[arg-type]
 
     assert len(rankings.hot_stock) == 1
     assert len(rankings.hot_concept) == 1
     assert len(rankings.hot_theme) == 1
-    assert rankings.hot_theme[0].member_board_codes == ["BK1036"]
+    assert rankings.hot_theme[0].board_code == "gssz"
 
 
 def test_failed_section_yields_empty_list() -> None:
@@ -109,7 +111,8 @@ def test_failed_section_yields_empty_list() -> None:
 
     client = BrokenClient(settings)
     rankings = fetch_hot_rankings(client, settings)  # type: ignore[arg-type]
+    # Stock (人气榜) and theme (bulletin) both POST, so both fail here...
     assert rankings.hot_stock == []
-    # Other sections still parse.
+    assert rankings.hot_theme == []
+    # ...but the GET-based concept section still parses.
     assert rankings.hot_concept
-    assert rankings.hot_theme

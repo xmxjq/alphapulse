@@ -133,13 +133,14 @@ day_scoped = true
 ranking_timezone = "Asia/Shanghai"
 # Top-N boards taken from each homepage ranking ("the render part", ~12).
 hot_boards_per_section = 12
-# Max concept (BK) boards crawled per hot theme (from its StockListNew basket).
-theme_member_cap = 8
+# Deprecated/unused (kept so older configs still load). 热门主题吧 entries are
+# whole boards now, not themes with member baskets.
+# theme_member_cap = 8
 # Ranking data sources (stable public East Money endpoints). Override only if
 # East Money changes them.
 # ranking_stock_url = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList"
 # ranking_concept_url = "https://push2.eastmoney.com/api/qt/clist/get?...dpt=gb.rmbk..."
-# ranking_theme_url = "https://gbcdn.dfcfw.com/gbapi/newtopic_api_Topic_HomePageListRead.js?ps=30&p=1&type=0"
+# ranking_theme_url = "https://guba.eastmoney.com/api/getBulletin?url=html%2FBase%2F1346.html&cachetime=600"
 # Per-request jitter in seconds; every request sleeps uniform(min, max) times
 # an adaptive backoff multiplier before firing. No login or cookies required.
 request_interval_min_seconds = 2.0

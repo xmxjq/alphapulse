@@ -207,64 +207,42 @@ class GubaHotBoardsSeedGenerator:
 
         codes: list[str] = []
         seen: set[str] = set()
-        for board in rankings.hot_stock if SECTION_HOT_STOCK in sections else []:
+        for board in _selected_boards(rankings, sections):
             if board.board_code not in seen:
                 seen.add(board.board_code)
                 codes.append(board.board_code)
-        for board in rankings.hot_concept if SECTION_HOT_CONCEPT in sections else []:
-            if board.board_code not in seen:
-                seen.add(board.board_code)
-                codes.append(board.board_code)
-        if SECTION_HOT_THEME in sections:
-            for theme in rankings.hot_theme:
-                for code in theme.member_board_codes:
-                    if code not in seen:
-                        seen.add(code)
-                        codes.append(code)
         return [GeneratedSeedItem(kind="guba_board_code", value=code) for code in codes]
+
+
+def _selected_boards(rankings: HotRankings, sections: set[str]) -> list:
+    """Ordered boards across the requested sections (stock → concept → theme)."""
+    by_section = {
+        SECTION_HOT_STOCK: rankings.hot_stock,
+        SECTION_HOT_CONCEPT: rankings.hot_concept,
+        SECTION_HOT_THEME: rankings.hot_theme,
+    }
+    boards: list = []
+    for key in (SECTION_HOT_STOCK, SECTION_HOT_CONCEPT, SECTION_HOT_THEME):
+        if key in sections:
+            boards.extend(by_section[key])
+    return boards
 
 
 def _ranking_snapshot_rows(
     rankings: HotRankings, sections: set[str]
 ) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    if SECTION_HOT_STOCK in sections:
-        for board in rankings.hot_stock:
-            rows.append(
-                {
-                    "section": board.section,
-                    "rank": board.rank,
-                    "code": board.board_code,
-                    "name": board.name,
-                    "url": board.url,
-                    "members": None,
-                }
-            )
-    if SECTION_HOT_CONCEPT in sections:
-        for board in rankings.hot_concept:
-            rows.append(
-                {
-                    "section": board.section,
-                    "rank": board.rank,
-                    "code": board.board_code,
-                    "name": board.name,
-                    "url": board.url,
-                    "members": None,
-                }
-            )
-    if SECTION_HOT_THEME in sections:
-        for theme in rankings.hot_theme:
-            rows.append(
-                {
-                    "section": SECTION_HOT_THEME,
-                    "rank": theme.rank,
-                    "code": f"ht{theme.htid}",
-                    "name": theme.name,
-                    "url": theme.url,
-                    "members": theme.member_board_codes,
-                }
-            )
-    return rows
+    # All three sections are now plain boards, so rows are uniform.
+    return [
+        {
+            "section": board.section,
+            "rank": board.rank,
+            "code": board.board_code,
+            "name": board.name,
+            "url": board.url,
+            "members": None,
+        }
+        for board in _selected_boards(rankings, sections)
+    ]
 
 
 class SeedCompiler:
