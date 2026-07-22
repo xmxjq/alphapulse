@@ -118,10 +118,12 @@ request_interval_max_seconds = 5.0
 # homepage rankings; you may also pin boards manually via guba_board_codes.
 enabled = false
 base_url = "https://guba.eastmoney.com"
-# Safety ceiling on list pages per board per cycle (80 posts/page). In
-# day_scoped mode pagination normally stops earlier — once a page holds no post
-# still active on the current day.
-max_list_pages = 50
+# Per-board list-page cap (80 posts/page). In day_scoped mode a board stops at
+# whichever comes first: the day boundary (a page with no post still active
+# today) or this many pages. Keep it modest so one crawl cycle finishes well
+# within a day — that's what lets seeds and the daily ranking snapshot refresh
+# each day. Raise only alongside more proxy throughput.
+max_list_pages = 3
 reply_page_size = 30
 max_reply_pages = 40
 list_recrawl_minutes = 30

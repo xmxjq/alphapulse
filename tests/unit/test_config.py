@@ -25,7 +25,7 @@ def test_load_settings_example() -> None:
     assert settings.sources.bilibili.space_discovery_max_videos == 50
     assert settings.sources.guba.enabled is False
     assert str(settings.sources.guba.base_url) == "https://guba.eastmoney.com/"
-    assert settings.sources.guba.max_list_pages == 50
+    assert settings.sources.guba.max_list_pages == 3
     assert settings.sources.guba.reply_page_size == 30
     assert settings.sources.guba.max_reply_pages == 40
     assert settings.sources.guba.list_recrawl_minutes == 30

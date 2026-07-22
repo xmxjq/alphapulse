@@ -180,10 +180,13 @@ class GubaSettings(BaseModel):
 
     enabled: bool = False
     base_url: HttpUrl = "https://guba.eastmoney.com"
-    # In day-scoped mode `max_list_pages` is a safety ceiling, not the primary
-    # stop: pagination for a board halts once a list page holds no post still
-    # active on the target day (see GubaAdapter._handle_list_page).
-    max_list_pages: int = Field(default=50, ge=1)
+    # Per-board list-page cap (80 posts/page). In day-scoped mode a board stops
+    # at whichever comes first: the day boundary (a page with no post still
+    # active today) or this many pages. Keep this modest — one crawl cycle must
+    # finish well within a day so seeds and the daily ranking snapshot refresh
+    # each day (see GubaAdapter._handle_list_page). Raise it only alongside more
+    # proxy throughput.
+    max_list_pages: int = Field(default=3, ge=1)
     reply_page_size: int = Field(default=30, ge=1, le=100)
     max_reply_pages: int = Field(default=40, ge=1)
     list_recrawl_minutes: int = Field(default=30, ge=1)

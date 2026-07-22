@@ -49,7 +49,7 @@ This guide shows how to enable and run the Eastmoney Guba (东方财富股吧) c
 [sources.guba]
 enabled = true
 base_url = "https://guba.eastmoney.com"
-max_list_pages = 50           # safety ceiling; day-scoping usually stops earlier
+max_list_pages = 3            # per-board page cap; keep modest so cycles finish daily
 reply_page_size = 30
 max_reply_pages = 40
 list_recrawl_minutes = 30
@@ -124,14 +124,19 @@ day in `ranking_timezone` (Asia/Shanghai):
 
 2. **Day-scoped pagination.** For each seed board the adapter emits `fetch_post`
    tasks only for posts *published today*, and keeps paginating while a list page
-   still holds a post active today (`post_last_time >= today 00:00`). Because
-   `last_time >= publish_time`, every post published today sorts above the first
-   all-stale page, so the full day is captured. `max_list_pages` is a safety
-   ceiling, not the primary stop.
+   still holds a post active today (`post_last_time >= today 00:00`), up to the
+   `max_list_pages` per-board cap. Because `last_time >= publish_time`, every post
+   published today sorts above the first all-stale page. Keep `max_list_pages`
+   modest: one crawl cycle refreshes seeds and writes the daily snapshot only at
+   its **start**, so a cycle that runs longer than a day (e.g. uncapped full-day
+   crawls across many boards through one proxy) never produces the next day's
+   snapshot. Hitting the cap mid-day logs `guba_day_page_cap` (not silent).
 
 3. **Ranking snapshot.** Every generator refresh records the day's ordered ranking
    membership (per section, plus each theme's member boards) in the crawler state
-   DB, so the report can reproduce it even after the live rankings change.
+   DB, so the report can reproduce it even after the live rankings change. Because
+   this happens at crawl-cycle start, cycles must finish within a day (hence the
+   modest `max_list_pages`) for each day to get its own snapshot.
 
 ### Daily report page
 
