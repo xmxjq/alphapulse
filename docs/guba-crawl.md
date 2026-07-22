@@ -113,9 +113,9 @@ day in `ranking_timezone` (Asia/Shanghai):
      ranked security ids map to 6-digit board codes.
    - **热门概念吧** — the push2 concept-sector list (`dpt=gb.rmbk`); `f12` is the
      `BK` board code.
-   - **热门主题吧** — the theme list (`HomePageListRead`). A theme is a topic on a
-     separate SPA, so each is expanded into the **concept (`BK`) boards** in its
-     `StockListNew` basket (individual stocks dropped; capped by `theme_member_cap`).
+   - **热门主题吧** — the CMS bulletin fragment (`/api/getBulletin`, POST) the
+     homepage widget renders: an HTML list of theme boards (股市实战吧, 财经评论吧,
+     index/market boards, …), each a normal `/list,{code}.html` board.
 
    Only the top `hot_boards_per_section` (~12, "the render part") of each ranking
    are taken. Sourcing uses stable public East Money endpoints rather than the

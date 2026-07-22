@@ -726,35 +726,12 @@ class WebQueries:
                 rows = rows_by_section.get(key, [])
                 if not rows:
                     continue
-                entries: list[GubaReportBoard] = []
-                for row in rows:
-                    if key == "hot_theme":
-                        members = [
-                            board_entry(str(code), None, None, None)
-                            for code in (row.get("members") or [])
-                        ]
-                        members = [m for m in members if m.post_count > 0]
-                        entries.append(
-                            GubaReportBoard(
-                                kind="theme",
-                                rank=int(row["rank"]),
-                                code=str(row["code"]),
-                                name=row.get("name"),
-                                url=row.get("url"),
-                                post_count=sum(m.post_count for m in members),
-                                comment_count=sum(m.comment_count for m in members),
-                                members=members,
-                            )
-                        )
-                    else:
-                        entries.append(
-                            board_entry(
-                                str(row["code"]),
-                                row.get("name"),
-                                row.get("url"),
-                                int(row["rank"]),
-                            )
-                        )
+                entries = [
+                    board_entry(
+                        str(row["code"]), row.get("name"), row.get("url"), int(row["rank"])
+                    )
+                    for row in rows
+                ]
                 sections.append(GubaReportSection(key=key, title=title, entries=entries))
         else:
             entries = [

@@ -284,7 +284,7 @@ def test_guba_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> 
             table = {
                 "stockrank": "rank_hot_stock.json",
                 "clist": "rank_hot_concept.json",
-                "HomePageListRead": "rank_hot_theme.js",
+                "getBulletin": "rank_hot_theme.html",
             }
             for marker, name in table.items():
                 if marker in url:
@@ -306,17 +306,15 @@ def test_guba_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> 
 
     assert all(item.kind == "guba_board_code" for item in items)
     codes = [item.value for item in items]
-    # Stock (人气榜), concept (push2), and theme concept-member (BK0505 only from a
-    # theme's StockListNew) all seed board codes; theme stock members are dropped.
-    assert "600584" in codes and "BK1036" in codes and "BK0505" in codes
-    assert "688981" not in codes
+    # Stock (人气榜), concept (push2), and theme (bulletin board list) all seed codes.
+    assert "600584" in codes and "BK1036" in codes and "gssz" in codes
 
     snapshot = state.get_guba_ranking("2026-07-21")
     sections = {row["section"] for row in snapshot}
     assert sections == {"hot_stock", "hot_concept", "hot_theme"}
     theme_rows = [r for r in snapshot if r["section"] == "hot_theme"]
-    assert theme_rows[0]["code"].startswith("ht")
-    assert theme_rows[0]["members"]
+    assert theme_rows[0]["code"] == "gssz"
+    assert theme_rows[0]["members"] == []
 
 
 def test_guba_hot_boards_generator_respects_section_filter(tmp_path: Path) -> None:
