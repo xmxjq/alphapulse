@@ -28,11 +28,13 @@ function beijingToday() {
 }
 
 function pathParts() {
-  // /report/{source}/{date} or the legacy /report/{date} (defaults to guba).
-  const two = location.pathname.match(/\/report\/([a-z]+)\/(\d{4}-\d{2}-\d{2})/);
-  if (two && SOURCE_META[two[1]]) return { source: two[1], day: two[2] };
-  const one = location.pathname.match(/\/report\/(\d{4}-\d{2}-\d{2})/);
-  return { source: DEFAULT_SOURCE, day: one ? one[1] : beijingToday() };
+  // /report/{source}/{date}, /report/{source} (today), or the legacy /report/{date}.
+  const withDate = location.pathname.match(/\/report\/([a-z]+)\/(\d{4}-\d{2}-\d{2})/);
+  if (withDate && SOURCE_META[withDate[1]]) return { source: withDate[1], day: withDate[2] };
+  const sourceOnly = location.pathname.match(/\/report\/([a-z]+)\/?$/);
+  if (sourceOnly && SOURCE_META[sourceOnly[1]]) return { source: sourceOnly[1], day: beijingToday() };
+  const dateOnly = location.pathname.match(/\/report\/(\d{4}-\d{2}-\d{2})/);
+  return { source: DEFAULT_SOURCE, day: dateOnly ? dateOnly[1] : beijingToday() };
 }
 
 function shiftDay(day, delta) {
