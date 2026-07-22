@@ -317,6 +317,66 @@ def test_guba_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> 
     assert theme_rows[0]["members"] == []
 
 
+def test_manual_seed_generator_emits_tgb_board_codes() -> None:
+    generator = ManualSeedGenerator()
+    items = generator.generate(
+        ManualGeneratorDefinition(name="manual", tgb_board_codes=["jinghua", "sz000938"]),
+        datetime.now(UTC),
+    )
+    assert [(item.kind, item.value) for item in items] == [
+        ("tgb_board_code", "jinghua"),
+        ("tgb_board_code", "sz000938"),
+    ]
+
+
+def test_seed_compiler_preserves_tgb_board_codes() -> None:
+    compiled = SeedCompiler().compile(
+        "tgb-daily",
+        [
+            GeneratedSeedItem(kind="tgb_board_code", value="jinghua"),
+            GeneratedSeedItem(kind="tgb_board_code", value="sz000938"),
+        ],
+    )
+    assert compiled.tgb_board_codes == ["jinghua", "sz000938"]
+
+
+def test_tgb_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> None:
+    from alphapulse.runtime.config import TgbSettings
+    from alphapulse.sources.tgb.api import TgbHttpResult
+    from alphapulse.seeds.catalog import TgbHotBoardsGeneratorDefinition
+    from alphapulse.seeds.discovery import TgbHotBoardsSeedGenerator
+
+    fixtures = Path(__file__).parent.parent / "fixtures" / "tgb"
+
+    class FakeClient:
+        def get(self, url, *, expect_marker=None):
+            return TgbHttpResult(
+                url=url, status_code=200,
+                text=(fixtures / "home_rankings.html").read_text(encoding="utf-8"),
+            )
+
+    state = StateStore(tmp_path / "state.db")
+    generator = TgbHotBoardsSeedGenerator(TgbSettings(enabled=True), None, state, client=FakeClient())
+    definition = TgbHotBoardsGeneratorDefinition(name="tgb-hot", hot_stocks_limit=3)
+
+    generated_at = datetime(2026, 7, 22, 3, 0, 0, tzinfo=UTC)  # 11:00 Beijing
+    items = generator.generate(definition, generated_at)
+
+    assert all(item.kind == "tgb_board_code" for item in items)
+    codes = [item.value for item in items]
+    # Always-on featured + general feeds, then discovered hot-stock boards.
+    assert codes[:2] == ["jinghua", "zongban"]
+    assert "sz000938" in codes
+
+    snapshot = state.get_tgb_ranking("2026-07-22")
+    by_section: dict[str, list[str]] = {}
+    for row in snapshot:
+        by_section.setdefault(row["section"], []).append(row["code"])
+    assert by_section["featured"] == ["jinghua"]
+    assert by_section["general"][0] == "zongban"
+    assert "sz000938" in by_section["general"]
+
+
 def test_guba_hot_boards_generator_respects_section_filter(tmp_path: Path) -> None:
     from alphapulse.runtime.config import GubaSettings
     from alphapulse.sources.guba.api import GubaHttpResult

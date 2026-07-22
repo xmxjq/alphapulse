@@ -218,6 +218,10 @@ class StubReader:
     def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]:
         return self.guba_boards[:limit]
 
+    def list_source_posts_in_range(self, source, start, end, limit):  # noqa: ANN001
+        self.range_call = (source, start, end, limit)
+        return getattr(self, "range_posts", [])
+
 
 def test_clickhouse_reader_lists_guba_boards() -> None:
     client = FakeClickHouseClient(
@@ -264,6 +268,75 @@ def test_rqlite_reader_lists_guba_boards() -> None:
     assert boards[0].post_count == 7
     assert client.calls[0][1:] == [10]
     assert "json_extract" in client.calls[0][0]
+
+
+def _post_summary(source: str, entity_id: str, board_code: str, comments: int) -> PostSummary:
+    return PostSummary(
+        source=source,
+        source_entity_id=entity_id,
+        canonical_url=f"https://www.tgb.cn/a/{entity_id}",
+        author_entity_id="42",
+        title=f"post {entity_id}",
+        content_preview="preview",
+        published_at=datetime(2026, 7, 22, 6, 0, tzinfo=UTC),
+        fetched_at=datetime(2026, 7, 22, 7, 0, tzinfo=UTC),
+        like_count=0,
+        comment_count=comments,
+        board_code=board_code,
+    )
+
+
+def test_tgb_daily_report_splits_featured_and_general(tmp_path: Path) -> None:
+    day = "2026-07-22"
+    state = StateStore(tmp_path / "state.db")
+    state.replace_tgb_ranking(
+        day,
+        [
+            {"section": "featured", "rank": 1, "code": "jinghua", "name": "精华",
+             "url": "https://www.tgb.cn/jinghua/1-1", "members": None},
+            {"section": "general", "rank": 1, "code": "zongban", "name": "社区总版",
+             "url": "https://www.tgb.cn/zongban/1/1", "members": None},
+            {"section": "general", "rank": 2, "code": "sz000938", "name": "紫光股份",
+             "url": "https://www.tgb.cn/quotes/sz000938", "members": None},
+        ],
+    )
+    reader = StubReader()
+    reader.range_posts = [
+        _post_summary("tgb", "p1", "jinghua", 5),
+        _post_summary("tgb", "p2", "zongban", 2),
+        _post_summary("tgb", "p3", "sz000938", 1),
+        _post_summary("tgb", "p4", "sz000938", 4),
+    ]
+    queries = WebQueries(reader=reader, state=state)
+
+    report = queries.tgb_daily_report(day)
+
+    assert reader.range_call[0] == "tgb"  # queried the tgb source
+    assert report.has_snapshot is True
+    assert report.total_posts == 4
+    assert report.total_comments == 12
+    assert [s.key for s in report.sections] == ["featured", "general"]
+    featured, general = report.sections
+    assert featured.title == "精华"
+    assert [b.code for b in featured.entries] == ["jinghua"]
+    assert featured.entries[0].post_count == 1
+    # General keeps ranked order: general feed first, then the hot stock board.
+    assert [b.code for b in general.entries] == ["zongban", "sz000938"]
+    stock_board = general.entries[1]
+    assert stock_board.post_count == 2
+    assert stock_board.comment_count == 5
+
+
+def test_tgb_daily_report_falls_back_without_snapshot(tmp_path: Path) -> None:
+    state = StateStore(tmp_path / "state.db")
+    reader = StubReader()
+    reader.range_posts = [_post_summary("tgb", "p1", "sz1", 3)]
+    queries = WebQueries(reader=reader, state=state)
+
+    report = queries.tgb_daily_report("2026-07-22")
+    assert report.has_snapshot is False
+    assert [s.key for s in report.sections] == ["all"]
+    assert report.sections[0].entries[0].code == "sz1"
 
 
 def test_web_queries_annotates_guba_boards_with_seed_sets(tmp_path: Path) -> None:

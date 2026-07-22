@@ -223,12 +223,53 @@ class GubaSettings(BaseModel):
         return self
 
 
+class TgbSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    base_url: HttpUrl = "https://www.tgb.cn"
+    # Board slugs for the two fixed feeds. 精华 (featured) is the report's
+    # "featured" section; 社区总版 (general) is the catch-all "general" tier.
+    featured_slug: str = "jinghua"
+    general_slug: str = "zongban"
+    # Per-board list-page cap for the day-scoped feed crawl (~70 posts/page). Like
+    # guba's cap, keep this modest so one crawl cycle finishes within a day and each
+    # calendar day gets its own ranking snapshot (see TgbAdapter._handle_list_page).
+    max_list_pages: int = Field(default=3, ge=1)
+    # Hot-stock discussion boards (/quotes/{code}) render a single server-side page
+    # of the mention feed; we crawl page 1 only by default.
+    max_stock_pages: int = Field(default=1, ge=1)
+    # How many top 热门研股 (hot research stocks) to seed as "general" boards each day.
+    hot_stocks_limit: int = Field(default=12, ge=1, le=100)
+    list_recrawl_minutes: int = Field(default=30, ge=1)
+    # Day-grouped crawling: each cycle re-derives "today" in ranking_timezone and
+    # only crawls that day's posts (list feeds are sorted by post date descending).
+    day_scoped: bool = True
+    ranking_timezone: str = "Asia/Shanghai"
+    # Homepage HTML carrying the 热门研股 widget; parsed for hot-stock discovery.
+    ranking_hot_stock_url: HttpUrl = "https://www.tgb.cn/"
+    request_interval_min_seconds: float = Field(default=2.0, ge=0.0)
+    request_interval_max_seconds: float = Field(default=6.0, ge=0.0)
+    max_retries: int = Field(default=3, ge=1)
+    user_agent: str | None = None
+    cookies: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_request_interval(self) -> "TgbSettings":
+        if self.request_interval_max_seconds < self.request_interval_min_seconds:
+            raise ValueError(
+                "sources.tgb.request_interval_max_seconds must be >= request_interval_min_seconds"
+            )
+        return self
+
+
 class SourcesSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     xueqiu: XueqiuSettings = Field(default_factory=XueqiuSettings)
     bilibili: BilibiliSettings = Field(default_factory=BilibiliSettings)
     guba: GubaSettings = Field(default_factory=GubaSettings)
+    tgb: TgbSettings = Field(default_factory=TgbSettings)
 
 
 class WebSettings(BaseModel):

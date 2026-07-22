@@ -15,6 +15,7 @@ SeedItemKind = Literal[
     "bilibili_video_target",
     "bilibili_space_url",
     "guba_board_code",
+    "tgb_board_code",
     "stock_id",
     "topic_id",
     "user_id",
@@ -45,6 +46,7 @@ class ManualGeneratorDefinition(BaseModel):
     bilibili_video_targets: list[str] = Field(default_factory=list)
     bilibili_space_urls: list[str] = Field(default_factory=list)
     guba_board_codes: list[str] = Field(default_factory=list)
+    tgb_board_codes: list[str] = Field(default_factory=list)
     stock_ids: list[str] = Field(default_factory=list)
     topic_ids: list[str] = Field(default_factory=list)
     user_ids: list[str] = Field(default_factory=list)
@@ -123,11 +125,25 @@ class GubaHotBoardsGeneratorDefinition(BaseModel):
     )
 
 
+class TgbHotBoardsGeneratorDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: Literal["tgb_hot_boards"] = "tgb_hot_boards"
+    # The 精华 (featured) and 社区总版 (general) feeds are always-on tiers; the hot-stock
+    # boards under "general" are self-discovered from the 热门研股 homepage widget.
+    include_featured: bool = True
+    include_general: bool = True
+    # Overrides sources.tgb.hot_stocks_limit when set (top-N hot stocks to seed).
+    hot_stocks_limit: int | None = Field(default=None, gt=0)
+
+
 GeneratorDefinition = Annotated[
     ManualGeneratorDefinition
     | StockUniverseGeneratorDefinition
     | LonghubangGeneratorDefinition
-    | GubaHotBoardsGeneratorDefinition,
+    | GubaHotBoardsGeneratorDefinition
+    | TgbHotBoardsGeneratorDefinition,
     Field(discriminator="type"),
 ]
 

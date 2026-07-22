@@ -7,17 +7,18 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from alphapulse.runtime.config import CrawlSettings, GubaSettings, Settings
+from alphapulse.runtime.config import CrawlSettings, GubaSettings, Settings, TgbSettings
 from alphapulse.runtime.state import StateStore
+from alphapulse.sources.tgb.urls import featured_list_url, general_list_url, stock_list_url
 from alphapulse.web.models import (
     Comment,
     CrawlError,
     CrawlRun,
     GubaBoardSummary,
     GubaNextCrawlResponse,
-    GubaReportBoard,
-    GubaReportResponse,
-    GubaReportSection,
+    ReportBoard,
+    ReportResponse,
+    ReportSection,
     NextCrawlBoard,
     PostDetail,
     PostDetailResponse,
@@ -28,16 +29,20 @@ from alphapulse.web.models import (
 )
 
 
-# Ordered (section-key, display title) pairs for the daily report.
+# Ordered (section-key, display title) pairs for each source's daily report.
 GUBA_REPORT_SECTIONS = [
     ("hot_stock", "热门个股吧"),
     ("hot_concept", "热门概念吧"),
     ("hot_theme", "热门主题吧"),
 ]
+TGB_REPORT_SECTIONS = [
+    ("featured", "精华"),
+    ("general", "热门个股 / 综合"),
+]
 
 
 RECENT_URL_WINDOW = timedelta(hours=1)
-ALLOWED_SOURCES = {"bilibili", "xueqiu", "guba"}
+ALLOWED_SOURCES = {"bilibili", "xueqiu", "guba", "tgb"}
 CONTENT_PREVIEW_CHARS = 280
 # Page-1 board list URLs only; deeper pages (list,{code}_{N}.html) are
 # re-discovered from page 1, so page 1 is what drives the next crawl.
@@ -59,8 +64,8 @@ class StorageReader(Protocol):
 
     def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]: ...
 
-    def list_guba_posts_in_range(
-        self, start: datetime, end: datetime, limit: int
+    def list_source_posts_in_range(
+        self, source: str, start: datetime, end: datetime, limit: int
     ) -> list[PostSummary]: ...
 
 
@@ -286,10 +291,10 @@ class ClickHouseReader:
         )
         return [_guba_board_from_row(row) for row in rows]
 
-    def list_guba_posts_in_range(
-        self, start: datetime, end: datetime, limit: int
+    def list_source_posts_in_range(
+        self, source: str, start: datetime, end: datetime, limit: int
     ) -> list[PostSummary]:
-        raise NotImplementedError("guba daily report requires the mongo storage backend")
+        raise NotImplementedError("the daily report requires the mongo storage backend")
 
 
 @dataclass
@@ -382,10 +387,10 @@ class RqliteReader:
         )
         return [_guba_board_from_row(row) for row in rows]
 
-    def list_guba_posts_in_range(
-        self, start: datetime, end: datetime, limit: int
+    def list_source_posts_in_range(
+        self, source: str, start: datetime, end: datetime, limit: int
     ) -> list[PostSummary]:
-        raise NotImplementedError("guba daily report requires the mongo storage backend")
+        raise NotImplementedError("the daily report requires the mongo storage backend")
 
 
 @dataclass
@@ -474,8 +479,8 @@ class MongoReader:
         docs = self._posts().aggregate(pipeline)
         return [_guba_board_from_row({**doc, "board_code": doc["_id"]}) for doc in docs]
 
-    def list_guba_posts_in_range(
-        self, start: datetime, end: datetime, limit: int
+    def list_source_posts_in_range(
+        self, source: str, start: datetime, end: datetime, limit: int
     ) -> list[PostSummary]:
         projection = {
             "source": 1,
@@ -491,7 +496,7 @@ class MongoReader:
             "raw_topic_ids": 1,
         }
         cursor = self._posts().find(
-            {"source": "guba", "published_at": {"$gte": start, "$lt": end}},
+            {"source": source, "published_at": {"$gte": start, "$lt": end}},
             projection=projection,
             sort=[("published_at", 1), ("source_entity_id", 1)],
             limit=limit,
@@ -676,53 +681,58 @@ class WebQueries:
         comments = self.reader.list_comments_for_post(source, source_entity_id)
         return PostDetailResponse(post=post, comments=comments)
 
-    def guba_daily_report(self, day: str, *, limit: int = 20_000) -> GubaReportResponse:
+    def _daily_report(
+        self,
+        source: str,
+        day: str,
+        section_titles: list[tuple[str, str]],
+        get_ranking,
+        tz_name: str,
+        board_url_fn,
+        limit: int,
+    ) -> ReportResponse:
         """Assemble a per-day newspaper: the ranking snapshot joined with the day's posts.
 
-        `day` is a Beijing-local (ranking timezone) calendar date "YYYY-MM-DD".
-        Posts are grouped by board; comments are loaded lazily by the UI via the
-        post-detail endpoint. Falls back to grouping all crawled boards when no
-        ranking snapshot exists for the day.
+        `day` is a calendar date "YYYY-MM-DD" in `tz_name` (the source's ranking
+        timezone). Posts are grouped by board (``raw_topic_ids[0]``); comments are
+        loaded lazily by the UI via the post-detail endpoint. Falls back to grouping
+        all crawled boards when no ranking snapshot exists for the day.
         """
-        guba = self.settings.sources.guba if self.settings else GubaSettings()
-        tz_name = guba.ranking_timezone
         tz = ZoneInfo(tz_name)
         day_date = date.fromisoformat(day)
         start_local = datetime(day_date.year, day_date.month, day_date.day, tzinfo=tz)
         start = start_local.astimezone(UTC)
         end = (start_local + timedelta(days=1)).astimezone(UTC)
 
-        posts = self.reader.list_guba_posts_in_range(start, end, limit)
+        posts = self.reader.list_source_posts_in_range(source, start, end, limit)
         by_board: dict[str, list[PostSummary]] = {}
         for post in posts:
             by_board.setdefault(post.board_code or "", []).append(post)
         total_posts = len(posts)
         total_comments = sum(post.comment_count or 0 for post in posts)
 
-        base = str(guba.base_url).rstrip("/")
-
         def board_entry(
             code: str, name: str | None, url: str | None, rank: int | None
-        ) -> GubaReportBoard:
+        ) -> ReportBoard:
             bposts = by_board.get(code, [])
-            return GubaReportBoard(
+            return ReportBoard(
                 kind="board",
                 rank=rank,
                 code=code,
                 name=name,
-                url=url or f"{base}/list,{code}.html",
+                url=url or board_url_fn(code),
                 post_count=len(bposts),
                 comment_count=sum(p.comment_count or 0 for p in bposts),
                 posts=bposts,
             )
 
-        snapshot = self.state.get_guba_ranking(day)
-        sections: list[GubaReportSection] = []
+        snapshot = get_ranking(day)
+        sections: list[ReportSection] = []
         if snapshot:
             rows_by_section: dict[str, list[dict[str, Any]]] = {}
             for row in snapshot:
                 rows_by_section.setdefault(str(row["section"]), []).append(row)
-            for key, title in GUBA_REPORT_SECTIONS:
+            for key, title in section_titles:
                 rows = rows_by_section.get(key, [])
                 if not rows:
                     continue
@@ -732,7 +742,7 @@ class WebQueries:
                     )
                     for row in rows
                 ]
-                sections.append(GubaReportSection(key=key, title=title, entries=entries))
+                sections.append(ReportSection(key=key, title=title, entries=entries))
         else:
             entries = [
                 board_entry(code, None, None, None)
@@ -741,10 +751,10 @@ class WebQueries:
             ]
             entries.sort(key=lambda e: e.post_count, reverse=True)
             sections.append(
-                GubaReportSection(key="all", title="全部板块", entries=entries)
+                ReportSection(key="all", title="全部板块", entries=entries)
             )
 
-        return GubaReportResponse(
+        return ReportResponse(
             day=day,
             timezone=tz_name,
             generated_at=datetime.now(UTC),
@@ -752,6 +762,40 @@ class WebQueries:
             total_posts=total_posts,
             total_comments=total_comments,
             sections=sections,
+        )
+
+    def guba_daily_report(self, day: str, *, limit: int = 20_000) -> ReportResponse:
+        guba = self.settings.sources.guba if self.settings else GubaSettings()
+        base = str(guba.base_url).rstrip("/")
+        return self._daily_report(
+            "guba",
+            day,
+            GUBA_REPORT_SECTIONS,
+            self.state.get_guba_ranking,
+            guba.ranking_timezone,
+            lambda code: f"{base}/list,{code}.html",
+            limit,
+        )
+
+    def tgb_daily_report(self, day: str, *, limit: int = 20_000) -> ReportResponse:
+        tgb = self.settings.sources.tgb if self.settings else TgbSettings()
+        base = str(tgb.base_url)
+
+        def board_url(code: str) -> str:
+            if code == tgb.general_slug:
+                return general_list_url(base, code)
+            if code == tgb.featured_slug:
+                return featured_list_url(base, code)
+            return stock_list_url(base, code)
+
+        return self._daily_report(
+            "tgb",
+            day,
+            TGB_REPORT_SECTIONS,
+            self.state.get_tgb_ranking,
+            tgb.ranking_timezone,
+            board_url,
+            limit,
         )
 
 

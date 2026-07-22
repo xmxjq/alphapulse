@@ -7,7 +7,7 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from alphapulse.pipeline.contracts import SeedDefinition
-from alphapulse.runtime.config import CrawlSettings, GubaSettings, XueqiuSettings
+from alphapulse.runtime.config import CrawlSettings, GubaSettings, TgbSettings, XueqiuSettings
 from alphapulse.runtime.state import StateStore
 from alphapulse.seeds.catalog import (
     GeneratedSeedItem,
@@ -20,6 +20,7 @@ from alphapulse.seeds.catalog import (
     SeedCatalogLoader,
     StockUniverseGeneratorDefinition,
     StockUniverseRecord,
+    TgbHotBoardsGeneratorDefinition,
     load_longhubang_dataset,
     load_stock_dataset,
 )
@@ -32,6 +33,14 @@ from alphapulse.sources.guba.rankings import (
     HotRankings,
     fetch_hot_rankings,
 )
+from alphapulse.sources.tgb.api import TgbClient
+from alphapulse.sources.tgb.rankings import fetch_hot_stocks
+from alphapulse.sources.tgb.urls import featured_list_url, general_list_url, stock_list_url
+
+
+# tgb daily-report section keys (shared with web.queries TGB_REPORT_SECTIONS).
+TGB_SECTION_FEATURED = "featured"
+TGB_SECTION_GENERAL = "general"
 
 
 class SeedGenerator(Protocol):
@@ -80,6 +89,10 @@ class ManualSeedGenerator:
         items.extend(
             GeneratedSeedItem(kind="guba_board_code", value=value)
             for value in definition.guba_board_codes
+        )
+        items.extend(
+            GeneratedSeedItem(kind="tgb_board_code", value=value)
+            for value in definition.tgb_board_codes
         )
         items.extend(GeneratedSeedItem(kind="stock_id", value=value) for value in definition.stock_ids)
         items.extend(GeneratedSeedItem(kind="topic_id", value=value) for value in definition.topic_ids)
@@ -245,6 +258,100 @@ def _ranking_snapshot_rows(
     ]
 
 
+class TgbHotBoardsSeedGenerator:
+    """Seed the tgb 精华/社区总版 feeds plus self-discovered 热门研股 stock boards.
+
+    Emits ordinary ``tgb_board_code`` items (a board code is either the featured slug,
+    the general slug, or a stock code, disambiguated by the adapter) and, as a side
+    effect, snapshots the ordered ranking membership for the current Beijing day so the
+    daily report can reproduce the Featured/General sections.
+    """
+
+    def __init__(
+        self,
+        settings: TgbSettings | None,
+        crawl_settings: CrawlSettings | None,
+        state: StateStore | None,
+        client: TgbClient | None = None,
+    ) -> None:
+        self.settings = settings
+        self.crawl_settings = crawl_settings
+        self.state = state
+        self._client = client
+
+    def _get_client(self) -> TgbClient:
+        if self._client is not None:
+            return self._client
+        if self.settings is None or self.crawl_settings is None:
+            raise RuntimeError("tgb_hot_boards generator requires tgb/crawl settings to be wired")
+        self._client = TgbClient(self.settings, self.crawl_settings)
+        return self._client
+
+    def generate(
+        self, definition: GeneratorDefinition, generated_at: datetime
+    ) -> list[GeneratedSeedItem]:
+        assert isinstance(definition, TgbHotBoardsGeneratorDefinition)
+        if self.settings is None:
+            raise RuntimeError("tgb_hot_boards generator requires tgb settings to be wired")
+        base = str(self.settings.base_url)
+        limit = definition.hot_stocks_limit or self.settings.hot_stocks_limit
+        hot_stocks = fetch_hot_stocks(self._get_client(), self.settings)[:limit]
+
+        rows: list[dict[str, object]] = []
+        codes: list[str] = []
+        if definition.include_featured:
+            codes.append(self.settings.featured_slug)
+            rows.append(
+                {
+                    "section": TGB_SECTION_FEATURED,
+                    "rank": 1,
+                    "code": self.settings.featured_slug,
+                    "name": "精华",
+                    "url": featured_list_url(base, self.settings.featured_slug),
+                    "members": None,
+                }
+            )
+        general_rank = 0
+        if definition.include_general:
+            general_rank += 1
+            codes.append(self.settings.general_slug)
+            rows.append(
+                {
+                    "section": TGB_SECTION_GENERAL,
+                    "rank": general_rank,
+                    "code": self.settings.general_slug,
+                    "name": "社区总版",
+                    "url": general_list_url(base, self.settings.general_slug),
+                    "members": None,
+                }
+            )
+        for stock in hot_stocks:
+            general_rank += 1
+            codes.append(stock.code)
+            rows.append(
+                {
+                    "section": TGB_SECTION_GENERAL,
+                    "rank": general_rank,
+                    "code": stock.code,
+                    "name": stock.name,
+                    "url": stock_list_url(base, stock.code),
+                    "members": None,
+                }
+            )
+
+        if self.state is not None:
+            day = (
+                generated_at.astimezone(ZoneInfo(self.settings.ranking_timezone))
+                .date()
+                .isoformat()
+            )
+            self.state.replace_tgb_ranking(day, rows)
+
+        seen: set[str] = set()
+        deduped = [c for c in codes if not (c in seen or seen.add(c))]
+        return [GeneratedSeedItem(kind="tgb_board_code", value=code) for code in deduped]
+
+
 class SeedCompiler:
     def compile(self, seed_name: str, items: list[GeneratedSeedItem]) -> SeedDefinition:
         buckets: dict[str, set[str]] = {
@@ -252,6 +359,7 @@ class SeedCompiler:
             "bilibili_video_target": set(),
             "bilibili_space_url": set(),
             "guba_board_code": set(),
+            "tgb_board_code": set(),
             "stock_id": set(),
             "topic_id": set(),
             "user_id": set(),
@@ -271,6 +379,7 @@ class SeedCompiler:
             bilibili_video_targets=sorted(buckets["bilibili_video_target"]),
             bilibili_space_urls=sorted(buckets["bilibili_space_url"]),
             guba_board_codes=sorted(buckets["guba_board_code"]),
+            tgb_board_codes=sorted(buckets["tgb_board_code"]),
             stock_ids=sorted(buckets["stock_id"]),
             topic_ids=sorted(buckets["topic_id"]),
             user_ids=sorted(buckets["user_id"]),
@@ -301,6 +410,7 @@ class SeedDiscoveryManager:
         loader: SeedCatalogLoader | None = None,
         compiler: SeedCompiler | None = None,
         guba_settings: GubaSettings | None = None,
+        tgb_settings: TgbSettings | None = None,
         crawl_settings: CrawlSettings | None = None,
     ) -> None:
         self.settings = settings
@@ -313,6 +423,9 @@ class SeedDiscoveryManager:
             "longhubang": LonghubangSeedGenerator(),
             "guba_hot_boards": GubaHotBoardsSeedGenerator(
                 guba_settings, crawl_settings, state
+            ),
+            "tgb_hot_boards": TgbHotBoardsSeedGenerator(
+                tgb_settings, crawl_settings, state
             ),
         }
 

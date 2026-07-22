@@ -57,6 +57,28 @@ body {
   color: var(--muted);
   letter-spacing: .04em;
 }
+.source-switch {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: var(--sans);
+}
+.source-tab {
+  font-size: 13px;
+  padding: 3px 14px;
+  border: 1px solid var(--rule, #ccc);
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+.source-tab.active {
+  color: var(--bg, #fff);
+  background: var(--ink, #222);
+  border-color: var(--ink, #222);
+}
+.source-tab:hover:not(.active) { background: var(--accent-soft, #f0f0f0); }
 .controls {
   display: flex;
   align-items: center;

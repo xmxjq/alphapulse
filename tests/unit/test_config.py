@@ -43,7 +43,7 @@ def test_load_settings_example() -> None:
 def test_load_seed_catalog_example() -> None:
     settings = load_settings(Path("settings.example.toml"))
     catalog = SeedCatalogLoader(settings.sources.xueqiu.seed_catalog_path).load()
-    assert [item.name for item in catalog.logical_sets] == ["cn-core"]
+    assert [item.name for item in catalog.logical_sets] == ["cn-core", "tgb-daily"]
     assert catalog.logical_sets[0].generators == ["cn-core-manual", "guba-hot"]
     manual = catalog.generator_map()["cn-core-manual"]
     assert manual.bilibili_video_targets == ["BV1xx411c7mu"]
@@ -51,6 +51,9 @@ def test_load_seed_catalog_example() -> None:
     guba_hot = catalog.generator_map()["guba-hot"]
     assert guba_hot.type == "guba_hot_boards"
     assert guba_hot.sections == ["hot_stock", "hot_concept", "hot_theme"]
+    tgb_hot = catalog.generator_map()["tgb-hot"]
+    assert tgb_hot.type == "tgb_hot_boards"
+    assert tgb_hot.include_featured and tgb_hot.include_general
 
 
 def test_load_settings_with_proxy_enabled(tmp_path: Path) -> None:

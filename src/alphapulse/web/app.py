@@ -12,7 +12,7 @@ from alphapulse.web.models import (
     ErrorsResponse,
     GubaBoardsResponse,
     GubaNextCrawlResponse,
-    GubaReportResponse,
+    ReportResponse,
     PostDetailResponse,
     PostsResponse,
     RunsResponse,
@@ -92,12 +92,23 @@ def create_app(settings: Settings, queries: WebQueries | None = None) -> FastAPI
     def guba_next_crawl(q: WebQueries = Depends(get_queries)) -> GubaNextCrawlResponse:
         return q.guba_next_crawl()
 
-    @app.get("/api/guba/report/{date}", response_model=GubaReportResponse)
-    def guba_report(date: str, q: WebQueries = Depends(get_queries)) -> GubaReportResponse:
+    @app.get("/api/guba/report/{date}", response_model=ReportResponse)
+    def guba_report(date: str, q: WebQueries = Depends(get_queries)) -> ReportResponse:
         if not DATE_RE.match(date):
             raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
         try:
             return q.guba_daily_report(date)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+    @app.get("/api/tgb/report/{date}", response_model=ReportResponse)
+    def tgb_report(date: str, q: WebQueries = Depends(get_queries)) -> ReportResponse:
+        if not DATE_RE.match(date):
+            raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+        try:
+            return q.tgb_daily_report(date)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except NotImplementedError as exc:
@@ -124,7 +135,9 @@ def create_app(settings: Settings, queries: WebQueries | None = None) -> FastAPI
 
     @app.get("/report", include_in_schema=False)
     @app.get("/report/{date}", include_in_schema=False)
-    def report(date: str | None = None) -> FileResponse:
+    @app.get("/report/{source}/{date}", include_in_schema=False)
+    def report(date: str | None = None, source: str | None = None) -> FileResponse:
+        # The static page reads the source/date from the URL path itself.
         return FileResponse(STATIC_DIR / "report.html")
 
     return app

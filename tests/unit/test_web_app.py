@@ -51,6 +51,9 @@ class FakeReader:
     def list_guba_boards(self, limit: int) -> list[GubaBoardSummary]:
         return self.guba_boards[:limit]
 
+    def list_source_posts_in_range(self, source, start, end, limit):  # noqa: ANN001
+        return []
+
 
 def _build_client(tmp_path: Path, reader: FakeReader) -> TestClient:
     settings = load_settings(Path("settings.example.toml"))
@@ -242,6 +245,28 @@ def test_post_detail_rejects_invalid_entity_id(tmp_path: Path) -> None:
     client = _build_client(tmp_path, FakeReader())
     response = client.get("/api/posts/bilibili/abc%20xyz")
     assert response.status_code == 400
+
+
+def test_tgb_report_api_returns_sections(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    response = client.get("/api/tgb/report/2026-07-22")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["day"] == "2026-07-22"
+    assert body["has_snapshot"] is False
+    assert body["total_posts"] == 0
+
+
+def test_tgb_report_api_rejects_bad_date(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    assert client.get("/api/tgb/report/2026-7-2").status_code == 400
+
+
+def test_tgb_report_page_serves_html(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    response = client.get("/report/tgb/2026-07-22")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
 
 
 def test_index_serves_html(tmp_path: Path) -> None:

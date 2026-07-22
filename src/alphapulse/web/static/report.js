@@ -1,16 +1,38 @@
-// Per-day guba "newspaper" report. Fetches /api/guba/report/{date} and renders
+// Per-day forum "newspaper" report. Fetches /api/{source}/report/{date} and renders
 // ranking sections → boards → the day's posts, with lazily-loaded comment threads.
+// `source` is guba (股吧) or tgb (淘股吧), read from the /report/{source}/{date} path.
 
 const REPORT_TZ = "Asia/Shanghai";
+
+const SOURCE_META = {
+  guba: {
+    label: "股吧",
+    edition: "东方财富 · 股吧",
+    title: "股 吧 日 报",
+    subtitle: "Guba Daily · 热门个股吧 · 热门概念吧 · 热门主题吧",
+    colophon: "Generated from crawled guba posts. Rankings are a snapshot of the day's hot boards.",
+  },
+  tgb: {
+    label: "淘股吧",
+    edition: "淘股吧 · TaoGuBa",
+    title: "淘 股 吧 日 报",
+    subtitle: "TaoGuBa Daily · 精华 · 热门个股 · 综合",
+    colophon: "Generated from crawled tgb.cn posts. Featured (精华) and general boards, snapshotted daily.",
+  },
+};
+const DEFAULT_SOURCE = "guba";
 
 function beijingToday() {
   // en-CA locale yields YYYY-MM-DD.
   return new Date().toLocaleDateString("en-CA", { timeZone: REPORT_TZ });
 }
 
-function dateFromPath() {
-  const m = location.pathname.match(/\/report\/(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : beijingToday();
+function pathParts() {
+  // /report/{source}/{date} or the legacy /report/{date} (defaults to guba).
+  const two = location.pathname.match(/\/report\/([a-z]+)\/(\d{4}-\d{2}-\d{2})/);
+  if (two && SOURCE_META[two[1]]) return { source: two[1], day: two[2] };
+  const one = location.pathname.match(/\/report\/(\d{4}-\d{2}-\d{2})/);
+  return { source: DEFAULT_SOURCE, day: one ? one[1] : beijingToday() };
 }
 
 function shiftDay(day, delta) {
@@ -25,12 +47,34 @@ function weekday(day) {
   } catch { return ""; }
 }
 
-let state = { day: dateFromPath(), commentCache: new Map() };
+let state = { ...pathParts(), commentCache: new Map() };
 
-function navigate(day) {
+function navigate(day, source = state.source) {
   state.day = day;
-  history.pushState({ day }, "", `/report/${day}`);
+  state.source = source;
+  history.pushState({ day, source }, "", `/report/${source}/${day}`);
+  applySourceChrome();
   loadReport();
+}
+
+function applySourceChrome() {
+  const meta = SOURCE_META[state.source] || SOURCE_META[DEFAULT_SOURCE];
+  document.getElementById("edition").textContent = meta.edition;
+  document.getElementById("masthead-title").textContent = meta.title;
+  document.getElementById("subtitle").textContent = meta.subtitle;
+  document.getElementById("colophon").textContent = meta.colophon;
+  document.title = `${meta.label}日报`;
+
+  const nav = document.getElementById("source-switch");
+  nav.innerHTML = "";
+  for (const key of Object.keys(SOURCE_META)) {
+    const link = el("a", {
+      class: `source-tab ${key === state.source ? "active" : ""}`,
+      href: `/report/${key}/${state.day}`,
+      onclick: (e) => { e.preventDefault(); navigate(state.day, key); },
+    }, SOURCE_META[key].label);
+    nav.appendChild(link);
+  }
 }
 
 function postItem(post) {
@@ -74,7 +118,7 @@ async function toggleComments(post, box, toggle) {
   toggle.disabled = true;
   toggle.textContent = "加载中…";
   try {
-    const payload = await fetchJSON(`/api/posts/guba/${encodeURIComponent(post.source_entity_id)}`);
+    const payload = await fetchJSON(`/api/posts/${state.source}/${encodeURIComponent(post.source_entity_id)}`);
     box.innerHTML = "";
     box.appendChild(
       payload.comments.length
@@ -157,7 +201,7 @@ async function loadReport() {
   const main = document.getElementById("report");
   main.innerHTML = '<p class="loading">Loading…</p>';
   try {
-    const data = await fetchJSON(`/api/guba/report/${state.day}`);
+    const data = await fetchJSON(`/api/${state.source}/report/${state.day}`);
     renderReport(data);
   } catch (err) {
     main.innerHTML = "";
@@ -171,7 +215,12 @@ function init() {
   document.getElementById("day-picker").addEventListener("change", (e) => {
     if (e.target.value) navigate(e.target.value);
   });
-  window.addEventListener("popstate", () => { state.day = dateFromPath(); loadReport(); });
+  window.addEventListener("popstate", () => {
+    Object.assign(state, pathParts());
+    applySourceChrome();
+    loadReport();
+  });
+  applySourceChrome();
   loadReport();
 }
 

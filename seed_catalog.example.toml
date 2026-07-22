@@ -2,6 +2,11 @@
 name = "cn-core"
 generators = ["cn-core-manual", "guba-hot"]
 
+# 淘股吧 daily set: featured + general feeds + self-discovered hot-stock boards.
+[[logical_sets]]
+name = "tgb-daily"
+generators = ["tgb-hot"]
+
 [[generators]]
 name = "cn-core-manual"
 type = "manual"
@@ -28,3 +33,13 @@ name = "guba-hot"
 type = "guba_hot_boards"
 # Optional: restrict to a subset. Defaults to all three.
 # sections = ["hot_stock", "hot_concept", "hot_theme"]
+
+# 淘股吧 hot boards: always seeds 精华 (featured) + 社区总版 (general), plus the
+# top-N 热门研股 hot-stock boards discovered from the homepage. Each refresh also
+# snapshots the day's Featured/General ranking for the /report/tgb page.
+[[generators]]
+name = "tgb-hot"
+type = "tgb_hot_boards"
+# include_featured = true
+# include_general = true
+# hot_stocks_limit = 12   # overrides sources.tgb.hot_stocks_limit

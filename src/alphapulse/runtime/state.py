@@ -96,17 +96,30 @@ class StateStore:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (day, section, rank)
                 );
+
+                CREATE TABLE IF NOT EXISTS tgb_daily_ranking (
+                    day TEXT NOT NULL,
+                    section TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    code TEXT NOT NULL,
+                    name TEXT,
+                    url TEXT,
+                    members TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (day, section, rank)
+                );
                 """
             )
 
-    def replace_guba_ranking(self, day: str, rows: list[dict[str, object]]) -> None:
-        """Replace the whole ranking snapshot for a Beijing day (latest refresh wins)."""
+    def _replace_ranking(self, table: str, day: str, rows: list[dict[str, object]]) -> None:
+        """Replace a whole daily ranking snapshot (latest refresh wins). `table` is a
+        trusted internal constant, never user input."""
         now = datetime.now(UTC).isoformat()
         with self.connection() as conn:
-            conn.execute("DELETE FROM guba_daily_ranking WHERE day = ?", (day,))
+            conn.execute(f"DELETE FROM {table} WHERE day = ?", (day,))
             conn.executemany(
-                """
-                INSERT INTO guba_daily_ranking
+                f"""
+                INSERT INTO {table}
                     (day, section, rank, code, name, url, members, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -127,12 +140,12 @@ class StateStore:
                 ],
             )
 
-    def get_guba_ranking(self, day: str) -> list[dict[str, object]]:
+    def _get_ranking(self, table: str, day: str) -> list[dict[str, object]]:
         with self.connection() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT section, rank, code, name, url, members
-                FROM guba_daily_ranking
+                FROM {table}
                 WHERE day = ?
                 ORDER BY section, rank
                 """,
@@ -151,6 +164,18 @@ class StateStore:
                 }
             )
         return result
+
+    def replace_guba_ranking(self, day: str, rows: list[dict[str, object]]) -> None:
+        self._replace_ranking("guba_daily_ranking", day, rows)
+
+    def get_guba_ranking(self, day: str) -> list[dict[str, object]]:
+        return self._get_ranking("guba_daily_ranking", day)
+
+    def replace_tgb_ranking(self, day: str, rows: list[dict[str, object]]) -> None:
+        self._replace_ranking("tgb_daily_ranking", day, rows)
+
+    def get_tgb_ranking(self, day: str) -> list[dict[str, object]]:
+        return self._get_ranking("tgb_daily_ranking", day)
 
     def try_claim_url(
         self,

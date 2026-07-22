@@ -190,7 +190,7 @@ class SeedsResponse(BaseModel):
     seed_sets: list[SeedSetSummary]
 
 
-class GubaReportBoard(BaseModel):
+class ReportBoard(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: str  # "board" | "theme"
@@ -202,18 +202,18 @@ class GubaReportBoard(BaseModel):
     comment_count: int
     posts: list[PostSummary] = Field(default_factory=list)
     # Populated only for theme entries: the boards making up the theme.
-    members: list[GubaReportBoard] = Field(default_factory=list)
+    members: list[ReportBoard] = Field(default_factory=list)
 
 
-class GubaReportSection(BaseModel):
+class ReportSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     key: str
     title: str
-    entries: list[GubaReportBoard] = Field(default_factory=list)
+    entries: list[ReportBoard] = Field(default_factory=list)
 
 
-class GubaReportResponse(BaseModel):
+class ReportResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     day: str
@@ -222,4 +222,4 @@ class GubaReportResponse(BaseModel):
     has_snapshot: bool
     total_posts: int
     total_comments: int
-    sections: list[GubaReportSection] = Field(default_factory=list)
+    sections: list[ReportSection] = Field(default_factory=list)
