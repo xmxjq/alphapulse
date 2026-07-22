@@ -192,12 +192,22 @@ class GubaAdapter:
             # Keep paginating while this page still holds a post active today
             # (last_time >= day start). Because last_time >= publish_time, every
             # post published today sorts above the first all-stale page, so this
-            # reliably reaches the full day. max_list_pages is a safety ceiling.
+            # reaches the full day up to the max_list_pages per-board cap.
             page_has_today = any(
                 entry.last_time is not None and entry.last_time >= day_start
                 for entry in article_list.entries
             )
             should_paginate = page < self.settings.max_list_pages and page_has_today
+            if page_has_today and page >= self.settings.max_list_pages:
+                # Capped mid-day: today's board has more posts than we crawl.
+                # Log it so the truncation is visible, not silent.
+                logger.info(
+                    "Guba board hit day-scoped page cap; older same-day posts skipped",
+                    extra={
+                        "event": "guba_day_page_cap",
+                        "extra_data": {"board_code": board_code, "pages": page},
+                    },
+                )
         else:
             total = article_list.total_count or 0
             should_paginate = page < self.settings.max_list_pages and page * LIST_PAGE_SIZE < total
