@@ -34,6 +34,10 @@ def test_load_settings_example() -> None:
     assert settings.sources.guba.request_interval_min_seconds == 2.0
     assert settings.sources.guba.request_interval_max_seconds == 6.0
     assert settings.sources.guba.max_retries == 3
+    assert settings.sources.guba.browser.enabled is False
+    assert settings.sources.guba.browser.cdp_url == "http://guba_browser:9223"
+    assert settings.sources.guba.browser.navigation_timeout_seconds == 60
+    assert settings.sources.guba.browser.settle_timeout_seconds == 15
     assert settings.crawl.raw_store.enabled is False
     assert settings.crawl.raw_store.root_path.name == "raw"
     assert settings.crawl.raw_store.root_path.is_absolute()

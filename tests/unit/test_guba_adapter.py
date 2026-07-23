@@ -41,6 +41,16 @@ class FakeGubaClient:
         return self.reply_pages[page]
 
 
+class FakeGubaBrowserClient:
+    def __init__(self, responses: dict[str, GubaHttpResult]) -> None:
+        self.responses = responses
+        self.get_calls: list[str] = []
+
+    def get(self, url: str) -> GubaHttpResult:
+        self.get_calls.append(url)
+        return self.responses[url]
+
+
 def _adapter(tmp_path, client: FakeGubaClient, **settings_overrides) -> GubaAdapter:
     # These tests exercise the classic (total-count based) pagination path;
     # day-scoping is covered by its own tests below.
@@ -266,6 +276,33 @@ def test_post_detail_parses_and_records_mod_count(tmp_path) -> None:
     assert meta["post_mod_count"] == 2
     assert meta["post_mod_time"] == "2026-07-15 15:10:00"
     assert rows[0]["block_kind"] is None
+
+
+def test_post_detail_uses_browser_client_when_configured(tmp_path) -> None:
+    url = f"{BASE}/news,600519,1743987733.html"
+    http_client = FakeGubaClient()
+    browser_client = FakeGubaBrowserClient({url: _ok(url, _read("post_detail.html"))})
+    adapter = GubaAdapter(
+        GubaSettings(enabled=True, day_scoped=False),
+        CrawlSettings(),
+        client=http_client,  # type: ignore[arg-type]
+        browser_client=browser_client,  # type: ignore[arg-type]
+        raw_store=RawResponseStore(tmp_path / "raw"),
+    )
+
+    outcome = adapter.fetch_item(
+        CrawlTask(
+            source="guba",
+            kind="fetch_post",
+            url=url,
+            seed_name="test-seed",
+            metadata={"post_id": "1743987733", "board_code": "600519"},
+        )
+    )
+
+    assert len(outcome.posts) == 1
+    assert browser_client.get_calls == [url]
+    assert http_client.get_calls == []
 
 
 def test_deleted_post_redirected_to_error_page(tmp_path) -> None:

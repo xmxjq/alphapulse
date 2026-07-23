@@ -24,6 +24,33 @@ services:
       - "8000:8000"
     environment:
       PYTHONUNBUFFERED: "1"
+  # Persistent Chromium session for authenticated guba post-detail crawling.
+  # The noVNC port is loopback-only; reach it through an SSH tunnel:
+  #   ssh -L 6080:127.0.0.1:6080 <worker>
+  # then open http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale.
+  guba_browser:
+    build:
+      context: .
+      dockerfile: docker/guba-browser/Dockerfile
+    restart: unless-stopped
+    profiles: ["guba-browser"]
+    command: ["/usr/local/bin/start-guba-browser"]
+    volumes:
+      - ./.runtime/guba-browser-profile:/data/profile
+    ports:
+      - "127.0.0.1:6080:6080"
+    expose:
+      - "9223"
+    environment:
+      GUBA_BROWSER_PROXY: "http://host.docker.internal:10809"
+      GUBA_BROWSER_START_URL: "https://guba.eastmoney.com/"
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9222/json/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
   # Local xray client exposing one HTTP-proxy inbound per tunnel; pair with
   # crawl.proxy.provider = "static_list" in settings.toml, e.g.
   #   crawl.static_proxies.urls = ["http://host.docker.internal:10809"]

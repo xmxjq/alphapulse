@@ -15,6 +15,7 @@ from alphapulse.pipeline.contracts import (
 )
 from alphapulse.runtime.config import CrawlSettings, GubaSettings
 from alphapulse.sources.guba.api import GubaClient, GubaHttpResult
+from alphapulse.sources.guba.browser import GubaBrowserClient
 from alphapulse.sources.guba.parser import GubaListEntry, parse_article_list, parse_post_detail, parse_replies
 from alphapulse.sources.guba.urls import (
     board_list_url,
@@ -39,11 +40,15 @@ class GubaAdapter:
         crawl_settings: CrawlSettings,
         *,
         client: GubaClient | None = None,
+        browser_client: GubaBrowserClient | None = None,
         raw_store: RawResponseStore | None = None,
     ) -> None:
         self.settings = settings
         self.crawl_settings = crawl_settings
         self.client = client or GubaClient(settings, crawl_settings)
+        self.browser_client = browser_client
+        if self.browser_client is None and settings.browser.enabled:
+            self.browser_client = GubaBrowserClient(settings.browser)
         self.raw_store = raw_store
 
     def discover(self, seed: SeedDefinition) -> list[CrawlTask]:
@@ -86,7 +91,10 @@ class GubaAdapter:
         # client's soft-block check excludes, so they still fall through to
         # the `/error` handling in `_handle_post_detail`.
         expect_marker = "var article_list" if task.kind == "discover" else "var post_article"
-        response = self.client.get(str(task.url), expect_marker=expect_marker)
+        if task.kind == "fetch_post" and self.browser_client is not None:
+            response = self.browser_client.get(str(task.url))
+        else:
+            response = self.client.get(str(task.url), expect_marker=expect_marker)
 
         if response.status_code == 0:
             self._save_raw(response, task.kind, requested_url=str(task.url))

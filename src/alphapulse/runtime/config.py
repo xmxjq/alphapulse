@@ -175,6 +175,15 @@ class BilibiliSettings(BaseModel):
         return self
 
 
+class GubaBrowserSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    cdp_url: str = "http://guba_browser:9223"
+    navigation_timeout_seconds: int = Field(default=60, ge=1)
+    settle_timeout_seconds: int = Field(default=15, ge=1)
+
+
 class GubaSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -213,6 +222,7 @@ class GubaSettings(BaseModel):
     max_retries: int = Field(default=3, ge=1)
     user_agent: str | None = None
     cookies: dict[str, str] = Field(default_factory=dict)
+    browser: GubaBrowserSettings = Field(default_factory=GubaBrowserSettings)
 
     @model_validator(mode="after")
     def validate_request_interval(self) -> "GubaSettings":

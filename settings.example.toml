@@ -150,6 +150,16 @@ max_retries = 3
 
 [sources.guba.cookies]
 
+[sources.guba.browser]
+# Use the persistent worker Chromium session for post-detail pages only.
+# Start it with:
+#   docker compose --profile guba-browser up -d guba_browser
+# Log in through the SSH-tunneled noVNC page before enabling this setting.
+enabled = false
+cdp_url = "http://guba_browser:9223"
+navigation_timeout_seconds = 60
+settle_timeout_seconds = 15
+
 [sources.tgb]
 # 淘股吧 (tgb.cn). Boards are seeded automatically by the `tgb_hot_boards`
 # generator (see seed_catalog.example.toml): the 精华 (featured) and 社区总版
