@@ -193,7 +193,7 @@ class GubaAdapter:
                         kind="refresh_comments",
                         url=comment_refresh_url(base, code, entry.post_id),
                         seed_name=task.seed_name,
-                        priority=300,
+                        priority=100,
                         metadata={
                             "post_id": entry.post_id,
                             "canonical_url": detail_url,
@@ -406,7 +406,7 @@ class GubaAdapter:
             kind="refresh_comments",
             url=comment_refresh_url(base, board_code, post.source_entity_id),
             seed_name=seed_name,
-            priority=300,
+            priority=100,
             metadata={
                 "post_id": post.source_entity_id,
                 "canonical_url": str(post.canonical_url),

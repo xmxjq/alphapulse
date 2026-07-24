@@ -317,6 +317,40 @@ def test_guba_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> 
     assert theme_rows[0]["members"] == []
 
 
+def test_guba_ranking_client_bypasses_crawl_proxy(monkeypatch) -> None:
+    from alphapulse.runtime.config import CrawlSettings, GubaSettings
+    from alphapulse.seeds.discovery import GubaHotBoardsSeedGenerator
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, settings, crawl_settings):
+            captured["settings"] = settings
+            captured["crawl_settings"] = crawl_settings
+
+    monkeypatch.setattr("alphapulse.seeds.discovery.GubaClient", FakeClient)
+    generator = GubaHotBoardsSeedGenerator(
+        GubaSettings(enabled=True),
+        CrawlSettings.model_validate(
+            {
+                "proxy": {
+                    "enabled": True,
+                    "provider": "kuaidaili",
+                    "sources": ["guba"],
+                }
+            }
+        ),
+        None,
+    )
+
+    generator._get_client()
+
+    assert captured["settings"].max_retries == 1
+    assert captured["settings"].request_interval_min_seconds == 0
+    assert captured["settings"].request_interval_max_seconds == 0
+    assert captured["crawl_settings"].proxy.enabled is False
+
+
 def test_manual_seed_generator_emits_tgb_board_codes() -> None:
     generator = ManualSeedGenerator()
     items = generator.generate(

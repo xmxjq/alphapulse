@@ -138,12 +138,13 @@ def test_list_page_emits_posts_comments_and_next_page(tmp_path) -> None:
     refreshes = by_kind["refresh_comments"]
     assert [task.metadata["post_id"] for task in refreshes] == ["1743987733", "1743507860"]
     assert refreshes[1].metadata["canonical_url"] == f"{BASE}/news,600519,1743507860.html"
-    assert refreshes[1].priority == 300
+    assert refreshes[1].priority == 100
 
     next_pages = by_kind["discover"]
     assert len(next_pages) == 1
     assert str(next_pages[0].url) == f"{BASE}/list,600519_2.html"
     assert next_pages[0].metadata["page"] == 2
+    assert posts[0].priority > next_pages[0].priority > refreshes[0].priority
 
     rows = _fetch_log_rows(adapter)
     assert len(rows) == 1
@@ -487,6 +488,7 @@ def test_comment_task_matches_list_emitted_url(tmp_path) -> None:
     assert str(from_post.url) == str(list_refresh.url)
     assert from_post.metadata["post_id"] == list_refresh.metadata["post_id"]
     assert from_post.metadata["canonical_url"] == list_refresh.metadata["canonical_url"]
+    assert from_post.priority == 100
 
 
 def test_classify_block() -> None:
@@ -605,6 +607,91 @@ def test_incomplete_proxy_response_recovers_on_retry(monkeypatch) -> None:
     assert not result.blocked
     assert result.status_code == 200
     assert calls == 2
+
+
+def test_guba_client_stops_after_complete_embedded_payload() -> None:
+    from alphapulse.sources.guba import api as guba_api
+
+    class PartialTailResponse:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def read(self, amount: int) -> bytes:
+            assert amount == 16 * 1024
+            self.calls += 1
+            if self.calls == 1:
+                return (
+                    b'<html><script>var article_list={"re":[],"count":0};'
+                    b"</script>"
+                )
+            raise http.client.IncompleteRead(b"<footer", 100)
+
+    client = guba_api.GubaClient(GubaSettings(), CrawlSettings())
+    response = PartialTailResponse()
+
+    raw = client._read_body(
+        response,
+        f"{BASE}/list,600519.html",
+        "utf-8",
+    )
+
+    assert b"var article_list" in raw
+    assert response.calls == 1
+
+
+def test_guba_client_rejects_truncated_embedded_payload() -> None:
+    from alphapulse.sources.guba import api as guba_api
+
+    class TruncatedPayloadResponse:
+        def read(self, amount: int) -> bytes:
+            assert amount == 16 * 1024
+            raise http.client.IncompleteRead(
+                b'<html><script>var article_list={"re":[{"post_id":"1"}',
+                100,
+            )
+
+    client = guba_api.GubaClient(GubaSettings(), CrawlSettings())
+
+    try:
+        client._read_body(
+            TruncatedPayloadResponse(),
+            f"{BASE}/list,600519.html",
+            "utf-8",
+        )
+    except http.client.IncompleteRead as exc:
+        assert b"article_list" in exc.partial
+    else:
+        raise AssertionError("truncated embedded JSON must not be accepted")
+
+
+def test_guba_client_rejects_clean_eof_before_embedded_payload_completes() -> None:
+    from alphapulse.sources.guba import api as guba_api
+
+    class CleanEofTruncatedResponse:
+        def __init__(self) -> None:
+            self.chunks = iter(
+                [
+                    b'<html><script>var article_list={"re":[{"post_id":"1"}',
+                    b"",
+                ]
+            )
+
+        def read(self, amount: int) -> bytes:
+            assert amount == 16 * 1024
+            return next(self.chunks)
+
+    client = guba_api.GubaClient(GubaSettings(), CrawlSettings())
+
+    try:
+        client._read_body(
+            CleanEofTruncatedResponse(),
+            f"{BASE}/list,600519.html",
+            "utf-8",
+        )
+    except http.client.IncompleteRead as exc:
+        assert b"article_list" in exc.partial
+    else:
+        raise AssertionError("clean EOF with truncated JSON must not be accepted")
 
 
 def test_guba_client_does_not_fail_open_without_proxy(monkeypatch, tmp_path) -> None:

@@ -198,7 +198,22 @@ class GubaHotBoardsSeedGenerator:
             raise RuntimeError(
                 "guba_hot_boards generator requires guba/crawl settings to be wired"
             )
-        self._client = GubaClient(self.settings, self.crawl_settings)
+        ranking_settings = self.settings.model_copy(
+            update={
+                "request_interval_min_seconds": 0.0,
+                "request_interval_max_seconds": 0.0,
+                "max_retries": 1,
+            }
+        )
+        ranking_crawl_settings = self.crawl_settings.model_copy(
+            update={
+                "proxy": self.crawl_settings.proxy.model_copy(
+                    update={"enabled": False}
+                )
+            },
+            deep=True,
+        )
+        self._client = GubaClient(ranking_settings, ranking_crawl_settings)
         return self._client
 
     def generate(

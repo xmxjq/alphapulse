@@ -11,6 +11,7 @@ from urllib import error, parse, request
 
 from alphapulse.runtime.config import CrawlSettings, GubaSettings
 from alphapulse.sources.fetching import ProxyLease, _build_proxy_provider
+from alphapulse.sources.guba.parser import extract_embedded_json
 from alphapulse.sources.guba.urls import getdata_url
 
 
@@ -261,10 +262,51 @@ class GubaClient:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         req = request.Request(url, data=data, headers=headers, method=method)
         with opener.open(req, timeout=self.crawl_settings.request_timeout_seconds) as response:
-            raw = response.read()
             charset = response.headers.get_content_charset()
+            raw = self._read_body(response, url, charset)
             text = self._decode(raw, charset)
             return response.status, text, response.geturl()
+
+    def _read_body(self, response: Any, url: str, charset: str | None) -> bytes:
+        var_name = self._embedded_var_name(url)
+        if var_name is None:
+            return response.read()
+
+        chunks: list[bytes] = []
+        while True:
+            try:
+                chunk = response.read(16 * 1024)
+            except http.client.IncompleteRead as exc:
+                chunks.append(exc.partial)
+                raw = b"".join(chunks)
+                if self._has_complete_embedded_json(raw, charset, var_name):
+                    return raw
+                raise http.client.IncompleteRead(raw, exc.expected) from exc
+            if not chunk:
+                raw = b"".join(chunks)
+                if self._has_complete_embedded_json(raw, charset, var_name):
+                    return raw
+                raise http.client.IncompleteRead(raw, 1)
+            chunks.append(chunk)
+            raw = b"".join(chunks)
+            if self._has_complete_embedded_json(raw, charset, var_name):
+                return raw
+
+    def _has_complete_embedded_json(
+        self,
+        raw: bytes,
+        charset: str | None,
+        var_name: str,
+    ) -> bool:
+        return extract_embedded_json(self._decode(raw, charset), var_name) is not None
+
+    @staticmethod
+    def _embedded_var_name(url: str) -> str | None:
+        if "/list," in url:
+            return "article_list"
+        if "/news," in url:
+            return "post_article"
+        return None
 
     @staticmethod
     def _decode(raw: bytes, charset: str | None) -> str:
