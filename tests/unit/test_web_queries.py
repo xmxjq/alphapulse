@@ -370,6 +370,36 @@ def test_daily_report_keeps_posts_from_unranked_boards(tmp_path: Path) -> None:
     assert report.sections[1].entries[0].post_count == 1
 
 
+def test_guba_daily_report_matches_lowercase_concept_posts_to_ranking(
+    tmp_path: Path,
+) -> None:
+    day = "2026-07-24"
+    state = StateStore(tmp_path / "state.db")
+    state.replace_guba_ranking(
+        day,
+        [
+            {
+                "section": "hot_concept",
+                "rank": 1,
+                "code": "BK1152",
+                "name": "Concept",
+                "url": "https://guba.eastmoney.com/list,BK1152.html",
+                "members": None,
+            }
+        ],
+    )
+    reader = StubReader()
+    reader.range_posts = [_post_summary("guba", "p1", "bk1152", 1)]
+    queries = WebQueries(reader=reader, state=state)
+
+    report = queries.guba_daily_report(day)
+
+    concept = next(section for section in report.sections if section.key == "hot_concept")
+    assert concept.entries[0].code == "BK1152"
+    assert concept.entries[0].post_count == 1
+    assert all(section.key != "other" for section in report.sections)
+
+
 def test_web_queries_annotates_guba_boards_with_seed_sets(tmp_path: Path) -> None:
     state = StateStore(tmp_path / "state.db")
     state.store_compiled_seed_set(

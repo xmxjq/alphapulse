@@ -18,6 +18,7 @@ from alphapulse.seeds.discovery import (
     SeedCompiler,
     SeedDiscoveryManager,
     StockUniverseSeedGenerator,
+    _order_guba_codes_by_ranking,
 )
 from alphapulse.seeds.eastmoney import parse_eastmoney_longhubang_page
 
@@ -256,7 +257,29 @@ def test_seed_compiler_preserves_guba_board_codes() -> None:
             GeneratedSeedItem(kind="guba_board_code", value="600519"),
         ],
     )
-    assert compiled.guba_board_codes == ["600519", "zssh000001"]
+    assert compiled.guba_board_codes == ["zssh000001", "600519"]
+
+
+def test_guba_codes_are_interleaved_from_ranking_snapshot() -> None:
+    codes = ["000001", "000002", "BK1", "BK2", "theme1", "theme2", "manual"]
+    rows = [
+        {"section": "hot_stock", "rank": 1, "code": "000001"},
+        {"section": "hot_stock", "rank": 2, "code": "000002"},
+        {"section": "hot_concept", "rank": 1, "code": "BK1"},
+        {"section": "hot_concept", "rank": 2, "code": "BK2"},
+        {"section": "hot_theme", "rank": 1, "code": "theme1"},
+        {"section": "hot_theme", "rank": 2, "code": "theme2"},
+    ]
+
+    assert _order_guba_codes_by_ranking(codes, rows) == [
+        "000001",
+        "BK1",
+        "theme1",
+        "000002",
+        "BK2",
+        "theme2",
+        "manual",
+    ]
 
 
 def test_seed_compiler_preserves_bilibili_targets() -> None:
@@ -306,6 +329,7 @@ def test_guba_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> 
 
     assert all(item.kind == "guba_board_code" for item in items)
     codes = [item.value for item in items]
+    assert codes[:3] == ["001309", "BK1036", "gssz"]
     # Stock (人气榜), concept (push2), and theme (bulletin board list) all seed codes.
     assert "600584" in codes and "BK1036" in codes and "gssz" in codes
 

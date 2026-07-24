@@ -104,6 +104,7 @@ def test_discover_consumes_only_guba_buckets(tmp_path) -> None:
         f"{BASE}/list,zssh000001.html",
         f"{BASE}/list,600519.html",
     ]
+    assert all(task.priority == 160 for task in tasks if task.kind == "discover")
     post_tasks = [task for task in tasks if task.kind == "fetch_post"]
     assert len(post_tasks) == 1
     assert str(post_tasks[0].url) == f"{BASE}/news,600519,42.html"
@@ -181,6 +182,30 @@ def _entry(post_id: str, publish: str, last: str, *, comments: int = 0) -> dict:
         "post_type": 0,
         "post_state": 0,
     }
+
+
+def test_concept_board_codes_are_normalized_to_ranking_case(tmp_path) -> None:
+    list_url = f"{BASE}/list,BK1152.html"
+    entries = [
+        {
+            **_entry(
+                "1749169645",
+                "2026-07-24 09:30:00",
+                "2026-07-24 10:00:00",
+            ),
+            "stockbar_code": "bk1152",
+        }
+    ]
+    client = FakeGubaClient({list_url: _ok(list_url, _list_html(entries))})
+    adapter = _adapter(tmp_path, client)
+
+    outcome = adapter.fetch_item(_discover_task(list_url, "BK1152"))
+
+    post_task = next(
+        task for task in outcome.discovered_tasks if task.kind == "fetch_post"
+    )
+    assert str(post_task.url) == f"{BASE}/news,bk1152,1749169645.html"
+    assert post_task.metadata["board_code"] == "BK1152"
 
 
 def _bj_now():
@@ -607,6 +632,68 @@ def test_incomplete_proxy_response_recovers_on_retry(monkeypatch) -> None:
     assert not result.blocked
     assert result.status_code == 200
     assert calls == 2
+
+
+def test_transport_retry_does_not_trigger_rate_limit_backoff(monkeypatch) -> None:
+    from alphapulse.sources.guba import api as guba_api
+
+    url = f"{BASE}/list,600519.html"
+    client = guba_api.GubaClient(
+        GubaSettings(
+            enabled=True,
+            max_retries=2,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        CrawlSettings(),
+    )
+    calls = 0
+    backoff_flags: list[bool] = []
+
+    def fake_dispatch(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        if calls == 1:
+            raise http.client.IncompleteRead(b"partial", 100)
+        return 200, '<script>var article_list={"re":[]};</script>', url
+
+    monkeypatch.setattr(client, "_dispatch", fake_dispatch)
+    monkeypatch.setattr(
+        client,
+        "_adaptive_sleep",
+        lambda *, was_rate_limited: backoff_flags.append(was_rate_limited),
+    )
+    monkeypatch.setattr(guba_api.time, "sleep", lambda _: None)
+
+    result = client.get(url, expect_marker="var article_list")
+
+    assert result.status_code == 200
+    assert backoff_flags == [False, False]
+
+
+def test_blocked_retry_triggers_rate_limit_backoff(monkeypatch) -> None:
+    url = f"{BASE}/list,600519.html"
+    good = '<script>var article_list={"re":[]};</script>'
+    client, _ = _client_with_dispatch(
+        monkeypatch,
+        [
+            (200, "<html>blocked</html>", url),
+            (200, good, url),
+        ],
+        max_retries=2,
+    )
+    backoff_flags: list[bool] = []
+    monkeypatch.setattr(
+        client,
+        "_adaptive_sleep",
+        lambda *, was_rate_limited: backoff_flags.append(was_rate_limited),
+    )
+
+    result = client.get(url, expect_marker="var article_list")
+
+    assert result.status_code == 200
+    assert backoff_flags == [False, True]
 
 
 def test_guba_client_stops_after_complete_embedded_payload() -> None:

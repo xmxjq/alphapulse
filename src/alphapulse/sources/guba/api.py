@@ -103,12 +103,12 @@ class GubaClient:
     ) -> GubaHttpResult:
         attempts = max(1, self.settings.max_retries)
         last_result: GubaHttpResult | None = None
+        backoff_for_block = False
 
         for attempt in range(attempts):
             lease: ProxyLease | None = None
             proxy_url: str | None = None
-            was_rate_limited = attempt > 0
-            self._adaptive_sleep(was_rate_limited=was_rate_limited)
+            self._adaptive_sleep(was_rate_limited=backoff_for_block)
 
             if self.proxy_provider is not None:
                 try:
@@ -165,6 +165,7 @@ class GubaClient:
                 if lease is not None and blocked:
                     self._report_bad_proxy(lease, f"HTTP {exc.code}")
                 if blocked and attempt + 1 < attempts:
+                    backoff_for_block = True
                     continue
                 return last_result
             except (error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
@@ -186,6 +187,7 @@ class GubaClient:
                 if lease is not None:
                     self._report_bad_proxy(lease, str(exc))
                 if attempt + 1 < attempts:
+                    backoff_for_block = False
                     time.sleep(2**attempt)
                     continue
                 return last_result
@@ -231,6 +233,7 @@ class GubaClient:
                     self._report_bad_proxy(lease, f"blocked: {block_kind}")
                 last_result = result
                 if attempt + 1 < attempts:
+                    backoff_for_block = True
                     continue
             elif lease is not None:
                 self._report_success_proxy(lease)

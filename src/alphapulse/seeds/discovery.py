@@ -290,9 +290,20 @@ def _selected_boards(rankings: HotRankings, sections: set[str]) -> list:
         SECTION_HOT_THEME: rankings.hot_theme,
     }
     boards: list = []
-    for key in (SECTION_HOT_STOCK, SECTION_HOT_CONCEPT, SECTION_HOT_THEME):
-        if key in sections:
-            boards.extend(by_section[key])
+    ordered_sections = (
+        SECTION_HOT_STOCK,
+        SECTION_HOT_CONCEPT,
+        SECTION_HOT_THEME,
+    )
+    max_entries = max(
+        (len(by_section[key]) for key in ordered_sections if key in sections),
+        default=0,
+    )
+    for index in range(max_entries):
+        for key in ordered_sections:
+            entries = by_section[key]
+            if key in sections and index < len(entries):
+                boards.append(entries[index])
     return boards
 
 
@@ -318,8 +329,13 @@ def _merge_guba_ranking_rows(
     existing_rows: list[dict[str, object]],
     sections: set[str],
 ) -> list[dict[str, object]]:
-    merged: list[dict[str, object]] = []
-    for section in (SECTION_HOT_STOCK, SECTION_HOT_CONCEPT, SECTION_HOT_THEME):
+    ordered_sections = (
+        SECTION_HOT_STOCK,
+        SECTION_HOT_CONCEPT,
+        SECTION_HOT_THEME,
+    )
+    rows_by_section: dict[str, list[dict[str, object]]] = {}
+    for section in ordered_sections:
         if section not in sections:
             continue
         rows = [
@@ -329,7 +345,18 @@ def _merge_guba_ranking_rows(
             rows = [
                 row for row in existing_rows if str(row.get("section")) == section
             ]
-        merged.extend(sorted(rows, key=lambda row: int(row.get("rank") or 0)))
+        rows_by_section[section] = sorted(
+            rows,
+            key=lambda row: int(row.get("rank") or 0),
+        )
+
+    merged: list[dict[str, object]] = []
+    max_entries = max((len(rows) for rows in rows_by_section.values()), default=0)
+    for index in range(max_entries):
+        for section in ordered_sections:
+            rows = rows_by_section.get(section, [])
+            if index < len(rows):
+                merged.append(rows[index])
     return merged
 
 
@@ -357,6 +384,27 @@ def _fill_missing_guba_rankings(
     if SECTION_HOT_THEME in missing_sections and fallback.hot_theme:
         primary.hot_theme = fallback.hot_theme
     return primary
+
+
+def _order_guba_codes_by_ranking(
+    codes: list[str],
+    ranking_rows: list[dict[str, object]],
+) -> list[str]:
+    available = set(codes)
+    sections = {
+        str(row["section"])
+        for row in ranking_rows
+        if str(row.get("section") or "")
+    }
+    ordered_rows = _merge_guba_ranking_rows(ranking_rows, [], sections)
+    ordered = [
+        str(row["code"])
+        for row in ordered_rows
+        if str(row["code"]) in available
+    ]
+    seen = set(ordered)
+    ordered.extend(code for code in codes if code not in seen)
+    return ordered
 
 
 class TgbHotBoardsSeedGenerator:
@@ -465,11 +513,18 @@ class SeedCompiler:
             "topic_id": set(),
             "user_id": set(),
         }
+        ordered_guba_codes: list[str] = []
+        seen_guba_codes: set[str] = set()
         discover_homepage = False
 
         for item in items:
             if item.kind == "discover_homepage":
                 discover_homepage = discover_homepage or item.value.lower() == "true"
+                continue
+            if item.kind == "guba_board_code":
+                if item.value not in seen_guba_codes:
+                    seen_guba_codes.add(item.value)
+                    ordered_guba_codes.append(item.value)
                 continue
             buckets[item.kind].add(item.value)
 
@@ -479,7 +534,7 @@ class SeedCompiler:
             post_urls=sorted(buckets["post_url"]),
             bilibili_video_targets=sorted(buckets["bilibili_video_target"]),
             bilibili_space_urls=sorted(buckets["bilibili_space_url"]),
-            guba_board_codes=sorted(buckets["guba_board_code"]),
+            guba_board_codes=ordered_guba_codes,
             tgb_board_codes=sorted(buckets["tgb_board_code"]),
             stock_ids=sorted(buckets["stock_id"]),
             topic_ids=sorted(buckets["topic_id"]),
@@ -515,6 +570,7 @@ class SeedDiscoveryManager:
         crawl_settings: CrawlSettings | None = None,
     ) -> None:
         self.settings = settings
+        self.guba_settings = guba_settings
         self.state = state
         self.loader = loader or SeedCatalogLoader(settings.seed_catalog_path)
         self.compiler = compiler or SeedCompiler()
@@ -593,6 +649,22 @@ class SeedDiscoveryManager:
                 as_of=generated_at,
             )
             compiled = self.compiler.compile(logical_set.name, active_items)
+            if self.guba_settings is not None and compiled.guba_board_codes:
+                ranking_day = (
+                    generated_at.astimezone(
+                        ZoneInfo(self.guba_settings.ranking_timezone)
+                    )
+                    .date()
+                    .isoformat()
+                )
+                compiled = compiled.model_copy(
+                    update={
+                        "guba_board_codes": _order_guba_codes_by_ranking(
+                            compiled.guba_board_codes,
+                            self.state.get_guba_ranking(ranking_day),
+                        )
+                    }
+                )
             self.state.store_compiled_seed_set(compiled, generated_at)
             seed_sets.append(compiled)
 

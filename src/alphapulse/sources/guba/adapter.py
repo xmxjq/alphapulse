@@ -22,6 +22,7 @@ from alphapulse.sources.guba.urls import (
     board_list_url,
     comment_refresh_url,
     extract_post_ref,
+    normalize_board_code,
     post_detail_url,
 )
 from alphapulse.storage.rawstore import FetchRecord, RawResponseStore
@@ -58,13 +59,14 @@ class GubaAdapter:
         tasks: list[CrawlTask] = []
         base = str(self.settings.base_url)
         for code in seed.guba_board_codes:
+            code = normalize_board_code(code) or code
             tasks.append(
                 CrawlTask(
                     source=self.source_name,
                     kind="discover",
                     url=board_list_url(base, code),
                     seed_name=seed.name,
-                    priority=120,
+                    priority=160,
                     metadata={"seed_kind": "board", "board_code": code, "page": 1},
                 )
             )
@@ -121,7 +123,9 @@ class GubaAdapter:
 
     def _handle_list_page(self, task: CrawlTask, response: GubaHttpResult) -> FetchOutcome:
         outcome = FetchOutcome(status_code=response.status_code)
-        board_code = str(task.metadata.get("board_code") or "")
+        board_code = normalize_board_code(
+            str(task.metadata.get("board_code") or "")
+        ) or ""
         page = int(task.metadata.get("page") or 1)
 
         article_list = parse_article_list(response.text)
@@ -156,8 +160,9 @@ class GubaAdapter:
             if entry.post_id in seen_post_ids:
                 continue
             seen_post_ids.add(entry.post_id)
-            code = entry.stockbar_code or board_code
-            if not code:
+            request_code = str(entry.stockbar_code or board_code)
+            code = normalize_board_code(request_code) or request_code
+            if not request_code:
                 continue
             # Day-scoped crawl: only publish today's posts. List pages are sorted
             # by last-reply time, so old posts bumped by fresh replies resurface
@@ -166,7 +171,7 @@ class GubaAdapter:
                 entry.publish_time is not None and entry.publish_time >= day_start
             ):
                 continue
-            detail_url = post_detail_url(base, code, entry.post_id)
+            detail_url = post_detail_url(base, request_code, entry.post_id)
             pubdate_ts = self._entry_ts(entry)
             outcome.discovered_tasks.append(
                 CrawlTask(

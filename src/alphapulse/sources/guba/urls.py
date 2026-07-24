@@ -6,6 +6,15 @@ import re
 POST_DETAIL_RE = re.compile(r"/news,([0-9a-zA-Z]+),(\d+)\.html")
 
 
+def normalize_board_code(code: str | None) -> str | None:
+    if code is None:
+        return None
+    normalized = str(code).strip()
+    if normalized[:2].lower() == "bk" and normalized[2:].isdigit():
+        return normalized.upper()
+    return normalized
+
+
 def board_list_url(base_url: str, code: str, page: int = 1) -> str:
     base = base_url.rstrip("/")
     if page <= 1:

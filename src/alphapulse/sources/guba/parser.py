@@ -8,7 +8,7 @@ from html import unescape
 from typing import Any
 
 from alphapulse.pipeline.contracts import NormalizedAuthor, NormalizedComment, NormalizedPost
-from alphapulse.sources.guba.urls import extract_post_ref
+from alphapulse.sources.guba.urls import extract_post_ref, normalize_board_code
 
 
 CN_TZ = timezone(timedelta(hours=8))
@@ -173,7 +173,7 @@ def parse_post_detail(
     user_id = str(user["user_id"]) if user.get("user_id") is not None else None
 
     ref = extract_post_ref(url)
-    board_code = ref[0] if ref else None
+    board_code = normalize_board_code(ref[0]) if ref else None
 
     post = NormalizedPost(
         source="guba",

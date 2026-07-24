@@ -133,6 +133,9 @@ day in `ranking_timezone` (Asia/Shanghai):
    its **start**, so a cycle that runs longer than a day (e.g. uncapped full-day
    crawls across many boards through one proxy) never produces the next day's
    snapshot. Hitting the cap mid-day logs `guba_day_page_cap` (not silent).
+   Page-1 discovery for all ranked boards runs ahead of post details, so hot
+   stock, concept, and theme sections receive broad daily coverage before any
+   single busy board can consume the detail queue.
 
 3. **Ranking snapshot.** Every generator refresh records the day's ordered ranking
    membership (per section, plus each theme's member boards) in the crawler state

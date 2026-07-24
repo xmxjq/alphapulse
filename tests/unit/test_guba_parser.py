@@ -136,6 +136,16 @@ def test_parse_post_detail() -> None:
     assert meta.state == 0
 
 
+def test_parse_post_detail_normalizes_concept_board_code() -> None:
+    post, _, _ = parse_post_detail(
+        _read("post_detail.html"),
+        "https://guba.eastmoney.com/news,bk1152,1743987733.html",
+    )
+
+    assert post is not None
+    assert post.raw_topic_ids == ["BK1152"]
+
+
 def test_parse_post_detail_deleted_page() -> None:
     post, author, meta = parse_post_detail(
         _read("post_deleted.html"),

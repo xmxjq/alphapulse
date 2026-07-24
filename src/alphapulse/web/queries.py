@@ -4,12 +4,13 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from zoneinfo import ZoneInfo
 
 from alphapulse.runtime.config import CrawlSettings, GubaSettings, Settings, TgbSettings
 from alphapulse.runtime.proxy_metrics import ProxyMetricsStore
 from alphapulse.runtime.state import StateStore
+from alphapulse.sources.guba.urls import normalize_board_code as normalize_guba_board_code
 from alphapulse.sources.tgb.urls import featured_list_url, general_list_url, stock_list_url
 from alphapulse.web.models import (
     Comment,
@@ -718,6 +719,7 @@ class WebQueries:
         tz_name: str,
         board_url_fn,
         limit: int,
+        board_code_normalizer: Callable[[str], str | None] | None = None,
     ) -> ReportResponse:
         """Assemble a per-day newspaper: the ranking snapshot joined with the day's posts.
 
@@ -732,10 +734,12 @@ class WebQueries:
         start = start_local.astimezone(UTC)
         end = (start_local + timedelta(days=1)).astimezone(UTC)
 
+        normalize_board_code = board_code_normalizer or (lambda code: code)
         posts = self.reader.list_source_posts_in_range(source, start, end, limit)
         by_board: dict[str, list[PostSummary]] = {}
         for post in posts:
-            by_board.setdefault(post.board_code or "", []).append(post)
+            code = normalize_board_code(post.board_code or "") or ""
+            by_board.setdefault(code, []).append(post)
         total_posts = len(posts)
         total_comments = sum(post.comment_count or 0 for post in posts)
 
@@ -761,7 +765,9 @@ class WebQueries:
             ranked_codes: set[str] = set()
             for row in snapshot:
                 rows_by_section.setdefault(str(row["section"]), []).append(row)
-                ranked_codes.add(str(row["code"]))
+                ranked_codes.add(
+                    normalize_board_code(str(row["code"])) or str(row["code"])
+                )
             for key, title in section_titles:
                 rows = rows_by_section.get(key, [])
                 if not rows:
@@ -816,6 +822,7 @@ class WebQueries:
             guba.ranking_timezone,
             lambda code: f"{base}/list,{code}.html",
             limit,
+            normalize_guba_board_code,
         )
 
     def guba_llm_report(
