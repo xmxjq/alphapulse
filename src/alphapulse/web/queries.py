@@ -97,6 +97,10 @@ def _coerce_int(value: Any) -> int | None:
     return int(value)
 
 
+def _iso_datetime(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
 def _coerce_topic_ids(value: Any) -> list[str]:
     if value is None:
         return []
@@ -754,8 +758,10 @@ class WebQueries:
         sections: list[ReportSection] = []
         if snapshot:
             rows_by_section: dict[str, list[dict[str, Any]]] = {}
+            ranked_codes: set[str] = set()
             for row in snapshot:
                 rows_by_section.setdefault(str(row["section"]), []).append(row)
+                ranked_codes.add(str(row["code"]))
             for key, title in section_titles:
                 rows = rows_by_section.get(key, [])
                 if not rows:
@@ -767,6 +773,17 @@ class WebQueries:
                     for row in rows
                 ]
                 sections.append(ReportSection(key=key, title=title, entries=entries))
+            other_codes = sorted(code for code in by_board if code and code not in ranked_codes)
+            if other_codes:
+                entries = [board_entry(code, None, None, None) for code in other_codes]
+                entries.sort(key=lambda entry: entry.post_count, reverse=True)
+                sections.append(
+                    ReportSection(
+                        key="other",
+                        title="其他已抓取板块",
+                        entries=entries,
+                    )
+                )
         else:
             entries = [
                 board_entry(code, None, None, None)
@@ -800,6 +817,119 @@ class WebQueries:
             lambda code: f"{base}/list,{code}.html",
             limit,
         )
+
+    def guba_llm_report(
+        self,
+        day: str,
+        *,
+        limit: int = 500,
+        include_comments: bool = True,
+        max_comments_per_post: int = 100,
+    ) -> dict[str, Any]:
+        report = self.guba_daily_report(day, limit=limit)
+        sections: list[dict[str, Any]] = []
+        boards: list[dict[str, Any]] = []
+        posts: list[dict[str, Any]] = []
+        comments_payload: list[dict[str, Any]] = []
+        included_comment_count = 0
+
+        for section in report.sections:
+            section_has_posts = False
+            for board in section.entries:
+                if not board.posts:
+                    continue
+                section_has_posts = True
+                boards.append(
+                    {
+                        "section_key": section.key,
+                        "rank": board.rank,
+                        "code": board.code,
+                        "name": board.name,
+                        "url": board.url,
+                        "post_count": len(board.posts),
+                    }
+                )
+                for summary in board.posts:
+                    detail = self.reader.get_post("guba", summary.source_entity_id)
+                    comments = (
+                        self.reader.list_comments_for_post(
+                            "guba", summary.source_entity_id
+                        )[:max_comments_per_post]
+                        if include_comments and max_comments_per_post > 0
+                        else []
+                    )
+                    included_comment_count += len(comments)
+                    posts.append(
+                        {
+                            "id": summary.source_entity_id,
+                            "board_code": board.code,
+                            "url": summary.canonical_url,
+                            "author_id": (
+                                detail.author_entity_id
+                                if detail is not None
+                                else summary.author_entity_id
+                            ),
+                            "title": (
+                                detail.title if detail is not None else summary.title
+                            ),
+                            "published_at": _iso_datetime(
+                                detail.published_at
+                                if detail is not None
+                                else summary.published_at
+                            ),
+                            "like_count": (
+                                detail.like_count
+                                if detail is not None
+                                else summary.like_count
+                            ),
+                            "reported_comment_count": (
+                                detail.comment_count
+                                if detail is not None
+                                else summary.comment_count
+                            ),
+                            "text": (
+                                detail.content_text
+                                if detail is not None
+                                else summary.content_preview
+                            ),
+                        }
+                    )
+                    comments_payload.extend(
+                        {
+                            "id": comment.source_entity_id,
+                            "post_id": summary.source_entity_id,
+                            "parent_id": comment.parent_comment_entity_id,
+                            "author_id": comment.author_entity_id,
+                            "published_at": _iso_datetime(comment.published_at),
+                            "like_count": comment.like_count,
+                            "text": comment.content_text,
+                        }
+                        for comment in comments
+                    )
+            if section_has_posts:
+                sections.append(
+                    {
+                        "key": section.key,
+                        "title": section.title,
+                    }
+                )
+
+        return {
+            "schema": "alphapulse.guba.daily-report.v1",
+            "source": "guba",
+            "day": report.day,
+            "timezone": report.timezone,
+            "generated_at": _iso_datetime(report.generated_at),
+            "has_ranking_snapshot": report.has_snapshot,
+            "post_count": report.total_posts,
+            "reported_comment_count": report.total_comments,
+            "included_post_count": len(posts),
+            "included_comment_count": included_comment_count,
+            "sections": sections,
+            "boards": boards,
+            "posts": posts,
+            "comments": comments_payload,
+        }
 
     def tgb_daily_report(self, day: str, *, limit: int = 20_000) -> ReportResponse:
         tgb = self.settings.sources.tgb if self.settings else TgbSettings()

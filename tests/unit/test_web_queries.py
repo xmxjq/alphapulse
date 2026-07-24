@@ -339,6 +339,37 @@ def test_tgb_daily_report_falls_back_without_snapshot(tmp_path: Path) -> None:
     assert report.sections[0].entries[0].code == "sz1"
 
 
+def test_daily_report_keeps_posts_from_unranked_boards(tmp_path: Path) -> None:
+    day = "2026-07-22"
+    state = StateStore(tmp_path / "state.db")
+    state.replace_guba_ranking(
+        day,
+        [
+            {
+                "section": "hot_stock",
+                "rank": 1,
+                "code": "600519",
+                "name": "Kweichow Moutai",
+                "url": "https://guba.eastmoney.com/list,600519.html",
+                "members": None,
+            }
+        ],
+    )
+    reader = StubReader()
+    reader.range_posts = [
+        _post_summary("guba", "p1", "600519", 1),
+        _post_summary("guba", "p2", "000001", 2),
+    ]
+    queries = WebQueries(reader=reader, state=state)
+
+    report = queries.guba_daily_report(day)
+
+    assert report.total_posts == 2
+    assert [section.key for section in report.sections] == ["hot_stock", "other"]
+    assert report.sections[1].entries[0].code == "000001"
+    assert report.sections[1].entries[0].post_count == 1
+
+
 def test_web_queries_annotates_guba_boards_with_seed_sets(tmp_path: Path) -> None:
     state = StateStore(tmp_path / "state.db")
     state.store_compiled_seed_set(

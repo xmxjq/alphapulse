@@ -11,6 +11,7 @@ dependencies = [
   "pydantic>=2.11.3",
   "pymongo>=4.6",
   "scrapling[fetchers]>=0.2.99",
+  "toon-format==0.9.0b1",
   "uvicorn[standard]>=0.30",
 ]
 

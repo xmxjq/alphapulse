@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from toon_format import decode
 
 from alphapulse.runtime.config import load_settings
 from alphapulse.runtime.proxy_metrics import ProxyMetricsStore
@@ -54,7 +55,8 @@ class FakeReader:
         return self.guba_boards[:limit]
 
     def list_source_posts_in_range(self, source, start, end, limit):  # noqa: ANN001
-        return []
+        del source, start, end
+        return getattr(self, "range_posts", [])[:limit]
 
 
 def _build_client(tmp_path: Path, reader: FakeReader) -> TestClient:
@@ -282,6 +284,118 @@ def test_tgb_report_api_returns_sections(tmp_path: Path) -> None:
 def test_tgb_report_api_rejects_bad_date(tmp_path: Path) -> None:
     client = _build_client(tmp_path, FakeReader())
     assert client.get("/api/tgb/report/2026-7-2").status_code == 400
+
+
+def test_guba_llm_report_returns_toon_with_post_bodies_and_comments(
+    tmp_path: Path,
+) -> None:
+    reader = FakeReader()
+    summary = PostSummary(
+        source="guba",
+        source_entity_id="p1",
+        canonical_url="https://guba.eastmoney.com/news,600519,p1.html",
+        author_entity_id="u1",
+        title="Today",
+        content_preview="preview",
+        published_at=datetime(2026, 7, 24, 1, tzinfo=UTC),
+        fetched_at=datetime(2026, 7, 24, 2, tzinfo=UTC),
+        like_count=3,
+        comment_count=1,
+        board_code="600519",
+    )
+    reader.range_posts = [summary]
+    reader.post_details[("guba", "p1")] = PostDetail(
+        source="guba",
+        source_entity_id="p1",
+        canonical_url=summary.canonical_url,
+        author_entity_id="u1",
+        title="Today",
+        content_text="full post body",
+        language="zh",
+        published_at=summary.published_at,
+        fetched_at=summary.fetched_at,
+        like_count=3,
+        comment_count=1,
+        repost_count=0,
+        raw_topic_ids=["600519"],
+    )
+    reader.comments_by_post[("guba", "p1")] = [
+        Comment(
+            source="guba",
+            source_entity_id="c1",
+            post_entity_id="p1",
+            parent_comment_entity_id=None,
+            author_entity_id="u2",
+            content_text="first page comment",
+            published_at=datetime(2026, 7, 24, 1, 5, tzinfo=UTC),
+            fetched_at=datetime(2026, 7, 24, 2, tzinfo=UTC),
+            like_count=2,
+        )
+    ]
+    client = _build_client(tmp_path, reader)
+    StateStore(tmp_path / "state.db").replace_guba_ranking(
+        "2026-07-24",
+        [
+            {
+                "section": "hot_stock",
+                "rank": 1,
+                "code": "600519",
+                "name": "Kweichow Moutai",
+                "url": "https://guba.eastmoney.com/list,600519.html",
+                "members": None,
+            }
+        ],
+    )
+
+    response = client.get("/api/llm/guba/report/2026-07-24")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/toon; charset=utf-8"
+    payload = decode(response.text)
+    assert payload["schema"] == "alphapulse.guba.daily-report.v1"
+    assert payload["post_count"] == 1
+    assert payload["included_post_count"] == 1
+    assert payload["included_comment_count"] == 1
+    assert payload["boards"][0]["section_key"] == "hot_stock"
+    post = payload["posts"][0]
+    assert post["text"] == "full post body"
+    assert payload["comments"][0]["post_id"] == "p1"
+    assert payload["comments"][0]["text"] == "first page comment"
+
+
+def test_guba_llm_report_can_omit_comments(tmp_path: Path) -> None:
+    reader = FakeReader()
+    reader.range_posts = [
+        PostSummary(
+            source="guba",
+            source_entity_id="p1",
+            canonical_url="https://guba.eastmoney.com/news,600519,p1.html",
+            author_entity_id=None,
+            title="Today",
+            content_preview="preview",
+            published_at=datetime(2026, 7, 24, 1, tzinfo=UTC),
+            fetched_at=datetime(2026, 7, 24, 2, tzinfo=UTC),
+            like_count=None,
+            comment_count=1,
+            board_code="600519",
+        )
+    ]
+    client = _build_client(tmp_path, reader)
+
+    response = client.get(
+        "/api/llm/guba/report/2026-07-24",
+        params={"include_comments": "false"},
+    )
+
+    assert response.status_code == 200
+    payload = decode(response.text)
+    assert payload["included_comment_count"] == 0
+    assert payload["comments"] == []
+
+
+def test_guba_llm_report_rejects_bad_date(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    assert client.get("/api/llm/guba/report/2026-7-2").status_code == 400
 
 
 def test_tgb_report_page_serves_html(tmp_path: Path) -> None:

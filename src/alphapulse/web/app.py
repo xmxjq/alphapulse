@@ -4,8 +4,9 @@ import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from toon_format import encode
 
 from alphapulse.runtime.config import Settings
 from alphapulse.web.models import (
@@ -26,6 +27,7 @@ from alphapulse.web.queries import ALLOWED_SOURCES, WebQueries, build_queries
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 ENTITY_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+TOON_MEDIA_TYPE = "text/toon"
 
 
 def _validate_source(source: str | None) -> str | None:
@@ -99,6 +101,33 @@ def create_app(settings: Settings, queries: WebQueries | None = None) -> FastAPI
         q: WebQueries = Depends(get_queries),
     ) -> ProxyPoolResponse:
         return q.proxy_pool(hours)
+
+    @app.get(
+        "/api/llm/guba/report/{date}",
+        response_class=Response,
+        responses={200: {"content": {TOON_MEDIA_TYPE: {}}}},
+    )
+    def guba_llm_report(
+        date: str,
+        limit: int = Query(default=500, ge=1, le=5_000),
+        include_comments: bool = Query(default=True),
+        max_comments_per_post: int = Query(default=100, ge=0, le=500),
+        q: WebQueries = Depends(get_queries),
+    ) -> Response:
+        if not DATE_RE.match(date):
+            raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+        try:
+            payload = q.guba_llm_report(
+                date,
+                limit=limit,
+                include_comments=include_comments,
+                max_comments_per_post=max_comments_per_post,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        return Response(content=encode(payload), media_type=TOON_MEDIA_TYPE)
 
     @app.get("/api/guba/report/{date}", response_model=ReportResponse)
     def guba_report(date: str, q: WebQueries = Depends(get_queries)) -> ReportResponse:

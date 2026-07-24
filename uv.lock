@@ -124,6 +124,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pymongo" },
     { name = "scrapling", extra = ["fetchers"] },
+    { name = "toon-format" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -141,6 +142,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.3" },
     { name = "pymongo", specifier = ">=4.6" },
     { name = "scrapling", extras = ["fetchers"], specifier = ">=0.2.99" },
+    { name = "toon-format", specifier = "==0.9.0b1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 
@@ -1724,6 +1726,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5c/5d/76b4383ac4e5b5e254e50c09807b3e13820bed6d6c11cd540264988d6802/tld-0.13.2.tar.gz", hash = "sha256:d983fa92b9d717400742fca844e29d5e18271079c7bcfabf66d01b39b4a14345", size = 467175, upload-time = "2026-03-06T23:50:34.498Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/90/39a85a4b63c84213e78b3c17d22e1bf45328acf8ebb33ef93be30d0a3911/tld-0.13.2-py2.py3-none-any.whl", hash = "sha256:9b8fdbdb880e7ba65b216a4937f2c94c49a7226723783d5838fc958ac76f4e0c", size = 296743, upload-time = "2026-03-06T23:50:32.465Z" },
+]
+
+[[package]]
+name = "toon-format"
+version = "0.9.0b1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/15/d23d6d3e36aa4ec96dd5692bc7715fe17015b669e8f0d1c5c7fa906a3ceb/toon_format-0.9.0b1.tar.gz", hash = "sha256:8f391dd6ad9677c78366bd8eb6762d064a2183f67b9b7da1f348fdb6ee8738e7", size = 87398, upload-time = "2025-11-08T19:22:53.059Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/f3/27ab1d982bb81bf9ac5be70b4c774996eb8562b93c77e93c253c22be951f/toon_format-0.9.0b1-py3-none-any.whl", hash = "sha256:efeee919501f91137f017f7bed34789c067f76178111aa872a49bc8653dce3be", size = 36173, upload-time = "2025-11-08T19:22:51.523Z" },
 ]
 
 [[package]]

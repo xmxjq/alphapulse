@@ -88,8 +88,33 @@ The UI is backed by these read-only endpoints:
 - `GET /api/seeds`
 - `GET /api/posts?limit=50&offset=0&source=xueqiu`
 - `GET /api/posts/{source}/{entity_id}`
+- `GET /api/guba/report/{date}`
+- `GET /api/llm/guba/report/{date}` (`text/toon`)
 
-Allowed `source` values are `bilibili` and `xueqiu`.
+The LLM report endpoint returns the day's full guba post bodies and the comments
+already stored for each post in [TOON](https://github.com/toon-format/toon)
+format. Empty ranking boards are omitted to reduce tokens. The payload uses four
+flat tables so TOON can apply tabular encoding:
+
+- `sections`: report section metadata
+- `boards`: boards keyed by `code` and linked through `section_key`
+- `posts`: posts linked through `board_code`
+- `comments`: comments linked through `post_id`
+
+Optional query parameters:
+
+- `limit=500` limits the number of daily posts (maximum 5000)
+- `include_comments=false` omits comments for a lighter prompt
+- `max_comments_per_post=100` caps included comments per post
+
+Example:
+
+```bash
+curl -H "Accept: text/toon" \
+  "http://127.0.0.1:8000/api/llm/guba/report/2026-07-24?limit=200"
+```
+
+Allowed `source` values are `bilibili`, `xueqiu`, `guba`, and `tgb`.
 
 ## Troubleshooting
 
