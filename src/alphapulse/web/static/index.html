@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AlphaPulse dashboard</title>
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/style.css?v=20260724-proxy-pool" />
   </head>
   <body>
     <header>
@@ -13,6 +13,7 @@
         <button data-tab="status" class="tab active">Status</button>
         <button data-tab="posts" class="tab">Posts</button>
         <button data-tab="guba" class="tab">Guba</button>
+        <button data-tab="proxy" class="tab">Proxy pool</button>
         <a href="/report/guba" class="tab report-link">📰 股吧日报</a>
         <a href="/report/tgb" class="tab report-link">📰 淘股吧日报</a>
       </nav>
@@ -121,8 +122,46 @@
           <div id="guba-posts" class="body">Loading…</div>
         </article>
       </section>
+
+      <section id="proxy-view" class="view">
+        <div class="toolbar">
+          <label>
+            Window
+            <select id="proxy-hours">
+              <option value="1">1 hour</option>
+              <option value="6">6 hours</option>
+              <option value="24" selected>24 hours</option>
+              <option value="72">72 hours</option>
+            </select>
+          </label>
+          <button id="proxy-refresh">Refresh</button>
+          <span id="proxy-meta" class="meta"></span>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <h2>Pool health</h2>
+            <div id="proxy-summary" class="body">Loading...</div>
+          </article>
+          <article class="card">
+            <h2>Usage and purchase signals</h2>
+            <div id="proxy-economics" class="body">Loading...</div>
+          </article>
+        </div>
+        <article class="card">
+          <h2>Hourly activity</h2>
+          <div id="proxy-trend" class="body">Loading...</div>
+        </article>
+        <article class="card">
+          <h2>Proxy nodes</h2>
+          <div id="proxy-nodes" class="body">Loading...</div>
+        </article>
+        <article class="card">
+          <h2>Recent pool events</h2>
+          <div id="proxy-events" class="body">Loading...</div>
+        </article>
+      </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260724-proxy-pool"></script>
   </body>
 </html>

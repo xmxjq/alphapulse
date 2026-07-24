@@ -12,6 +12,7 @@ const state = {
   gubaBoards: [],
   gubaPosts: [],
   gubaBoardFilter: "",
+  proxyHours: 24,
 };
 
 function el(tag, attrs = {}, children = []) {
@@ -456,12 +457,125 @@ async function refreshGuba() {
   }
 }
 
+function fmtPercent(value) {
+  return value === null || value === undefined ? "n/a" : `${(value * 100).toFixed(1)}%`;
+}
+
+function renderProxySummary(payload) {
+  const target = document.getElementById("proxy-summary");
+  target.innerHTML = "";
+  target.appendChild(el("div", { class: "stats" }, [
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Active"), el("div", { class: "value status-ok" }, String(payload.active_nodes))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Benched"), el("div", { class: "value status-running" }, String(payload.benched_nodes))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Expired"), el("div", { class: "value" }, String(payload.expired_nodes))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Success rate"), el("div", { class: "value" }, fmtPercent(payload.success_rate))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Last success"), el("div", { class: "value" }, fmtDate(payload.last_success_at))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Last failure"), el("div", { class: "value" }, fmtDate(payload.last_failure_at))]),
+  ]));
+}
+
+function renderProxyEconomics(payload) {
+  const target = document.getElementById("proxy-economics");
+  target.innerHTML = "";
+  target.appendChild(el("div", { class: "stats" }, [
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "IPs extracted"), el("div", { class: "value" }, String(payload.extracted))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Unique IP IDs"), el("div", { class: "value" }, String(payload.unique_nodes))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Requests"), el("div", { class: "value" }, String(payload.successes + payload.failures))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Requests / IP"), el("div", { class: "value" }, payload.requests_per_proxy === null ? "n/a" : payload.requests_per_proxy.toFixed(2))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Batches"), el("div", { class: "value" }, String(payload.batches))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Batch size"), el("div", { class: "value" }, String(payload.batch_size))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Lease TTL"), el("div", { class: "value" }, `${payload.lease_ttl_seconds}s`)]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "API / empty errors"), el("div", { class: "value" }, `${payload.api_errors} / ${payload.pool_empty_events}`)]),
+  ]));
+}
+
+function renderProxyTrend(payload) {
+  const target = document.getElementById("proxy-trend");
+  target.innerHTML = "";
+  if (!payload.trend.length) {
+    target.appendChild(el("div", { class: "empty" }, "No proxy activity in this window."));
+    return;
+  }
+  const maxValue = Math.max(1, ...payload.trend.map(p => Math.max(p.leases, p.successes + p.failures)));
+  const chart = el("div", { class: "proxy-chart" });
+  for (const point of payload.trend) {
+    const successWidth = `${(point.successes / maxValue) * 100}%`;
+    const failureWidth = `${(point.failures / maxValue) * 100}%`;
+    const leaseWidth = `${(point.leases / maxValue) * 100}%`;
+    chart.appendChild(el("div", { class: "proxy-chart-row" }, [
+      el("div", { class: "proxy-chart-time" }, fmtDate(point.hour)),
+      el("div", { class: "proxy-bars" }, [
+        el("div", { class: "proxy-bar lease", style: `width:${leaseWidth}`, title: `leases ${point.leases}` }),
+        el("div", { class: "proxy-bar success", style: `width:${successWidth}`, title: `successes ${point.successes}` }),
+        el("div", { class: "proxy-bar failure", style: `width:${failureWidth}`, title: `failures ${point.failures}` }),
+      ]),
+      el("div", { class: "proxy-chart-values" }, `IP ${point.extracted} | lease ${point.leases} | ok ${point.successes} | bad ${point.failures}`),
+    ]));
+  }
+  target.appendChild(chart);
+}
+
+function renderProxyNodes(payload) {
+  const target = document.getElementById("proxy-nodes");
+  target.innerHTML = "";
+  if (!payload.nodes.length) {
+    target.appendChild(el("div", { class: "empty" }, "No proxy nodes recorded yet."));
+    return;
+  }
+  const head = el("tr", {}, ["Node ID", "Status", "Expires", "Acquired", "Success", "Failure", "Rate", "Last failure"].map(h => el("th", {}, h)));
+  const rows = payload.nodes.map(node => el("tr", {}, [
+    el("td", { class: "mono" }, node.proxy_id),
+    el("td", { class: `proxy-status ${node.status}` }, node.status),
+    el("td", { class: "mono" }, fmtDate(node.expires_at)),
+    el("td", { class: "num" }, String(node.acquire_count)),
+    el("td", { class: "num" }, String(node.success_count)),
+    el("td", { class: "num" }, String(node.failure_count)),
+    el("td", { class: "num" }, fmtPercent(node.success_rate)),
+    el("td", {}, node.last_failure_reason || "-"),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
+function renderProxyEvents(payload) {
+  const target = document.getElementById("proxy-events");
+  target.innerHTML = "";
+  if (!payload.events.length) {
+    target.appendChild(el("div", { class: "empty" }, "No proxy events in this window."));
+    return;
+  }
+  const head = el("tr", {}, ["When", "Event", "Node", "Count", "Detail"].map(h => el("th", {}, h)));
+  const rows = payload.events.map(event => el("tr", {}, [
+    el("td", { class: "mono" }, fmtDate(event.occurred_at)),
+    el("td", {}, event.event_type),
+    el("td", { class: "mono" }, event.proxy_id || "-"),
+    el("td", { class: "num" }, String(event.count)),
+    el("td", {}, Object.entries(event.detail || {}).map(([key, value]) => `${key}=${value}`).join(", ") || "-"),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
+async function refreshProxyPool() {
+  const meta = document.getElementById("proxy-meta");
+  try {
+    const payload = await fetchJSON(`/api/proxy-pool?hours=${state.proxyHours}`);
+    renderProxySummary(payload);
+    renderProxyEconomics(payload);
+    renderProxyTrend(payload);
+    renderProxyNodes(payload);
+    renderProxyEvents(payload);
+    meta.textContent = `updated ${new Date().toLocaleTimeString(undefined, { hour12: false })}`;
+  } catch (err) {
+    meta.textContent = `error: ${err.message}`;
+  }
+}
+
 function switchTab(tab) {
   state.activeTab = tab;
   for (const b of document.querySelectorAll(".tab")) b.classList.toggle("active", b.dataset.tab === tab);
   for (const v of document.querySelectorAll(".view")) v.classList.toggle("active", v.id === `${tab}-view`);
   if (tab === "posts") refreshPosts();
   if (tab === "guba") refreshGuba();
+  if (tab === "proxy") refreshProxyPool();
 }
 
 function wireEvents() {
@@ -492,6 +606,11 @@ function wireEvents() {
     refreshGuba();
   });
   document.getElementById("guba-refresh").addEventListener("click", refreshGuba);
+  document.getElementById("proxy-hours").addEventListener("change", (e) => {
+    state.proxyHours = Number(e.target.value);
+    refreshProxyPool();
+  });
+  document.getElementById("proxy-refresh").addEventListener("click", refreshProxyPool);
 }
 
 function start() {
@@ -500,6 +619,7 @@ function start() {
   state.statusTimer = setInterval(() => {
     refreshStatus();
     if (state.activeTab === "guba") refreshGuba();
+    if (state.activeTab === "proxy") refreshProxyPool();
   }, POLL_INTERVAL_MS);
 }
 

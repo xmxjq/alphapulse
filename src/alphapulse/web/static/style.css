@@ -126,3 +126,34 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
   background: transparent; color: var(--accent); border: none;
   font: inherit; cursor: pointer; padding: 0;
 }
+
+.proxy-chart { display: grid; gap: 6px; min-width: 560px; }
+.proxy-chart-row {
+  display: grid;
+  grid-template-columns: 130px minmax(240px, 1fr) 180px;
+  gap: 10px;
+  align-items: center;
+}
+.proxy-chart-time { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.proxy-bars { display: flex; height: 18px; overflow: hidden; background: var(--panel-2); border-radius: 3px; }
+.proxy-bar { min-width: 0; height: 100%; }
+.proxy-bar.success { background: var(--ok); }
+.proxy-bar.failure { background: var(--err); }
+.proxy-bar.lease { background: var(--accent); opacity: 0.45; }
+.proxy-chart-values { color: var(--muted); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.proxy-status { font-family: var(--mono); font-size: 11px; text-transform: uppercase; }
+.proxy-status.active { color: var(--ok); }
+.proxy-status.benched { color: var(--warn); }
+.proxy-status.expired { color: var(--muted); }
+
+.card .body { overflow-x: auto; }
+
+@media (max-width: 760px) {
+  header { align-items: flex-start; flex-wrap: wrap; padding: 10px 12px; }
+  nav { flex-wrap: wrap; order: 3; width: 100%; }
+  .report-link { margin-left: 0; }
+  main { padding: 12px; }
+  .grid { grid-template-columns: 1fr; }
+  .split { grid-template-columns: 1fr; }
+  .proxy-chart-row { grid-template-columns: 105px minmax(180px, 1fr) 155px; }
+}

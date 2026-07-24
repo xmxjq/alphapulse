@@ -3,6 +3,7 @@ from __future__ import annotations
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -107,6 +108,77 @@ class StatusResponse(BaseModel):
     recent_errors: list[CrawlError]
     in_flight_urls: int
     seed_sets: list[SeedSetSummary]
+
+
+class ProxyPoolNode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    proxy_id: str
+    status: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
+    benched_until: datetime | None
+    acquire_count: int
+    success_count: int
+    failure_count: int
+    success_rate: float | None
+    last_acquired_at: datetime | None
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    last_failure_reason: str | None
+
+
+class ProxyPoolTrendPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hour: datetime
+    extracted: int
+    leases: int
+    successes: int
+    failures: int
+    api_errors: int
+
+
+class ProxyPoolEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    occurred_at: datetime
+    event_type: str
+    proxy_id: str | None
+    count: int
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProxyPoolResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    generated_at: datetime
+    window_hours: int
+    batch_size: int
+    low_watermark: int
+    lease_ttl_seconds: int
+    active_nodes: int
+    benched_nodes: int
+    expired_nodes: int
+    extracted: int
+    unique_nodes: int
+    leases: int
+    successes: int
+    failures: int
+    api_errors: int
+    pool_empty_events: int
+    batches: int
+    success_rate: float | None
+    requests_per_proxy: float | None
+    last_batch_at: datetime | None
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    nodes: list[ProxyPoolNode] = Field(default_factory=list)
+    trend: list[ProxyPoolTrendPoint] = Field(default_factory=list)
+    events: list[ProxyPoolEvent] = Field(default_factory=list)
 
 
 class PostSummary(BaseModel):

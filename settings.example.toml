@@ -73,6 +73,7 @@ cooldown_seconds = 300
 [crawl.kuaidaili]
 # Store the generated GetDPS URL in this ignored file. Never commit the URL.
 api_url_file = ".runtime/kuaidaili-api-url.txt"
+metrics_path = ".runtime/proxy-metrics.db"
 batch_size = 5
 low_watermark = 2
 lease_ttl_seconds = 600

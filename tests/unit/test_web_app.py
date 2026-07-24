@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from alphapulse.runtime.config import load_settings
+from alphapulse.runtime.proxy_metrics import ProxyMetricsStore
 from alphapulse.runtime.state import StateStore
 from alphapulse.web.app import create_app
 from alphapulse.web.models import (
@@ -14,6 +15,7 @@ from alphapulse.web.models import (
     PostDetail,
     PostDetailResponse,
     PostSummary,
+    ProxyPoolResponse,
     SeedSetSummary,
     StatusResponse,
 )
@@ -58,8 +60,14 @@ class FakeReader:
 def _build_client(tmp_path: Path, reader: FakeReader) -> TestClient:
     settings = load_settings(Path("settings.example.toml"))
     settings.crawl.state_path = tmp_path / "state.db"
+    settings.crawl.kuaidaili.metrics_path = tmp_path / "proxy-metrics.db"
     state = StateStore(settings.crawl.state_path)
-    queries = WebQueries(reader=reader, state=state)
+    queries = WebQueries(
+        reader=reader,
+        state=state,
+        settings=settings,
+        proxy_metrics=ProxyMetricsStore(settings.crawl.kuaidaili.metrics_path),
+    )
     app = create_app(settings, queries=queries)
     return TestClient(app)
 
@@ -202,6 +210,20 @@ def test_guba_boards_returns_grouped_results(tmp_path: Path) -> None:
 
     assert client.get("/api/guba/boards", params={"limit": 0}).status_code == 422
     assert client.get("/api/guba/boards", params={"limit": 500}).status_code == 422
+
+
+def test_proxy_pool_endpoint_returns_empty_metrics(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+
+    response = client.get("/api/proxy-pool", params={"hours": 24})
+
+    assert response.status_code == 200
+    parsed = ProxyPoolResponse.model_validate(response.json())
+    assert parsed.provider == "kuaidaili"
+    assert parsed.active_nodes == 0
+    assert parsed.extracted == 0
+    assert parsed.window_hours == 24
+    assert client.get("/api/proxy-pool", params={"hours": 0}).status_code == 422
 
 
 def test_post_detail_returns_post_with_comments(tmp_path: Path) -> None:

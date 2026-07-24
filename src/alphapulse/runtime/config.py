@@ -135,6 +135,7 @@ class CrawlKuaidailiSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     api_url_file: Path = Path(".runtime/kuaidaili-api-url.txt")
+    metrics_path: Path = Path(".runtime/proxy-metrics.db")
     batch_size: int = Field(default=5, ge=1, le=100)
     low_watermark: int = Field(default=2, ge=0, le=99)
     lease_ttl_seconds: int = Field(default=600, ge=30)
@@ -349,6 +350,9 @@ def load_settings(path: Path) -> Settings:
     settings.crawl.raw_store.root_path = _resolve_path(config_dir, settings.crawl.raw_store.root_path)
     settings.crawl.kuaidaili.api_url_file = _resolve_path(
         config_dir, settings.crawl.kuaidaili.api_url_file
+    )
+    settings.crawl.kuaidaili.metrics_path = _resolve_path(
+        config_dir, settings.crawl.kuaidaili.metrics_path
     )
     settings.sources.xueqiu.seed_catalog_path = _resolve_path(config_dir, settings.sources.xueqiu.seed_catalog_path)
     if settings.crawl.state_backend == "sqlite":

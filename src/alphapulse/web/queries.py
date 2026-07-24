@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from alphapulse.runtime.config import CrawlSettings, GubaSettings, Settings, TgbSettings
+from alphapulse.runtime.proxy_metrics import ProxyMetricsStore
 from alphapulse.runtime.state import StateStore
 from alphapulse.sources.tgb.urls import featured_list_url, general_list_url, stock_list_url
 from alphapulse.web.models import (
@@ -23,6 +24,7 @@ from alphapulse.web.models import (
     PostDetail,
     PostDetailResponse,
     PostSummary,
+    ProxyPoolResponse,
     SeedSetSummary,
     StatusResponse,
     TaskKindForecast,
@@ -544,6 +546,7 @@ class WebQueries:
     reader: StorageReader
     state: StateStore
     settings: Settings | None = None
+    proxy_metrics: ProxyMetricsStore | None = None
 
     def recent_url_activity(self, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)
@@ -580,6 +583,27 @@ class WebQueries:
             recent_errors=self.reader.list_errors(recent_errors_limit, source=None),
             in_flight_urls=self.recent_url_activity(),
             seed_sets=self.seed_set_summaries(),
+        )
+
+    def proxy_pool(self, hours: int = 24) -> ProxyPoolResponse:
+        now = datetime.now(UTC)
+        settings = self.settings or Settings()
+        metrics = self.proxy_metrics or ProxyMetricsStore(
+            settings.crawl.kuaidaili.metrics_path
+        )
+        snapshot = metrics.snapshot(
+            provider="kuaidaili",
+            since=now - timedelta(hours=hours),
+            now=now,
+        )
+        return ProxyPoolResponse.model_validate(
+            {
+                **snapshot,
+                "window_hours": hours,
+                "batch_size": settings.crawl.kuaidaili.batch_size,
+                "low_watermark": settings.crawl.kuaidaili.low_watermark,
+                "lease_ttl_seconds": settings.crawl.kuaidaili.lease_ttl_seconds,
+            }
         )
 
     def guba_next_crawl(self, now: datetime | None = None) -> GubaNextCrawlResponse:
@@ -804,4 +828,5 @@ def build_queries(settings: Settings) -> WebQueries:
         reader=build_reader(settings),
         state=StateStore(settings.crawl.state_path),
         settings=settings,
+        proxy_metrics=ProxyMetricsStore(settings.crawl.kuaidaili.metrics_path),
     )

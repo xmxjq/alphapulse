@@ -15,6 +15,7 @@ from alphapulse.web.models import (
     ReportResponse,
     PostDetailResponse,
     PostsResponse,
+    ProxyPoolResponse,
     RunsResponse,
     SeedsResponse,
     StatusResponse,
@@ -91,6 +92,13 @@ def create_app(settings: Settings, queries: WebQueries | None = None) -> FastAPI
     @app.get("/api/guba/next-crawl", response_model=GubaNextCrawlResponse)
     def guba_next_crawl(q: WebQueries = Depends(get_queries)) -> GubaNextCrawlResponse:
         return q.guba_next_crawl()
+
+    @app.get("/api/proxy-pool", response_model=ProxyPoolResponse)
+    def proxy_pool(
+        hours: int = Query(default=24, ge=1, le=168),
+        q: WebQueries = Depends(get_queries),
+    ) -> ProxyPoolResponse:
+        return q.proxy_pool(hours)
 
     @app.get("/api/guba/report/{date}", response_model=ReportResponse)
     def guba_report(date: str, q: WebQueries = Depends(get_queries)) -> ReportResponse:

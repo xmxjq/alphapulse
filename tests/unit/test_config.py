@@ -15,6 +15,7 @@ def test_load_settings_example() -> None:
     assert settings.crawl.proxy.provider is None
     assert settings.crawl.proxy_pool.base_url == "http://proxy_pool:5010"
     assert settings.crawl.kuaidaili.api_url_file.name == "kuaidaili-api-url.txt"
+    assert settings.crawl.kuaidaili.metrics_path.name == "proxy-metrics.db"
     assert settings.crawl.kuaidaili.batch_size == 5
     assert settings.crawl.kuaidaili.low_watermark == 2
     assert settings.crawl.kuaidaili.lease_ttl_seconds == 600

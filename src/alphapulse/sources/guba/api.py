@@ -107,6 +107,7 @@ class GubaClient:
             lease: ProxyLease | None = None
             proxy_url: str | None = None
             was_rate_limited = attempt > 0
+            self._adaptive_sleep(was_rate_limited=was_rate_limited)
 
             if self.proxy_provider is not None:
                 try:
@@ -131,7 +132,6 @@ class GubaClient:
 
             started = time.monotonic()
             try:
-                self._adaptive_sleep(was_rate_limited=was_rate_limited)
                 status_code, text, final_url = self._dispatch(
                     method, url, form, referer, proxy_url, json_body
                 )
@@ -231,6 +231,8 @@ class GubaClient:
                 last_result = result
                 if attempt + 1 < attempts:
                     continue
+            elif lease is not None:
+                self._report_success_proxy(lease)
             return result
 
         return last_result or GubaHttpResult(url=url, status_code=0, text="", error_message="Request failed")
@@ -304,5 +306,11 @@ class GubaClient:
             return
         try:
             self.proxy_provider.report_bad(lease, reason)
+        except Exception:
+            return
+
+    def _report_success_proxy(self, lease: ProxyLease) -> None:
+        try:
+            self.proxy_provider.report_success(lease)
         except Exception:
             return

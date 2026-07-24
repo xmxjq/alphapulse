@@ -1,4 +1,5 @@
 import sys
+from datetime import UTC, datetime
 from types import ModuleType
 
 import pytest
@@ -175,6 +176,7 @@ def _kuaidaili_settings(tmp_path, **overrides) -> CrawlSettings:
         "proxy": {"enabled": True, "provider": "kuaidaili", "sources": ["guba"]},
         "kuaidaili": {
             "api_url_file": str(api_file),
+            "metrics_path": str(tmp_path / "proxy-metrics.db"),
             "batch_size": 2,
             "low_watermark": 0,
             "lease_ttl_seconds": 600,
@@ -227,6 +229,34 @@ def test_kuaidaili_provider_benches_bad_proxy(
     second = provider.acquire()
 
     assert second.proxy_url == "http://2.3.4.5:8081"
+    snapshot = provider.metrics.snapshot(
+        provider="kuaidaili",
+        since=datetime(2026, 1, 1, tzinfo=UTC),
+        now=datetime.now(UTC),
+    )
+    assert snapshot["failures"] == 1
+    assert all("1.2.3.4" not in str(value) for value in snapshot.values())
+
+
+def test_kuaidaili_provider_records_success(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(_kuaidaili_settings(tmp_path).kuaidaili)
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: DummyUrlopenResponse("1.2.3.4:8080"),
+    )
+
+    lease = provider.acquire()
+    provider.report_success(lease)
+
+    snapshot = provider.metrics.snapshot(
+        provider="kuaidaili",
+        since=datetime(2026, 1, 1, tzinfo=UTC),
+        now=datetime.now(UTC),
+    )
+    assert snapshot["successes"] == 1
 
 
 @pytest.mark.parametrize(

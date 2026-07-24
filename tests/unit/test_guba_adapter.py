@@ -598,7 +598,10 @@ def test_guba_client_does_not_fail_open_without_proxy(monkeypatch, tmp_path) -> 
                 "sources": ["guba"],
                 "fail_open": False,
             },
-            "kuaidaili": {"api_url_file": str(api_file)},
+            "kuaidaili": {
+                "api_url_file": str(api_file),
+                "metrics_path": str(tmp_path / "proxy-metrics.db"),
+            },
         }
     )
     client = guba_api.GubaClient(
@@ -618,6 +621,52 @@ def test_guba_client_does_not_fail_open_without_proxy(monkeypatch, tmp_path) -> 
     assert result.status_code == 0
     assert result.error_message == "No proxy available from proxy provider"
     assert dispatched == []
+
+
+def test_guba_client_waits_before_acquiring_short_lived_proxy(monkeypatch) -> None:
+    from alphapulse.sources.fetching import ProxyLease
+    from alphapulse.sources.guba import api as guba_api
+
+    client = guba_api.GubaClient(
+        GubaSettings(
+            enabled=True,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        CrawlSettings(),
+    )
+    events: list[str] = []
+
+    class FakeProxyProvider:
+        def acquire(self):
+            events.append("acquire")
+            return ProxyLease("http://1.2.3.4:8080", "1.2.3.4:8080", "test")
+
+        def report_bad(self, lease, reason):
+            del lease, reason
+
+        def report_success(self, lease):
+            del lease
+            events.append("success")
+
+    client.proxy_provider = FakeProxyProvider()
+    monkeypatch.setattr(
+        client,
+        "_adaptive_sleep",
+        lambda *, was_rate_limited: events.append("sleep"),
+    )
+    monkeypatch.setattr(
+        client,
+        "_dispatch",
+        lambda *args, **kwargs: (
+            events.append("dispatch") or (200, "<html>ok</html>", args[1])
+        ),
+    )
+
+    result = client.get(f"{BASE}/list,600519.html")
+
+    assert result.status_code == 200
+    assert events == ["sleep", "acquire", "dispatch", "success"]
 
 
 def test_marker_check_skips_error_redirects(monkeypatch) -> None:

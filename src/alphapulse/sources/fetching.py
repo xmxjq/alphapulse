@@ -5,6 +5,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from urllib import parse, request
 from urllib.parse import urlparse
@@ -17,6 +18,7 @@ from alphapulse.runtime.config import (
     FetchMode,
     XueqiuSettings,
 )
+from alphapulse.runtime.proxy_metrics import ProxyMetricsStore
 
 
 def _response_text(response: Any) -> str:
@@ -111,6 +113,8 @@ class ProxyProvider(Protocol):
 
     def report_bad(self, lease: ProxyLease, reason: str) -> None: ...
 
+    def report_success(self, lease: ProxyLease) -> None: ...
+
 
 class ProxyPoolProvider:
     provider_name = "proxy_pool"
@@ -138,6 +142,9 @@ class ProxyPoolProvider:
         url = self._build_url("/delete/", query)
         with request.urlopen(url, timeout=self.settings.acquire_timeout_seconds):
             return None
+
+    def report_success(self, lease: ProxyLease) -> None:
+        del lease
 
     def _build_url(self, path: str, query: str = "") -> str:
         base = self.settings.base_url.rstrip("/")
@@ -198,6 +205,7 @@ class KuaidailiProxyProvider:
 
     def __init__(self, settings: CrawlKuaidailiSettings) -> None:
         self.settings = settings
+        self.metrics = ProxyMetricsStore(settings.metrics_path)
         self._urls: list[str] = []
         self._expires_at: dict[str, float] = {}
         self._benched_until: dict[str, float] = {}
@@ -212,45 +220,82 @@ class KuaidailiProxyProvider:
                 self._refresh(now)
             available = set(self._available(now))
             if not available:
+                self.metrics.record_pool_empty(self.provider_name)
                 return None
             for _ in range(len(self._urls)):
                 url = self._urls[self._next_index % len(self._urls)]
                 self._next_index += 1
                 if url in available:
-                    return self._lease(url)
+                    lease = self._lease(url)
+                    self.metrics.record_acquire(self.provider_name, lease.proxy_url)
+                    return lease
+            self.metrics.record_pool_empty(self.provider_name)
             return None
 
     def report_bad(self, lease: ProxyLease, reason: str) -> None:
-        del reason
         with self._lock:
             self._benched_until[lease.proxy_url] = (
                 time.monotonic() + self.settings.cooldown_seconds
             )
+            self.metrics.record_failure(
+                self.provider_name,
+                lease.proxy_url,
+                reason=reason,
+                benched_until=(
+                    datetime.now(UTC)
+                    + timedelta(seconds=self.settings.cooldown_seconds)
+                ),
+            )
+
+    def report_success(self, lease: ProxyLease) -> None:
+        self.metrics.record_success(self.provider_name, lease.proxy_url)
 
     def _refresh(self, now: float) -> None:
-        api_url = self.settings.api_url_file.read_text(encoding="utf-8").strip()
-        if not api_url.startswith(("http://", "https://")):
-            raise RuntimeError("Kuaidaili API URL file is empty or invalid")
-        parts = parse.urlsplit(api_url)
-        query = parse.parse_qsl(parts.query, keep_blank_values=True)
-        query = [
-            (key, str(self.settings.batch_size) if key == "num" else value)
-            for key, value in query
-        ]
-        if not any(key == "num" for key, _ in query):
-            query.append(("num", str(self.settings.batch_size)))
-        request_url = parse.urlunsplit(
-            (parts.scheme, parts.netloc, parts.path, parse.urlencode(query), parts.fragment)
-        )
-        with request.urlopen(
-            request_url,
-            timeout=self.settings.acquire_timeout_seconds,
-        ) as response:
-            payload = response.read().decode("utf-8", errors="replace")
-        proxies = self._parse_proxies(payload)
-        if not proxies:
-            raise RuntimeError("Kuaidaili API returned no proxy addresses")
+        try:
+            api_url = self.settings.api_url_file.read_text(encoding="utf-8").strip()
+            if not api_url.startswith(("http://", "https://")):
+                raise RuntimeError("Kuaidaili API URL file is empty or invalid")
+            parts = parse.urlsplit(api_url)
+            query = parse.parse_qsl(parts.query, keep_blank_values=True)
+            query = [
+                (key, str(self.settings.batch_size) if key == "num" else value)
+                for key, value in query
+            ]
+            if not any(key == "num" for key, _ in query):
+                query.append(("num", str(self.settings.batch_size)))
+            request_url = parse.urlunsplit(
+                (
+                    parts.scheme,
+                    parts.netloc,
+                    parts.path,
+                    parse.urlencode(query),
+                    parts.fragment,
+                )
+            )
+            with request.urlopen(
+                request_url,
+                timeout=self.settings.acquire_timeout_seconds,
+            ) as response:
+                payload = response.read().decode("utf-8", errors="replace")
+            proxies = self._parse_proxies(payload)
+            if not proxies:
+                raise RuntimeError("Kuaidaili API returned no proxy addresses")
+        except Exception as exc:
+            self.metrics.record_api_error(
+                self.provider_name,
+                f"{type(exc).__name__}: {exc}",
+            )
+            raise
         expires_at = now + self.settings.lease_ttl_seconds
+        expires_at_wall = datetime.now(UTC) + timedelta(
+            seconds=self.settings.lease_ttl_seconds
+        )
+        proxy_urls = [_proxy_url(proxy) for proxy in proxies]
+        self.metrics.record_batch(
+            self.provider_name,
+            proxy_urls,
+            expires_at=expires_at_wall,
+        )
         for proxy in proxies:
             url = _proxy_url(proxy)
             if url not in self._urls:
