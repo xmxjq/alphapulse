@@ -219,10 +219,32 @@ def _fetch_hot_theme(client: GubaClient, settings: GubaSettings) -> list[HotBoar
     return boards
 
 
-def fetch_hot_rankings(client: GubaClient, settings: GubaSettings) -> HotRankings:
+def fetch_hot_rankings(
+    client: GubaClient,
+    settings: GubaSettings,
+    *,
+    sections: set[str] | None = None,
+) -> HotRankings:
     """Fetch all three homepage rankings. A failing section yields an empty list."""
+    selected = sections or {
+        SECTION_HOT_STOCK,
+        SECTION_HOT_CONCEPT,
+        SECTION_HOT_THEME,
+    }
     return HotRankings(
-        hot_stock=_fetch_hot_stock(client, settings),
-        hot_concept=_fetch_hot_concept(client, settings),
-        hot_theme=_fetch_hot_theme(client, settings),
+        hot_stock=(
+            _fetch_hot_stock(client, settings)
+            if SECTION_HOT_STOCK in selected
+            else []
+        ),
+        hot_concept=(
+            _fetch_hot_concept(client, settings)
+            if SECTION_HOT_CONCEPT in selected
+            else []
+        ),
+        hot_theme=(
+            _fetch_hot_theme(client, settings)
+            if SECTION_HOT_THEME in selected
+            else []
+        ),
     )

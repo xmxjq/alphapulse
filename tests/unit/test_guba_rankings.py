@@ -116,3 +116,20 @@ def test_failed_section_yields_empty_list() -> None:
     assert rankings.hot_theme == []
     # ...but the GET-based concept section still parses.
     assert rankings.hot_concept
+
+
+def test_fetch_hot_rankings_can_limit_sections() -> None:
+    settings = GubaSettings(enabled=True)
+    client = FakeRankingClient(settings)
+
+    rankings = fetch_hot_rankings(
+        client,
+        settings,
+        sections={SECTION_HOT_CONCEPT},
+    )
+
+    assert rankings.hot_stock == []
+    assert rankings.hot_concept
+    assert rankings.hot_theme == []
+    assert len(client.get_calls) == 1
+    assert client.post_calls == []

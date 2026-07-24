@@ -202,7 +202,7 @@ class GubaHotBoardsSeedGenerator:
             update={
                 "request_interval_min_seconds": 0.0,
                 "request_interval_max_seconds": 0.0,
-                "max_retries": 1,
+                "max_retries": 3,
             }
         )
         ranking_crawl_settings = self.crawl_settings.model_copy(
@@ -216,6 +216,22 @@ class GubaHotBoardsSeedGenerator:
         self._client = GubaClient(ranking_settings, ranking_crawl_settings)
         return self._client
 
+    def _get_proxy_client(self) -> GubaClient | None:
+        if (
+            self.settings is None
+            or self.crawl_settings is None
+            or not self.crawl_settings.proxy.enabled
+        ):
+            return None
+        ranking_settings = self.settings.model_copy(
+            update={
+                "request_interval_min_seconds": 0.0,
+                "request_interval_max_seconds": 0.0,
+                "max_retries": 3,
+            }
+        )
+        return GubaClient(ranking_settings, self.crawl_settings)
+
     def generate(
         self, definition: GeneratorDefinition, generated_at: datetime
     ) -> list[GeneratedSeedItem]:
@@ -223,7 +239,25 @@ class GubaHotBoardsSeedGenerator:
         if self.settings is None:
             raise RuntimeError("guba_hot_boards generator requires guba settings to be wired")
         sections = set(definition.sections)
-        rankings = fetch_hot_rankings(self._get_client(), self.settings)
+        rankings = fetch_hot_rankings(
+            self._get_client(),
+            self.settings,
+            sections=sections,
+        )
+        missing_sections = _missing_guba_ranking_sections(rankings, sections)
+        proxy_client = self._get_proxy_client() if missing_sections else None
+        if proxy_client is not None:
+            fallback = fetch_hot_rankings(
+                proxy_client,
+                self.settings,
+                sections=missing_sections,
+            )
+            rankings = _fill_missing_guba_rankings(
+                rankings,
+                fallback,
+                missing_sections,
+            )
+        rows = _ranking_snapshot_rows(rankings, sections)
 
         if self.state is not None:
             day = (
@@ -231,14 +265,20 @@ class GubaHotBoardsSeedGenerator:
                 .date()
                 .isoformat()
             )
-            self.state.replace_guba_ranking(day, _ranking_snapshot_rows(rankings, sections))
+            rows = _merge_guba_ranking_rows(
+                rows,
+                self.state.get_guba_ranking(day),
+                sections,
+            )
+            self.state.replace_guba_ranking(day, rows)
 
         codes: list[str] = []
         seen: set[str] = set()
-        for board in _selected_boards(rankings, sections):
-            if board.board_code not in seen:
-                seen.add(board.board_code)
-                codes.append(board.board_code)
+        for row in rows:
+            code = str(row["code"])
+            if code not in seen:
+                seen.add(code)
+                codes.append(code)
         return [GeneratedSeedItem(kind="guba_board_code", value=code) for code in codes]
 
 
@@ -271,6 +311,52 @@ def _ranking_snapshot_rows(
         }
         for board in _selected_boards(rankings, sections)
     ]
+
+
+def _merge_guba_ranking_rows(
+    fetched_rows: list[dict[str, object]],
+    existing_rows: list[dict[str, object]],
+    sections: set[str],
+) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    for section in (SECTION_HOT_STOCK, SECTION_HOT_CONCEPT, SECTION_HOT_THEME):
+        if section not in sections:
+            continue
+        rows = [
+            row for row in fetched_rows if str(row.get("section")) == section
+        ]
+        if not rows:
+            rows = [
+                row for row in existing_rows if str(row.get("section")) == section
+            ]
+        merged.extend(sorted(rows, key=lambda row: int(row.get("rank") or 0)))
+    return merged
+
+
+def _missing_guba_ranking_sections(
+    rankings: HotRankings,
+    sections: set[str],
+) -> set[str]:
+    by_section = {
+        SECTION_HOT_STOCK: rankings.hot_stock,
+        SECTION_HOT_CONCEPT: rankings.hot_concept,
+        SECTION_HOT_THEME: rankings.hot_theme,
+    }
+    return {section for section in sections if not by_section.get(section)}
+
+
+def _fill_missing_guba_rankings(
+    primary: HotRankings,
+    fallback: HotRankings,
+    missing_sections: set[str],
+) -> HotRankings:
+    if SECTION_HOT_STOCK in missing_sections and fallback.hot_stock:
+        primary.hot_stock = fallback.hot_stock
+    if SECTION_HOT_CONCEPT in missing_sections and fallback.hot_concept:
+        primary.hot_concept = fallback.hot_concept
+    if SECTION_HOT_THEME in missing_sections and fallback.hot_theme:
+        primary.hot_theme = fallback.hot_theme
+    return primary
 
 
 class TgbHotBoardsSeedGenerator:

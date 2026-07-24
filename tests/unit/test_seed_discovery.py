@@ -345,10 +345,166 @@ def test_guba_ranking_client_bypasses_crawl_proxy(monkeypatch) -> None:
 
     generator._get_client()
 
-    assert captured["settings"].max_retries == 1
+    assert captured["settings"].max_retries == 3
     assert captured["settings"].request_interval_min_seconds == 0
     assert captured["settings"].request_interval_max_seconds == 0
     assert captured["crawl_settings"].proxy.enabled is False
+
+
+def test_guba_hot_boards_preserves_failed_ranking_section(
+    tmp_path: Path,
+) -> None:
+    from alphapulse.runtime.config import GubaSettings
+    from alphapulse.sources.guba.api import GubaHttpResult
+    from alphapulse.seeds.catalog import GubaHotBoardsGeneratorDefinition
+    from alphapulse.seeds.discovery import GubaHotBoardsSeedGenerator
+
+    fixtures = Path(__file__).parent.parent / "fixtures" / "guba"
+
+    class PartialClient:
+        def _match(self, url: str) -> GubaHttpResult:
+            if "clist" in url:
+                return GubaHttpResult(
+                    url=url,
+                    status_code=0,
+                    text="",
+                    error_message="temporary concept ranking failure",
+                )
+            table = {
+                "stockrank": "rank_hot_stock.json",
+                "getBulletin": "rank_hot_theme.html",
+            }
+            for marker, name in table.items():
+                if marker in url:
+                    return GubaHttpResult(
+                        url=url,
+                        status_code=200,
+                        text=(fixtures / name).read_text(encoding="utf-8"),
+                    )
+            return GubaHttpResult(url=url, status_code=404, text="")
+
+        def get(self, url, *, expect_marker=None):
+            return self._match(url)
+
+        def post_json(self, url, payload):
+            return self._match(url)
+
+    state = StateStore(tmp_path / "state.db")
+    state.replace_guba_ranking(
+        "2026-07-21",
+        [
+            {
+                "section": "hot_concept",
+                "rank": 1,
+                "code": "BK9999",
+                "name": "cached concept",
+                "url": "https://guba.eastmoney.com/list,BK9999.html",
+                "members": None,
+            }
+        ],
+    )
+    generator = GubaHotBoardsSeedGenerator(
+        GubaSettings(enabled=True),
+        None,
+        state,
+        client=PartialClient(),
+    )
+
+    items = generator.generate(
+        GubaHotBoardsGeneratorDefinition(name="guba-hot"),
+        datetime(2026, 7, 21, 3, 0, tzinfo=UTC),
+    )
+
+    codes = [item.value for item in items]
+    assert "BK9999" in codes
+    snapshot = state.get_guba_ranking("2026-07-21")
+    concept_rows = [row for row in snapshot if row["section"] == "hot_concept"]
+    assert [row["code"] for row in concept_rows] == ["BK9999"]
+    assert {row["section"] for row in snapshot} == {
+        "hot_stock",
+        "hot_concept",
+        "hot_theme",
+    }
+
+
+def test_guba_hot_boards_uses_proxy_fallback_for_missing_section(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from alphapulse.runtime.config import CrawlSettings, GubaSettings
+    from alphapulse.sources.guba.api import GubaHttpResult
+    from alphapulse.seeds.catalog import GubaHotBoardsGeneratorDefinition
+    from alphapulse.seeds.discovery import GubaHotBoardsSeedGenerator
+
+    fixtures = Path(__file__).parent.parent / "fixtures" / "guba"
+
+    class DirectClient:
+        def get(self, url, *, expect_marker=None):
+            if "clist" in url:
+                return GubaHttpResult(
+                    url=url,
+                    status_code=0,
+                    text="",
+                    error_message="direct failed",
+                )
+            return GubaHttpResult(url=url, status_code=404, text="")
+
+        def post_json(self, url, payload):
+            table = {
+                "stockrank": "rank_hot_stock.json",
+                "getBulletin": "rank_hot_theme.html",
+            }
+            for marker, name in table.items():
+                if marker in url:
+                    return GubaHttpResult(
+                        url=url,
+                        status_code=200,
+                        text=(fixtures / name).read_text(encoding="utf-8"),
+                    )
+            return GubaHttpResult(url=url, status_code=404, text="")
+
+    class ProxyClient:
+        def get(self, url, *, expect_marker=None):
+            return GubaHttpResult(
+                url=url,
+                status_code=200,
+                text=(fixtures / "rank_hot_concept.json").read_text(
+                    encoding="utf-8"
+                ),
+            )
+
+        def post_json(self, url, payload):
+            return GubaHttpResult(url=url, status_code=404, text="")
+
+    state = StateStore(tmp_path / "state.db")
+    generator = GubaHotBoardsSeedGenerator(
+        GubaSettings(enabled=True),
+        CrawlSettings.model_validate(
+            {
+                "proxy": {
+                    "enabled": True,
+                    "provider": "kuaidaili",
+                    "sources": ["guba"],
+                }
+            }
+        ),
+        state,
+        client=DirectClient(),
+    )
+    monkeypatch.setattr(generator, "_get_proxy_client", lambda: ProxyClient())
+
+    items = generator.generate(
+        GubaHotBoardsGeneratorDefinition(name="guba-hot"),
+        datetime(2026, 7, 21, 3, 0, tzinfo=UTC),
+    )
+
+    assert "BK1036" in [item.value for item in items]
+    snapshot = state.get_guba_ranking("2026-07-21")
+    assert {row["section"] for row in snapshot} == {
+        "hot_stock",
+        "hot_concept",
+        "hot_theme",
+    }
 
 
 def test_manual_seed_generator_emits_tgb_board_codes() -> None:
