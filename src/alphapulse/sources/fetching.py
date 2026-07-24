@@ -209,6 +209,7 @@ class KuaidailiProxyProvider:
         self._urls: list[str] = []
         self._expires_at: dict[str, float] = {}
         self._benched_until: dict[str, float] = {}
+        self._failure_streaks: dict[str, int] = {}
         self._next_index = 0
         self._lock = threading.Lock()
 
@@ -234,20 +235,30 @@ class KuaidailiProxyProvider:
 
     def report_bad(self, lease: ProxyLease, reason: str) -> None:
         with self._lock:
-            self._benched_until[lease.proxy_url] = (
-                time.monotonic() + self.settings.cooldown_seconds
+            streak = self._failure_streaks.get(lease.proxy_url, 0) + 1
+            self._failure_streaks[lease.proxy_url] = streak
+            should_bench = self._is_hard_failure(reason) or (
+                streak >= self.settings.failure_threshold
             )
+            benched_until = None
+            if should_bench:
+                self._benched_until[lease.proxy_url] = (
+                    time.monotonic() + self.settings.cooldown_seconds
+                )
+                self._failure_streaks.pop(lease.proxy_url, None)
+                benched_until = datetime.now(UTC) + timedelta(
+                    seconds=self.settings.cooldown_seconds
+                )
             self.metrics.record_failure(
                 self.provider_name,
                 lease.proxy_url,
                 reason=reason,
-                benched_until=(
-                    datetime.now(UTC)
-                    + timedelta(seconds=self.settings.cooldown_seconds)
-                ),
+                benched_until=benched_until,
             )
 
     def report_success(self, lease: ProxyLease) -> None:
+        with self._lock:
+            self._failure_streaks.pop(lease.proxy_url, None)
         self.metrics.record_success(self.provider_name, lease.proxy_url)
 
     def _refresh(self, now: float) -> None:
@@ -321,6 +332,9 @@ class KuaidailiProxyProvider:
         self._benched_until = {
             url: until for url, until in self._benched_until.items() if url in live
         }
+        self._failure_streaks = {
+            url: streak for url, streak in self._failure_streaks.items() if url in live
+        }
         if self._urls:
             self._next_index %= len(self._urls)
         else:
@@ -360,6 +374,15 @@ class KuaidailiProxyProvider:
             proxy_url=url,
             delete_key=_proxy_delete_key(url),
             provider_name=self.provider_name,
+        )
+
+    @staticmethod
+    def _is_hard_failure(reason: str) -> bool:
+        lowered = reason.lower()
+        return (
+            lowered.startswith("blocked:")
+            or bool(re.search(r"\bhttp (?:403|407|418|429)\b", lowered))
+            or "proxy setup failed" in lowered
         )
 
 

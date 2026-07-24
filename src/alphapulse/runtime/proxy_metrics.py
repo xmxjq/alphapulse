@@ -166,7 +166,7 @@ class ProxyMetricsStore:
         proxy_url: str,
         *,
         reason: str,
-        benched_until: datetime,
+        benched_until: datetime | None,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         identifier = proxy_id(proxy_url)
@@ -178,13 +178,17 @@ class ProxyMetricsStore:
                 SET failure_count = failure_count + 1,
                     last_failure_at = ?,
                     last_failure_reason = ?,
-                    benched_until = ?
+                    benched_until = CASE
+                        WHEN ? IS NULL THEN benched_until
+                        ELSE ?
+                    END
                 WHERE provider = ? AND proxy_id = ?
                 """,
                 (
                     now,
                     safe_reason,
-                    benched_until.isoformat(),
+                    benched_until.isoformat() if benched_until else None,
+                    benched_until.isoformat() if benched_until else None,
                     provider,
                     identifier,
                 ),
@@ -192,10 +196,10 @@ class ProxyMetricsStore:
             self._insert_event(
                 conn,
                 provider=provider,
-                event_type="proxy_benched",
+                event_type="proxy_benched" if benched_until else "request_failure",
                 occurred_at=now,
                 proxy_identifier=identifier,
-                detail={"reason": safe_reason},
+                detail={"reason": safe_reason, "benched": benched_until is not None},
             )
 
     def record_api_error(self, provider: str, reason: str) -> None:
@@ -351,13 +355,17 @@ class ProxyMetricsStore:
                 "lease_acquired": "leases",
                 "request_success": "successes",
                 "proxy_benched": "failures",
+                "request_failure": "failures",
                 "api_error": "api_errors",
             }.get(row["event_type"])
             if field:
                 bucket[field] += int(row["count"] or 0)
 
         successes = aggregates.get("request_success", {}).get("count", 0)
-        failures = aggregates.get("proxy_benched", {}).get("count", 0)
+        failures = sum(
+            aggregates.get(event_type, {}).get("count", 0)
+            for event_type in ("proxy_benched", "request_failure")
+        )
         attempts = successes + failures
         extracted = aggregates.get("batch_fetched", {}).get("count", 0)
         return {
@@ -378,7 +386,14 @@ class ProxyMetricsStore:
             "requests_per_proxy": attempts / extracted if extracted else None,
             "last_batch_at": aggregates.get("batch_fetched", {}).get("last_at"),
             "last_success_at": aggregates.get("request_success", {}).get("last_at"),
-            "last_failure_at": aggregates.get("proxy_benched", {}).get("last_at"),
+            "last_failure_at": max(
+                (
+                    aggregates.get(event_type, {}).get("last_at")
+                    for event_type in ("proxy_benched", "request_failure")
+                    if aggregates.get(event_type, {}).get("last_at")
+                ),
+                default=None,
+            ),
             "nodes": nodes,
             "trend": list(trend.values()),
             "events": [

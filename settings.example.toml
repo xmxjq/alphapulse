@@ -79,6 +79,9 @@ low_watermark = 2
 lease_ttl_seconds = 600
 cooldown_seconds = 600
 acquire_timeout_seconds = 20
+# Transient transport failures keep using the same paid IP until this many
+# consecutive failures. Explicit blocks and proxy setup failures bench it now.
+failure_threshold = 3
 
 [crawl.raw_store]
 # Disk archive of raw HTTP responses: gzip blobs content-addressed by sha256

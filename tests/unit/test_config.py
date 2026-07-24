@@ -19,6 +19,7 @@ def test_load_settings_example() -> None:
     assert settings.crawl.kuaidaili.batch_size == 5
     assert settings.crawl.kuaidaili.low_watermark == 2
     assert settings.crawl.kuaidaili.lease_ttl_seconds == 600
+    assert settings.crawl.kuaidaili.failure_threshold == 3
     assert settings.sources.xueqiu.seed_catalog_path.name == "seed_catalog.example.toml"
     assert settings.sources.xueqiu.seed_refresh_minutes == 60
     assert settings.sources.xueqiu.generated_seed_ttl_minutes == 1440

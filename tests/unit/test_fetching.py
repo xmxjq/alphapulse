@@ -218,7 +218,9 @@ def test_kuaidaili_provider_benches_bad_proxy(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = KuaidailiProxyProvider(_kuaidaili_settings(tmp_path).kuaidaili)
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(tmp_path, failure_threshold=1).kuaidaili
+    )
     monkeypatch.setattr(
         "alphapulse.sources.fetching.request.urlopen",
         lambda url, timeout: DummyUrlopenResponse("1.2.3.4:8080\n2.3.4.5:8081"),
@@ -236,6 +238,66 @@ def test_kuaidaili_provider_benches_bad_proxy(
     )
     assert snapshot["failures"] == 1
     assert all("1.2.3.4" not in str(value) for value in snapshot.values())
+
+
+def test_kuaidaili_provider_reuses_paid_ip_until_failure_threshold(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(
+            tmp_path,
+            batch_size=1,
+            failure_threshold=3,
+        ).kuaidaili
+    )
+    responses = iter(
+        [
+            DummyUrlopenResponse("1.2.3.4:8080"),
+            DummyUrlopenResponse("2.3.4.5:8081"),
+        ]
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: next(responses),
+    )
+
+    first = provider.acquire()
+    provider.report_bad(first, "IncompleteRead")
+    assert provider.acquire().proxy_url == first.proxy_url
+    provider.report_bad(first, "connection reset")
+    assert provider.acquire().proxy_url == first.proxy_url
+    provider.report_bad(first, "timed out")
+
+    assert provider.acquire().proxy_url == "http://2.3.4.5:8081"
+
+
+def test_kuaidaili_provider_benches_explicit_block_immediately(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(
+            tmp_path,
+            batch_size=1,
+            failure_threshold=3,
+        ).kuaidaili
+    )
+    responses = iter(
+        [
+            DummyUrlopenResponse("1.2.3.4:8080"),
+            DummyUrlopenResponse("2.3.4.5:8081"),
+        ]
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: next(responses),
+    )
+
+    first = provider.acquire()
+    provider.report_bad(first, "HTTP 403")
+
+    assert provider.acquire().proxy_url == "http://2.3.4.5:8081"
 
 
 def test_kuaidaili_provider_records_success(

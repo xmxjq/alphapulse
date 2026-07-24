@@ -31,6 +31,7 @@ low_watermark = 2
 lease_ttl_seconds = 600
 cooldown_seconds = 600
 acquire_timeout_seconds = 20
+failure_threshold = 3
 
 [sources.guba.browser]
 enabled = false
@@ -38,7 +39,25 @@ enabled = false
 
 The provider overrides the `num` parameter in the saved URL with `batch_size`,
 accepts both text and JSON API responses, rotates cached proxies round-robin,
-and benches proxies after blocked, truncated, or failed requests.
+and benches proxies immediately after explicit blocks or proxy setup failures.
+Transient transport failures keep using the same proxy until
+`failure_threshold` consecutive failures; any success resets that streak.
+
+For a package billed per extracted IP with a stated 5-10 minute lifetime, use
+one IP at a time and retire it conservatively before the minimum lifetime:
+
+```toml
+[crawl.kuaidaili]
+batch_size = 1
+low_watermark = 0
+lease_ttl_seconds = 240
+cooldown_seconds = 300
+failure_threshold = 3
+
+[sources.guba]
+request_interval_min_seconds = 4.0
+request_interval_max_seconds = 8.0
+```
 
 `fail_open = false` is required for guba. If extraction fails or every cached
 proxy is unavailable, the request fails without falling back to the worker's
