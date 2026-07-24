@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from typing import Any
 
@@ -12,6 +13,7 @@ from alphapulse.sources.guba.parser import extract_embedded_json
 logger = logging.getLogger(__name__)
 
 POST_MARKER = "var post_article"
+BLOCKED_RESOURCE_TYPES = {"font", "image", "media"}
 READY_EXPRESSION = """
 () => (
     typeof window.post_article === "object"
@@ -32,10 +34,12 @@ class GubaBrowserClient:
         self._playwright: Any | None = None
         self._browser: Any | None = None
         self._page: Any | None = None
+        self._last_request_finished_at: float | None = None
 
     def get(self, url: str) -> GubaHttpResult:
         started = time.monotonic()
         try:
+            self._wait_for_request_slot()
             page = self._ensure_page()
             response = page.goto(
                 url,
@@ -86,6 +90,8 @@ class GubaBrowserClient:
                 duration_ms=int((time.monotonic() - started) * 1000),
                 error_message=str(exc),
             )
+        finally:
+            self._last_request_finished_at = time.monotonic()
 
     def _ensure_page(self) -> Any:
         if self._page is not None and not self._page.is_closed():
@@ -102,10 +108,29 @@ class GubaBrowserClient:
         if not contexts:
             raise RuntimeError("The guba browser has no persistent context")
         self._page = contexts[0].new_page()
+        self._page.route("**/*", self._route_request)
         self._page.set_default_navigation_timeout(
             self.settings.navigation_timeout_seconds * 1000
         )
         return self._page
+
+    def _wait_for_request_slot(self) -> None:
+        if self._last_request_finished_at is None:
+            return
+        interval = random.uniform(
+            self.settings.request_interval_min_seconds,
+            self.settings.request_interval_max_seconds,
+        )
+        remaining = interval - (time.monotonic() - self._last_request_finished_at)
+        if remaining > 0:
+            time.sleep(remaining)
+
+    @staticmethod
+    def _route_request(route: Any) -> None:
+        if route.request.resource_type in BLOCKED_RESOURCE_TYPES:
+            route.abort()
+            return
+        route.continue_()
 
     def _wait_until_resolved(self, page: Any) -> None:
         from patchright.sync_api import TimeoutError as PlaywrightTimeoutError

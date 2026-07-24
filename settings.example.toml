@@ -146,6 +146,8 @@ hot_boards_per_section = 12
 request_interval_min_seconds = 2.0
 request_interval_max_seconds = 6.0
 max_retries = 3
+# Stop all guba work after a blocked response and retry after this cooldown.
+block_cooldown_seconds = 21600
 # user_agent = "Mozilla/5.0 ..."  # defaults to a desktop browser UA
 
 [sources.guba.cookies]
@@ -159,6 +161,10 @@ enabled = false
 cdp_url = "http://guba_browser:9223"
 navigation_timeout_seconds = 60
 settle_timeout_seconds = 15
+# Full browser navigations are much heavier than HTTP/API requests.
+request_interval_min_seconds = 30.0
+request_interval_max_seconds = 90.0
+max_posts_per_cycle = 40
 
 [sources.tgb]
 # 淘股吧 (tgb.cn). Boards are seeded automatically by the `tgb_hot_boards`

@@ -182,6 +182,18 @@ class GubaBrowserSettings(BaseModel):
     cdp_url: str = "http://guba_browser:9223"
     navigation_timeout_seconds: int = Field(default=60, ge=1)
     settle_timeout_seconds: int = Field(default=15, ge=1)
+    request_interval_min_seconds: float = Field(default=30.0, ge=0.0)
+    request_interval_max_seconds: float = Field(default=90.0, ge=0.0)
+    max_posts_per_cycle: int = Field(default=40, ge=1)
+
+    @model_validator(mode="after")
+    def validate_request_interval(self) -> "GubaBrowserSettings":
+        if self.request_interval_max_seconds < self.request_interval_min_seconds:
+            raise ValueError(
+                "sources.guba.browser.request_interval_max_seconds must be >= "
+                "request_interval_min_seconds"
+            )
+        return self
 
 
 class GubaSettings(BaseModel):
@@ -220,6 +232,7 @@ class GubaSettings(BaseModel):
     request_interval_min_seconds: float = Field(default=2.0, ge=0.0)
     request_interval_max_seconds: float = Field(default=6.0, ge=0.0)
     max_retries: int = Field(default=3, ge=1)
+    block_cooldown_seconds: int = Field(default=21600, ge=1)
     user_agent: str | None = None
     cookies: dict[str, str] = Field(default_factory=dict)
     browser: GubaBrowserSettings = Field(default_factory=GubaBrowserSettings)

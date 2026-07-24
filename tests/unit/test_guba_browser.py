@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import alphapulse.sources.guba.browser as browser_module
 from alphapulse.runtime.config import GubaBrowserSettings
 from alphapulse.sources.guba.browser import GubaBrowserClient
 
@@ -40,6 +41,8 @@ class StubBrowserClient(GubaBrowserClient):
                 enabled=True,
                 navigation_timeout_seconds=1,
                 settle_timeout_seconds=1,
+                request_interval_min_seconds=0,
+                request_interval_max_seconds=0,
             )
         )
         self.test_page = page
@@ -85,3 +88,52 @@ def test_browser_client_accepts_embedded_payload_when_global_is_unavailable() ->
 
     assert not result.blocked
     assert result.block_kind is None
+
+
+def test_browser_client_waits_for_configured_request_slot(monkeypatch) -> None:
+    client = GubaBrowserClient(
+        GubaBrowserSettings(
+            request_interval_min_seconds=30,
+            request_interval_max_seconds=90,
+        )
+    )
+    client._last_request_finished_at = 100.0
+    sleeps: list[float] = []
+    monkeypatch.setattr(browser_module.time, "monotonic", lambda: 110.0)
+    monkeypatch.setattr(browser_module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(browser_module.random, "uniform", lambda minimum, maximum: 30.0)
+
+    client._wait_for_request_slot()
+
+    assert sleeps == [20.0]
+
+
+class FakeRouteRequest:
+    def __init__(self, resource_type: str) -> None:
+        self.resource_type = resource_type
+
+
+class FakeRoute:
+    def __init__(self, resource_type: str) -> None:
+        self.request = FakeRouteRequest(resource_type)
+        self.aborted = False
+        self.continued = False
+
+    def abort(self) -> None:
+        self.aborted = True
+
+    def continue_(self) -> None:
+        self.continued = True
+
+
+def test_browser_client_blocks_heavy_resources() -> None:
+    image_route = FakeRoute("image")
+    script_route = FakeRoute("script")
+
+    GubaBrowserClient._route_request(image_route)
+    GubaBrowserClient._route_request(script_route)
+
+    assert image_route.aborted
+    assert not image_route.continued
+    assert script_route.continued
+    assert not script_route.aborted

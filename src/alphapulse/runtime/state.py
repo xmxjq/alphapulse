@@ -214,6 +214,13 @@ class StateStore:
                 (datetime.now(UTC).isoformat(), status, url),
             )
 
+    def release_url_claim(self, url: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE url_state SET last_fetched_at = NULL, last_status = NULL WHERE url = ?",
+                (url,),
+            )
+
     def should_refresh_comments(self, source: str, source_entity_id: str, min_age: timedelta) -> bool:
         with self.connection() as conn:
             row = conn.execute(

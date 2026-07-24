@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -50,6 +51,8 @@ class GubaAdapter:
         if self.browser_client is None and settings.browser.enabled:
             self.browser_client = GubaBrowserClient(settings.browser)
         self.raw_store = raw_store
+        self._blocked_until = 0.0
+        self._blocked_kind: str | None = None
 
     def discover(self, seed: SeedDefinition) -> list[CrawlTask]:
         tasks: list[CrawlTask] = []
@@ -83,6 +86,9 @@ class GubaAdapter:
         return tasks
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
+        if self.is_circuit_open():
+            return FetchOutcome(blocked=True)
+
         # Both page types embed a data payload on a healthy 200: list pages
         # carry `var article_list=`, post pages `var post_article=`. Its
         # absence on a 200 marks a WAF/soft-block page, so hand the marker to
@@ -103,6 +109,7 @@ class GubaAdapter:
             return outcome
 
         if response.blocked:
+            self._trip_circuit(response.block_kind)
             self._save_raw(response, task.kind, requested_url=str(task.url))
             outcome = FetchOutcome(blocked=True, status_code=response.status_code)
             outcome.errors.append(f"Blocked ({response.block_kind}) from {task.url}")
@@ -297,6 +304,9 @@ class GubaAdapter:
         return outcome
 
     def refresh_comments(self, item_ref: ItemReference) -> list[NormalizedComment]:
+        if self.is_circuit_open():
+            return []
+
         post_id = item_ref.source_entity_id
         if not post_id:
             return []
@@ -315,6 +325,8 @@ class GubaAdapter:
             response = self.client.post_replies(post_id=post_id, board_code=board_code, page=page)
             meta = {"post_id": post_id, "board_code": board_code, "page": page}
             if response.status_code == 0 or response.blocked:
+                if response.blocked:
+                    self._trip_circuit(response.block_kind)
                 self._save_raw(
                     response,
                     "refresh_comments",
@@ -362,6 +374,27 @@ class GubaAdapter:
                 break
             page += 1
         return comments
+
+    def is_circuit_open(self) -> bool:
+        if time.monotonic() >= self._blocked_until:
+            self._blocked_until = 0.0
+            self._blocked_kind = None
+            return False
+        return True
+
+    def _trip_circuit(self, block_kind: str | None) -> None:
+        self._blocked_until = time.monotonic() + self.settings.block_cooldown_seconds
+        self._blocked_kind = block_kind or "blocked"
+        logger.warning(
+            "Guba circuit opened after blocked response",
+            extra={
+                "event": "guba_circuit_open",
+                "extra_data": {
+                    "block_kind": self._blocked_kind,
+                    "cooldown_seconds": self.settings.block_cooldown_seconds,
+                },
+            },
+        )
 
     def comment_task_for_post(self, post: NormalizedPost, seed_name: str) -> CrawlTask:
         ref = extract_post_ref(str(post.canonical_url))

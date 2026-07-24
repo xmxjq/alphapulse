@@ -254,6 +254,29 @@ def test_blocked_response_marks_outcome(tmp_path) -> None:
     assert rows[0]["block_kind"] == "http_403"
 
 
+def test_blocked_response_opens_circuit_without_more_requests(tmp_path) -> None:
+    first_url = f"{BASE}/list,600519.html"
+    second_url = f"{BASE}/list,600000.html"
+    blocked = GubaHttpResult(
+        url=first_url,
+        status_code=200,
+        text="<html>verify</html>",
+        blocked=True,
+        block_kind="captcha",
+    )
+    client = FakeGubaClient({first_url: blocked})
+    adapter = _adapter(tmp_path, client, block_cooldown_seconds=3600)
+
+    first = adapter.fetch_item(_discover_task(first_url, "600519"))
+    second = adapter.fetch_item(_discover_task(second_url, "600000"))
+
+    assert first.blocked
+    assert second.blocked
+    assert second.errors == []
+    assert client.get_calls == [first_url]
+    assert adapter.is_circuit_open()
+
+
 def test_post_detail_parses_and_records_mod_count(tmp_path) -> None:
     url = f"{BASE}/news,600519,1743987733.html"
     client = FakeGubaClient({url: _ok(url, _read("post_detail.html"))})
@@ -383,6 +406,30 @@ def test_refresh_comments_stops_when_page_not_full(tmp_path) -> None:
     comments = adapter.refresh_comments(item_ref)
     assert len(comments) == 3
     assert client.reply_calls == [("1743300821", "zssh000001", 1)]
+
+
+def test_blocked_comment_refresh_opens_circuit(tmp_path) -> None:
+    blocked = GubaHttpResult(
+        url=f"{BASE}/interface/GetData.aspx",
+        status_code=200,
+        text="<html>verify</html>",
+        blocked=True,
+        block_kind="captcha",
+    )
+    client = FakeGubaClient(reply_pages={1: blocked})
+    adapter = _adapter(tmp_path, client, block_cooldown_seconds=3600)
+    item_ref = ItemReference(
+        source="guba",
+        source_entity_id="1743987733",
+        canonical_url=f"{BASE}/news,600519,1743987733.html",
+        metadata={"board_code": "600519"},
+    )
+
+    comments = adapter.refresh_comments(item_ref)
+
+    assert comments == []
+    assert client.reply_calls == [("1743987733", "600519", 1)]
+    assert adapter.is_circuit_open()
 
 
 def test_comment_task_matches_list_emitted_url(tmp_path) -> None:

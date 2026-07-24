@@ -40,8 +40,13 @@ nginx -c /etc/nginx/nginx-cdp.conf
 exec "$CHROMIUM_BIN" \
     --no-sandbox \
     --disable-dev-shm-usage \
+    --disable-background-networking \
+    --disable-component-update \
+    --disable-default-apps \
     --disable-features=Translate \
+    --disable-sync \
     --lang=zh-CN \
+    --metrics-recording-only \
     --user-data-dir="$PROFILE_DIR" \
     --proxy-server="$PROXY_URL" \
     --remote-debugging-address=0.0.0.0 \

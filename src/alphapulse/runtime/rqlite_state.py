@@ -100,6 +100,17 @@ class RqliteStateStore:
             queued=False,
         )
 
+    def release_url_claim(self, url: str) -> None:
+        self.client.execute(
+            [
+                [
+                    "UPDATE url_state SET last_fetched_at = NULL, last_status = NULL WHERE url = ?",
+                    url,
+                ]
+            ],
+            queued=False,
+        )
+
     def should_refresh_comments(
         self, source: str, source_entity_id: str, min_age: timedelta
     ) -> bool:

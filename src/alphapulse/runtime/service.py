@@ -196,8 +196,48 @@ class AlphaPulseService:
                 },
             )
 
+            blocked_sources: set[str] = set()
+            guba_browser_posts_attempted = 0
             while queue:
                 task = queue.pop()
+                if task.source in blocked_sources or self._source_circuit_open(task.source):
+                    blocked_sources.add(task.source)
+                    stats.skipped_tasks += 1
+                    logger.debug(
+                        "Task skipped (source circuit open)",
+                        extra={
+                            "event": "task_skipped",
+                            "extra_data": {
+                                "source": task.source,
+                                "kind": task.kind,
+                                "url": str(task.url),
+                                "reason": "source_circuit_open",
+                            },
+                        },
+                    )
+                    continue
+
+                if (
+                    self._is_guba_browser_post(task)
+                    and guba_browser_posts_attempted
+                    >= self.settings.sources.guba.browser.max_posts_per_cycle
+                ):
+                    stats.skipped_tasks += 1
+                    logger.debug(
+                        "Task skipped (browser post cycle limit)",
+                        extra={
+                            "event": "task_skipped",
+                            "extra_data": {
+                                "source": task.source,
+                                "kind": task.kind,
+                                "url": str(task.url),
+                                "reason": "browser_post_cycle_limit",
+                                "limit": self.settings.sources.guba.browser.max_posts_per_cycle,
+                            },
+                        },
+                    )
+                    continue
+
                 if not self.state.try_claim_url(
                     url=str(task.url),
                     source=task.source,
@@ -219,6 +259,9 @@ class AlphaPulseService:
                     )
                     continue
 
+                if self._is_guba_browser_post(task):
+                    guba_browser_posts_attempted += 1
+
                 if task.kind == "refresh_comments":
                     adapter = self._adapter_for_task(task)
                     comments = adapter.refresh_comments(
@@ -229,6 +272,22 @@ class AlphaPulseService:
                             metadata=task.metadata,
                         )
                     )
+                    if self._source_circuit_open(task.source):
+                        blocked_sources.add(task.source)
+                        stats.blocked_responses += 1
+                        self.state.release_url_claim(str(task.url))
+                        logger.warning(
+                            "Source circuit opened during comment refresh",
+                            extra={
+                                "event": "source_circuit_open",
+                                "extra_data": {
+                                    "source": task.source,
+                                    "kind": task.kind,
+                                    "url": str(task.url),
+                                },
+                            },
+                        )
+                        continue
                     if comments:
                         self.store.upsert_comments(comments)
                         stats.comments_written += len(comments)
@@ -250,7 +309,24 @@ class AlphaPulseService:
                 adapter = self._adapter_for_task(task)
                 outcome = adapter.fetch_item(task)
                 self._apply_outcome(task, outcome, queue, stats)
-                self.state.mark_url_fetched(str(task.url), outcome.status_code)
+                if outcome.blocked:
+                    blocked_sources.add(task.source)
+                    self.state.release_url_claim(str(task.url))
+                    logger.warning(
+                        "Source stopped for the rest of the cycle after blocked response",
+                        extra={
+                            "event": "source_circuit_open",
+                            "extra_data": {
+                                "source": task.source,
+                                "kind": task.kind,
+                                "url": str(task.url),
+                            },
+                        },
+                    )
+                elif outcome.status_code is None:
+                    self.state.release_url_claim(str(task.url))
+                else:
+                    self.state.mark_url_fetched(str(task.url), outcome.status_code)
 
             duration = (datetime.now(UTC) - started_at).total_seconds()
             self.store.insert_crawl_run(
@@ -372,6 +448,18 @@ class AlphaPulseService:
         if task.kind == "refresh_comments":
             return timedelta(minutes=self.settings.crawl.comment_refresh_minutes)
         return timedelta(minutes=self.settings.crawl.post_recrawl_minutes)
+
+    def _is_guba_browser_post(self, task: CrawlTask) -> bool:
+        return (
+            task.source == "guba"
+            and task.kind == "fetch_post"
+            and self.settings.sources.guba.browser.enabled
+        )
+
+    def _source_circuit_open(self, source_name: str) -> bool:
+        adapter = self._adapter_for_source(source_name)
+        check = getattr(adapter, "is_circuit_open", None)
+        return bool(check()) if callable(check) else False
 
     def _select_seeds(self, seed_set_name: str | None) -> list[SeedDefinition]:
         assert self.seed_discovery is not None

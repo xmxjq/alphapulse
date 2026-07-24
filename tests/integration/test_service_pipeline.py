@@ -62,7 +62,11 @@ class FailingPostClient:
 
 
 class BlockedClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
     def fetch(self, url: str) -> FetchResult:
+        self.calls.append(url)
         return FetchResult(url=url, status_code=403, text="captcha", headers={}, proxy_url="http://1.2.3.4:8080")
 
 
@@ -269,20 +273,32 @@ generators = ["manual-post"]
 [[generators]]
 name = "manual-post"
 type = "manual"
-post_urls = ["https://xueqiu.com/1234567890/987654321"]
+post_urls = [
+    "https://xueqiu.com/1234567890/987654321",
+    "https://xueqiu.com/1234567890/987654322",
+]
 """.strip()
     )
 
     store = FakeStore()
     service = AlphaPulseService(settings, store=store)
-    _xueqiu_adapter(service).client = BlockedClient()
+    client = BlockedClient()
+    _xueqiu_adapter(service).client = client
 
     stats = service.run_cycle(seed_set_name="cn-core")
 
     assert stats.blocked_responses == 1
     assert stats.errors == 1
+    assert stats.skipped_tasks >= 1
+    assert client.calls == ["https://xueqiu.com/1234567890/987654321"]
     assert store.errors[0][2] == "Blocked response from https://xueqiu.com/1234567890/987654321"
     assert store.errors[0][5] == "blocked"
+    with service.state.connection() as conn:
+        row = conn.execute(
+            "SELECT last_fetched_at FROM url_state WHERE url = ?",
+            ("https://xueqiu.com/1234567890/987654321",),
+        ).fetchone()
+    assert row["last_fetched_at"] is None
 
 
 def test_service_stops_comment_refresh_on_fetch_failure(tmp_path: Path) -> None:
@@ -374,6 +390,23 @@ class FakeGubaClient:
         )
 
 
+class FakeGubaBrowserClient:
+    def __init__(self, fixtures: Path) -> None:
+        self.fixtures = fixtures
+        self.get_calls: list[str] = []
+
+    def get(self, url: str):
+        from alphapulse.sources.guba.api import GubaHttpResult
+
+        self.get_calls.append(url)
+        return GubaHttpResult(
+            url=url,
+            status_code=200,
+            text=(self.fixtures / "post_detail.html").read_text(encoding="utf-8"),
+            duration_ms=10,
+        )
+
+
 def test_service_runs_guba_cycle(tmp_path: Path) -> None:
     settings = load_settings(Path("settings.example.toml"))
     settings.crawl.state_path = tmp_path / "state.db"
@@ -421,3 +454,42 @@ guba_board_codes = ["600519"]
     second = service.run_cycle(seed_set_name="guba-core")
     assert second.posts_written == 0
     assert second.comments_written == 0
+
+
+def test_service_caps_browser_posts_per_cycle(tmp_path: Path) -> None:
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.xueqiu.enabled = False
+    settings.sources.bilibili.enabled = False
+    settings.sources.guba.enabled = True
+    settings.sources.guba.max_list_pages = 1
+    settings.sources.guba.day_scoped = False
+    settings.sources.guba.browser.enabled = True
+    settings.sources.guba.browser.max_posts_per_cycle = 2
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "guba-core"
+generators = ["manual-guba"]
+
+[[generators]]
+name = "manual-guba"
+type = "manual"
+guba_board_codes = ["600519"]
+""".strip()
+    )
+
+    fixtures = Path("tests/fixtures/guba")
+    store = FakeStore()
+    service = AlphaPulseService(settings, store=store)
+    service.sources["guba"].client = FakeGubaClient(fixtures)
+    browser_client = FakeGubaBrowserClient(fixtures)
+    service.sources["guba"].browser_client = browser_client
+
+    stats = service.run_cycle(seed_set_name="guba-core")
+
+    assert len(browser_client.get_calls) == 2
+    assert stats.posts_written == 2
+    assert stats.skipped_tasks >= 1

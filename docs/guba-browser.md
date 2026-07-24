@@ -34,11 +34,17 @@ without the slider challenge.
 Add this to `settings.toml`:
 
 ```toml
+[sources.guba]
+block_cooldown_seconds = 21600
+
 [sources.guba.browser]
 enabled = true
 cdp_url = "http://guba_browser:9223"
 navigation_timeout_seconds = 60
 settle_timeout_seconds = 15
+request_interval_min_seconds = 30
+request_interval_max_seconds = 90
+max_posts_per_cycle = 40
 ```
 
 Then restart the crawler:
@@ -51,5 +57,13 @@ Do not copy browser cookies into `settings.toml`. The authenticated state stays
 inside the persistent Chromium profile.
 
 When the browser returns a rendered captcha, the fetch is recorded as blocked.
-Reopen noVNC and complete any required interactive verification before resuming
-the crawler.
+The guba source then opens a cooldown circuit and stops the rest of that cycle,
+instead of navigating every queued post into the same captcha. Stop both
+network-active services while the exit cools down:
+
+```bash
+docker compose stop crawler guba_browser
+```
+
+After changing the proxy, start `guba_browser`, reopen noVNC, complete any
+required interactive verification, and test one post before starting `crawler`.
