@@ -365,7 +365,7 @@ def test_refresh_comments_paginates_and_flattens(tmp_path) -> None:
             2: _ok(getdata, json.dumps({"re": [], "count": 6})),
         }
     )
-    adapter = _adapter(tmp_path, client, reply_page_size=3)
+    adapter = _adapter(tmp_path, client, reply_page_size=3, max_reply_pages=2)
 
     item_ref = ItemReference(
         source="guba",
@@ -390,6 +390,28 @@ def test_refresh_comments_paginates_and_flattens(tmp_path) -> None:
     rows = _fetch_log_rows(adapter)
     assert all(row["method"] == "POST" for row in rows)
     assert len(rows) == 2
+
+
+def test_refresh_comments_defaults_to_first_page(tmp_path) -> None:
+    payload = {**json.loads(_read("replies.json")), "count": 60}
+    getdata = f"{BASE}/interface/GetData.aspx"
+    client = FakeGubaClient(
+        reply_pages={1: _ok(getdata, json.dumps(payload, ensure_ascii=False))}
+    )
+    adapter = _adapter(tmp_path, client, reply_page_size=3)
+
+    item_ref = ItemReference(
+        source="guba",
+        source_entity_id="1743300821",
+        canonical_url=f"{BASE}/news,zssh000001,1743300821.html",
+        metadata={"board_code": "zssh000001"},
+    )
+
+    comments = adapter.refresh_comments(item_ref)
+
+    assert len(comments) == 3
+    assert client.reply_calls == [("1743300821", "zssh000001", 1)]
+    assert len(_fetch_log_rows(adapter)) == 1
 
 
 def test_refresh_comments_stops_when_page_not_full(tmp_path) -> None:

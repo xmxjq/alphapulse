@@ -9,7 +9,7 @@ This guide shows how to enable and run the Eastmoney Guba (东方财富股吧) c
   (see [Day Crawl & Daily Report](#day-crawl--daily-report))
 - Stock boards (`600519`) and index boards (`zssh000001`) via `guba_board_codes` seeds
 - Direct post URLs (`https://guba.eastmoney.com/news,600519,<post_id>.html`) via `post_urls` seeds
-- Post lists, post details, and full reply threads (nested child replies flattened with parent links)
+- Post lists, post details, and the newest reply page by default (nested child replies flattened with parent links)
 - Original timestamps preserved: Guba's Beijing wall-clock times are converted to UTC
 - Duplicate posts, edits, deletions, and resurfaced posts (see mechanics below)
 - Raw-response archival plus a per-fetch log for debugging and parser reprocessing
@@ -31,7 +31,9 @@ This guide shows how to enable and run the Eastmoney Guba (东方财富股吧) c
   the run records `Blocked (soft_block)` — switch egress (see
   `docs/xray-proxy.md`) or wait out the block.
 - **Replies** come from a form-encoded POST to `/interface/GetData.aspx`
-  (`path=reply/api/Reply/ArticleNewReplyList`), returning plain JSON.
+  (`path=reply/api/Reply/ArticleNewReplyList`), returning plain JSON. Daily
+  crawling requests page 1 only by default; raise `max_reply_pages` only for
+  an explicit historical backfill that needs complete reply threads.
 - **Resurfacing**: posts bumped by new replies reappear at the top of list
   pages (sorted by `post_last_time`). The adapter re-emits a stable-URL
   `refresh_comments` task for every listed post with comments; the state
@@ -51,7 +53,7 @@ enabled = true
 base_url = "https://guba.eastmoney.com"
 max_list_pages = 3            # per-board page cap; keep modest so cycles finish daily
 reply_page_size = 30
-max_reply_pages = 40
+max_reply_pages = 1            # newest page only; raise for explicit backfills
 list_recrawl_minutes = 30
 day_scoped = true             # crawl the current day's posts (set false for classic)
 ranking_timezone = "Asia/Shanghai"

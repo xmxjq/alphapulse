@@ -230,7 +230,7 @@ class GubaSettings(BaseModel):
     # proxy throughput.
     max_list_pages: int = Field(default=3, ge=1)
     reply_page_size: int = Field(default=30, ge=1, le=100)
-    max_reply_pages: int = Field(default=40, ge=1)
+    max_reply_pages: int = Field(default=1, ge=1)
     list_recrawl_minutes: int = Field(default=30, ge=1)
     # Day-grouped, homepage-ranking-driven crawling.
     day_scoped: bool = True
