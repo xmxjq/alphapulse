@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import http.client
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -550,6 +551,73 @@ def test_soft_block_recovers_on_retry(monkeypatch) -> None:
     assert not result.blocked
     assert result.block_kind is None
     assert len(calls) == 2
+
+
+def test_incomplete_proxy_response_recovers_on_retry(monkeypatch) -> None:
+    from alphapulse.sources.guba import api as guba_api
+
+    url = f"{BASE}/list,600519.html"
+    good = "<html><script>var article_list={\"re\":[]};</script></html>"
+    settings = GubaSettings(
+        enabled=True,
+        max_retries=2,
+        request_interval_min_seconds=0,
+        request_interval_max_seconds=0,
+    )
+    client = guba_api.GubaClient(settings, CrawlSettings())
+    calls = 0
+
+    def fake_dispatch(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        if calls == 1:
+            raise http.client.IncompleteRead(b"partial", 100)
+        return 200, good, url
+
+    monkeypatch.setattr(client, "_dispatch", fake_dispatch)
+    monkeypatch.setattr(guba_api.time, "sleep", lambda _: None)
+
+    result = client.get(url, expect_marker="var article_list")
+
+    assert not result.blocked
+    assert result.status_code == 200
+    assert calls == 2
+
+
+def test_guba_client_does_not_fail_open_without_proxy(monkeypatch, tmp_path) -> None:
+    from alphapulse.sources.guba import api as guba_api
+
+    api_file = tmp_path / "kuaidaili-api-url.txt"
+    api_file.write_text("https://dps.kdlapi.com/api/getdps/?secret_id=test")
+    crawl = CrawlSettings.model_validate(
+        {
+            "proxy": {
+                "enabled": True,
+                "provider": "kuaidaili",
+                "sources": ["guba"],
+                "fail_open": False,
+            },
+            "kuaidaili": {"api_url_file": str(api_file)},
+        }
+    )
+    client = guba_api.GubaClient(
+        GubaSettings(
+            enabled=True,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        crawl,
+    )
+    monkeypatch.setattr(client.proxy_provider, "acquire", lambda: None)
+    dispatched: list[str] = []
+    monkeypatch.setattr(client, "_dispatch", lambda *args: dispatched.append("called"))
+
+    result = client.get(f"{BASE}/list,600519.html", expect_marker="var article_list")
+
+    assert result.status_code == 0
+    assert result.error_message == "No proxy available from proxy provider"
+    assert dispatched == []
 
 
 def test_marker_check_skips_error_redirects(monkeypatch) -> None:

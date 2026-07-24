@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import http.client
 import logging
 import random
 import time
@@ -120,6 +121,13 @@ class GubaClient:
                         )
                 if lease is not None:
                     proxy_url = lease.proxy_url
+                elif not self.crawl_settings.proxy.fail_open:
+                    return GubaHttpResult(
+                        url=url,
+                        status_code=0,
+                        text="",
+                        error_message="No proxy available from proxy provider",
+                    )
 
             started = time.monotonic()
             try:
@@ -158,7 +166,7 @@ class GubaClient:
                 if blocked and attempt + 1 < attempts:
                     continue
                 return last_result
-            except (error.URLError, TimeoutError, OSError) as exc:
+            except (error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 last_result = GubaHttpResult(
                     url=url,

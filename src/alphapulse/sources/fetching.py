@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from alphapulse.runtime.config import (
     CrawlSettings,
     CrawlProxyPoolSettings,
     CrawlStaticProxySettings,
+    CrawlKuaidailiSettings,
     FetchMode,
     XueqiuSettings,
 )
@@ -189,6 +191,133 @@ class StaticListProxyProvider:
         )
 
 
+class KuaidailiProxyProvider:
+    """Caches short-lived private proxies extracted from Kuaidaili GetDPS."""
+
+    provider_name = "kuaidaili"
+
+    def __init__(self, settings: CrawlKuaidailiSettings) -> None:
+        self.settings = settings
+        self._urls: list[str] = []
+        self._expires_at: dict[str, float] = {}
+        self._benched_until: dict[str, float] = {}
+        self._next_index = 0
+        self._lock = threading.Lock()
+
+    def acquire(self) -> ProxyLease | None:
+        with self._lock:
+            now = time.monotonic()
+            self._prune_expired(now)
+            if len(self._available(now)) <= self.settings.low_watermark:
+                self._refresh(now)
+            available = set(self._available(now))
+            if not available:
+                return None
+            for _ in range(len(self._urls)):
+                url = self._urls[self._next_index % len(self._urls)]
+                self._next_index += 1
+                if url in available:
+                    return self._lease(url)
+            return None
+
+    def report_bad(self, lease: ProxyLease, reason: str) -> None:
+        del reason
+        with self._lock:
+            self._benched_until[lease.proxy_url] = (
+                time.monotonic() + self.settings.cooldown_seconds
+            )
+
+    def _refresh(self, now: float) -> None:
+        api_url = self.settings.api_url_file.read_text(encoding="utf-8").strip()
+        if not api_url.startswith(("http://", "https://")):
+            raise RuntimeError("Kuaidaili API URL file is empty or invalid")
+        parts = parse.urlsplit(api_url)
+        query = parse.parse_qsl(parts.query, keep_blank_values=True)
+        query = [
+            (key, str(self.settings.batch_size) if key == "num" else value)
+            for key, value in query
+        ]
+        if not any(key == "num" for key, _ in query):
+            query.append(("num", str(self.settings.batch_size)))
+        request_url = parse.urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, parse.urlencode(query), parts.fragment)
+        )
+        with request.urlopen(
+            request_url,
+            timeout=self.settings.acquire_timeout_seconds,
+        ) as response:
+            payload = response.read().decode("utf-8", errors="replace")
+        proxies = self._parse_proxies(payload)
+        if not proxies:
+            raise RuntimeError("Kuaidaili API returned no proxy addresses")
+        expires_at = now + self.settings.lease_ttl_seconds
+        for proxy in proxies:
+            url = _proxy_url(proxy)
+            if url not in self._urls:
+                self._urls.append(url)
+            self._expires_at[url] = expires_at
+
+    def _available(self, now: float) -> list[str]:
+        return [
+            url
+            for url in self._urls
+            if self._expires_at.get(url, 0.0) > now
+            and self._benched_until.get(url, 0.0) <= now
+        ]
+
+    def _prune_expired(self, now: float) -> None:
+        self._urls = [
+            url for url in self._urls if self._expires_at.get(url, 0.0) > now
+        ]
+        live = set(self._urls)
+        self._expires_at = {
+            url: expires_at for url, expires_at in self._expires_at.items() if url in live
+        }
+        self._benched_until = {
+            url: until for url, until in self._benched_until.items() if url in live
+        }
+        if self._urls:
+            self._next_index %= len(self._urls)
+        else:
+            self._next_index = 0
+
+    @staticmethod
+    def _parse_proxies(payload: str) -> list[str]:
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            candidates = re.split(r"[\s,;]+", payload)
+        else:
+            if isinstance(parsed, dict) and parsed.get("code") not in (None, 0):
+                raise RuntimeError(
+                    f"Kuaidaili API error code {parsed.get('code')}"
+                )
+            data = parsed.get("data") if isinstance(parsed, dict) else None
+            entries = data.get("proxy_list") if isinstance(data, dict) else None
+            candidates = list(entries or [])
+
+        proxies: list[str] = []
+        for entry in candidates:
+            if isinstance(entry, dict):
+                value = entry.get("proxy") or entry.get("server") or entry.get("ip_port")
+                if value is None and (entry.get("ip") or entry.get("host")) and entry.get("port"):
+                    value = f"{entry.get('ip') or entry.get('host')}:{entry['port']}"
+                entry = value
+            if entry is None:
+                continue
+            rendered = str(entry).strip()
+            if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}", rendered):
+                proxies.append(rendered)
+        return list(dict.fromkeys(proxies))
+
+    def _lease(self, url: str) -> ProxyLease:
+        return ProxyLease(
+            proxy_url=url,
+            delete_key=_proxy_delete_key(url),
+            provider_name=self.provider_name,
+        )
+
+
 class ScraplingClient:
     def __init__(self, source_settings: XueqiuSettings, crawl_settings: CrawlSettings) -> None:
         self.source_settings = source_settings
@@ -320,4 +449,6 @@ def _build_proxy_provider(
         return ProxyPoolProvider(crawl_settings.proxy_pool)
     if proxy.provider == "static_list":
         return StaticListProxyProvider(crawl_settings.static_proxies)
+    if proxy.provider == "kuaidaili":
+        return KuaidailiProxyProvider(crawl_settings.kuaidaili)
     return None

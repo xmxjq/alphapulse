@@ -5,6 +5,7 @@ import pytest
 
 from alphapulse.runtime.config import CrawlSettings, XueqiuSettings
 from alphapulse.sources.fetching import (
+    KuaidailiProxyProvider,
     ProxyLease,
     ProxyPoolProvider,
     ScraplingClient,
@@ -163,6 +164,69 @@ def test_proxy_pool_provider_reports_bad_proxy(monkeypatch: pytest.MonkeyPatch) 
     )
 
     assert seen == [("http://proxy_pool:5010/delete/?proxy=1.2.3.4%3A8080", 3)]
+
+
+def _kuaidaili_settings(tmp_path, **overrides) -> CrawlSettings:
+    api_file = tmp_path / "kuaidaili-api-url.txt"
+    api_file.write_text(
+        "https://dps.kdlapi.com/api/getdps/?secret_id=test&signature=hidden&num=1"
+    )
+    payload = {
+        "proxy": {"enabled": True, "provider": "kuaidaili", "sources": ["guba"]},
+        "kuaidaili": {
+            "api_url_file": str(api_file),
+            "batch_size": 2,
+            "low_watermark": 0,
+            "lease_ttl_seconds": 600,
+            "cooldown_seconds": 60,
+        },
+    }
+    payload["kuaidaili"].update(overrides)
+    return CrawlSettings.model_validate(payload)
+
+
+def test_kuaidaili_provider_extracts_and_rotates_text_proxies(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(_kuaidaili_settings(tmp_path).kuaidaili)
+    requested: list[str] = []
+
+    def fake_urlopen(url: str, timeout: int):
+        requested.append(url)
+        assert timeout == 20
+        return DummyUrlopenResponse("1.2.3.4:8080\n2.3.4.5:8081")
+
+    monkeypatch.setattr("alphapulse.sources.fetching.request.urlopen", fake_urlopen)
+
+    first = provider.acquire()
+    second = provider.acquire()
+
+    assert first == ProxyLease(
+        proxy_url="http://1.2.3.4:8080",
+        delete_key="1.2.3.4:8080",
+        provider_name="kuaidaili",
+    )
+    assert second.proxy_url == "http://2.3.4.5:8081"
+    assert len(requested) == 1
+    assert "num=2" in requested[0]
+
+
+def test_kuaidaili_provider_benches_bad_proxy(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(_kuaidaili_settings(tmp_path).kuaidaili)
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: DummyUrlopenResponse("1.2.3.4:8080\n2.3.4.5:8081"),
+    )
+
+    first = provider.acquire()
+    provider.report_bad(first, "incomplete response")
+    second = provider.acquire()
+
+    assert second.proxy_url == "http://2.3.4.5:8081"
 
 
 @pytest.mark.parametrize(
@@ -335,6 +399,16 @@ def test_build_proxy_provider_scopes_to_configured_sources() -> None:
     assert isinstance(_build_proxy_provider(settings, source="guba"), StaticListProxyProvider)
     assert _build_proxy_provider(settings, source="bilibili") is None
     assert isinstance(_build_proxy_provider(settings), StaticListProxyProvider)
+
+
+def test_build_kuaidaili_provider_scopes_to_guba(tmp_path) -> None:
+    settings = _kuaidaili_settings(tmp_path)
+
+    assert isinstance(
+        _build_proxy_provider(settings, source="guba"),
+        KuaidailiProxyProvider,
+    )
+    assert _build_proxy_provider(settings, source="bilibili") is None
 
 
 def test_static_list_provider_requires_urls_when_selected() -> None:

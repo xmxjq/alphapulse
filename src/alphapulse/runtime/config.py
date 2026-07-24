@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 FetchMode = Literal["static", "dynamic", "stealth"]
 StorageBackend = Literal["clickhouse", "rqlite", "mongo"]
 StateBackend = Literal["sqlite", "rqlite"]
-ProxyProviderType = Literal["proxy_pool", "static_list"]
+ProxyProviderType = Literal["proxy_pool", "static_list", "kuaidaili"]
 SpaceDiscoveryBackend = Literal["api", "cli"]
 
 
@@ -73,6 +73,9 @@ class CrawlSettings(BaseModel):
     static_proxies: "CrawlStaticProxySettings" = Field(
         default_factory=lambda: CrawlStaticProxySettings()
     )
+    kuaidaili: "CrawlKuaidailiSettings" = Field(
+        default_factory=lambda: CrawlKuaidailiSettings()
+    )
     raw_store: "RawStoreSettings" = Field(default_factory=lambda: RawStoreSettings())
 
     @model_validator(mode="after")
@@ -126,6 +129,23 @@ class CrawlStaticProxySettings(BaseModel):
     # How long a proxy sits out after a blocked/failed request before it
     # re-enters the rotation.
     cooldown_seconds: int = Field(default=300, ge=0)
+
+
+class CrawlKuaidailiSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    api_url_file: Path = Path(".runtime/kuaidaili-api-url.txt")
+    batch_size: int = Field(default=5, ge=1, le=100)
+    low_watermark: int = Field(default=2, ge=0, le=99)
+    lease_ttl_seconds: int = Field(default=600, ge=30)
+    cooldown_seconds: int = Field(default=600, ge=0)
+    acquire_timeout_seconds: int = Field(default=20, ge=1)
+
+    @model_validator(mode="after")
+    def validate_low_watermark(self) -> "CrawlKuaidailiSettings":
+        if self.low_watermark >= self.batch_size:
+            raise ValueError("crawl.kuaidaili.low_watermark must be less than batch_size")
+        return self
 
 
 class RawStoreSettings(BaseModel):
@@ -327,6 +347,9 @@ def load_settings(path: Path) -> Settings:
     config_dir = path.parent.resolve()
     settings.crawl.state_path = _resolve_path(config_dir, settings.crawl.state_path)
     settings.crawl.raw_store.root_path = _resolve_path(config_dir, settings.crawl.raw_store.root_path)
+    settings.crawl.kuaidaili.api_url_file = _resolve_path(
+        config_dir, settings.crawl.kuaidaili.api_url_file
+    )
     settings.sources.xueqiu.seed_catalog_path = _resolve_path(config_dir, settings.sources.xueqiu.seed_catalog_path)
     if settings.crawl.state_backend == "sqlite":
         settings.crawl.state_path.parent.mkdir(parents=True, exist_ok=True)

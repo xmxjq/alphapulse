@@ -45,9 +45,9 @@ user_agent = "AlphaPulseBot/0.1 (+https://github.com/xmxjq/alphapulse)"
 
 [crawl.proxy]
 enabled = false
-# provider: "proxy_pool" (rotating public proxies via the proxy_pool service)
-# or "static_list" (fixed upstreams from [crawl.static_proxies], e.g. xray
-# tunnels — see docs/xray-proxy.md).
+# provider: "proxy_pool" (rotating public proxies via the proxy_pool service),
+# "static_list" (fixed upstreams from [crawl.static_proxies], e.g. xray
+# tunnels — see docs/xray-proxy.md), or "kuaidaili" (private GetDPS API).
 # provider = "static_list"
 max_attempts = 2
 fail_open = false
@@ -69,6 +69,15 @@ report_bad_on_block = true
 urls = []
 # urls = ["http://xray:10809", "http://xray:10810"]
 cooldown_seconds = 300
+
+[crawl.kuaidaili]
+# Store the generated GetDPS URL in this ignored file. Never commit the URL.
+api_url_file = ".runtime/kuaidaili-api-url.txt"
+batch_size = 5
+low_watermark = 2
+lease_ttl_seconds = 600
+cooldown_seconds = 600
+acquire_timeout_seconds = 20
 
 [crawl.raw_store]
 # Disk archive of raw HTTP responses: gzip blobs content-addressed by sha256
