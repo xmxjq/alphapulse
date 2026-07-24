@@ -696,6 +696,37 @@ def test_blocked_retry_triggers_rate_limit_backoff(monkeypatch) -> None:
     assert backoff_flags == [False, True]
 
 
+def test_guba_client_uses_curl_transport_for_proxy(monkeypatch) -> None:
+    from alphapulse.sources.guba import api as guba_api
+
+    calls: list[dict[str, object]] = []
+
+    class Response:
+        status_code = 200
+        text = '<script>var article_list={"re":[]};</script>'
+        url = f"{BASE}/list,600519.html"
+
+    def fake_request(method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return Response()
+
+    monkeypatch.setattr(guba_api.curl_requests, "request", fake_request)
+    client = guba_api.GubaClient(GubaSettings(), CrawlSettings())
+
+    result = client._dispatch(
+        "GET",
+        Response.url,
+        None,
+        None,
+        "http://proxy.example:8080",
+    )
+
+    assert result == (200, Response.text, Response.url)
+    assert calls[0]["proxy"] == "http://proxy.example:8080"
+    assert calls[0]["impersonate"] == "chrome"
+    assert calls[0]["allow_redirects"] is True
+
+
 def test_guba_client_stops_after_complete_embedded_payload() -> None:
     from alphapulse.sources.guba import api as guba_api
 
@@ -749,6 +780,29 @@ def test_guba_client_rejects_truncated_embedded_payload() -> None:
         assert b"article_list" in exc.partial
     else:
         raise AssertionError("truncated embedded JSON must not be accepted")
+
+
+def test_guba_client_repairs_one_missing_json_closer() -> None:
+    from alphapulse.sources.guba import api as guba_api
+
+    class OneByteShortResponse:
+        def read(self, amount: int) -> bytes:
+            assert amount == 16 * 1024
+            raise http.client.IncompleteRead(
+                b'<html><script>var article_list={"re":[],"count":0',
+                1,
+            )
+
+    client = guba_api.GubaClient(GubaSettings(), CrawlSettings())
+
+    raw = client._read_body(
+        OneByteShortResponse(),
+        f"{BASE}/list,600519.html",
+        "utf-8",
+    )
+
+    assert raw.endswith(b"}")
+    assert b'"count":0}' in raw
 
 
 def test_guba_client_rejects_clean_eof_before_embedded_payload_completes() -> None:

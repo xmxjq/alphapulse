@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib import error, parse, request
 
+from curl_cffi import requests as curl_requests
+
 from alphapulse.runtime.config import CrawlSettings, GubaSettings
 from alphapulse.sources.fetching import ProxyLease, _build_proxy_provider
 from alphapulse.sources.guba.parser import extract_embedded_json
@@ -250,11 +252,17 @@ class GubaClient:
         proxy_url: str | None,
         json_body: str | None = None,
     ) -> tuple[int, str, str]:
-        opener = request.build_opener()
         if proxy_url is not None:
-            opener = request.build_opener(
-                request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+            return self._dispatch_with_curl(
+                method,
+                url,
+                form,
+                referer,
+                proxy_url,
+                json_body,
             )
+
+        opener = request.build_opener()
         headers = self._headers(referer)
         data = None
         if json_body is not None:
@@ -270,6 +278,38 @@ class GubaClient:
             text = self._decode(raw, charset)
             return response.status, text, response.geturl()
 
+    def _dispatch_with_curl(
+        self,
+        method: str,
+        url: str,
+        form: dict[str, str] | None,
+        referer: str | None,
+        proxy_url: str,
+        json_body: str | None,
+    ) -> tuple[int, str, str]:
+        headers = self._headers(referer)
+        data: bytes | None = None
+        if json_body is not None:
+            data = json_body.encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        elif form is not None:
+            data = parse.urlencode(form).encode("utf-8")
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        try:
+            response = curl_requests.request(
+                method,
+                url,
+                headers=headers,
+                data=data,
+                proxy=proxy_url,
+                impersonate="chrome",
+                timeout=self.crawl_settings.request_timeout_seconds,
+                allow_redirects=True,
+            )
+        except Exception as exc:
+            raise OSError(str(exc)) from exc
+        return response.status_code, response.text, str(response.url)
+
     def _read_body(self, response: Any, url: str, charset: str | None) -> bytes:
         var_name = self._embedded_var_name(url)
         if var_name is None:
@@ -284,6 +324,14 @@ class GubaClient:
                 raw = b"".join(chunks)
                 if self._has_complete_embedded_json(raw, charset, var_name):
                     return raw
+                repaired = self._repair_one_byte_truncation(
+                    raw,
+                    charset,
+                    var_name,
+                    exc.expected,
+                )
+                if repaired is not None:
+                    return repaired
                 raise http.client.IncompleteRead(raw, exc.expected) from exc
             if not chunk:
                 raw = b"".join(chunks)
@@ -302,6 +350,21 @@ class GubaClient:
         var_name: str,
     ) -> bool:
         return extract_embedded_json(self._decode(raw, charset), var_name) is not None
+
+    def _repair_one_byte_truncation(
+        self,
+        raw: bytes,
+        charset: str | None,
+        var_name: str,
+        expected: int | None,
+    ) -> bytes | None:
+        if expected != 1:
+            return None
+        for suffix in (b"}", b"]"):
+            candidate = raw + suffix
+            if self._has_complete_embedded_json(candidate, charset, var_name):
+                return candidate
+        return None
 
     @staticmethod
     def _embedded_var_name(url: str) -> str | None:

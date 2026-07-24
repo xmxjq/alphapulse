@@ -42,6 +42,9 @@ accepts both text and JSON API responses, rotates cached proxies round-robin,
 and benches proxies immediately after explicit blocks or proxy setup failures.
 Transient transport failures keep using the same proxy until
 `failure_threshold` consecutive failures; any success resets that streak.
+Guba requests with an acquired proxy use the browser-impersonating
+`curl_cffi` transport because some private proxy exits truncate urllib's
+HTTP/1 response stream even when the upstream page is complete.
 
 For a package billed per extracted IP with a stated 5-10 minute lifetime, use
 one IP at a time and retire it conservatively before the minimum lifetime:

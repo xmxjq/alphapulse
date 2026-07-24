@@ -120,6 +120,7 @@ source = { editable = "." }
 dependencies = [
     { name = "bilibili-cli" },
     { name = "clickhouse-connect" },
+    { name = "curl-cffi" },
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "pymongo" },
@@ -138,6 +139,7 @@ dev = [
 requires-dist = [
     { name = "bilibili-cli", specifier = ">=0.6.2" },
     { name = "clickhouse-connect", specifier = ">=0.8.17" },
+    { name = "curl-cffi", specifier = ">=0.15.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pydantic", specifier = ">=2.11.3" },
     { name = "pymongo", specifier = ">=4.6" },
