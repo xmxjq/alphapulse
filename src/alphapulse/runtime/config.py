@@ -65,7 +65,7 @@ class CrawlSettings(BaseModel):
     request_timeout_seconds: int = 30
     post_recrawl_minutes: int = 360
     comment_refresh_minutes: int = 60
-    concurrent_requests: int = 4
+    concurrent_requests: int = Field(default=4, ge=1)
     log_level: str = "INFO"
     user_agent: str = "AlphaPulseBot/0.1"
     proxy: "CrawlProxySettings" = Field(default_factory=lambda: CrawlProxySettings())

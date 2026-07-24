@@ -1,5 +1,7 @@
+import threading
 from pathlib import Path
 
+from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, SeedDefinition
 from alphapulse.runtime.config import Settings, load_settings
 from alphapulse.runtime.service import AlphaPulseService
 from alphapulse.sources.bilibili.api import BilibiliApiResult
@@ -42,6 +44,61 @@ class FakeStore:
 
     def insert_crawl_run(self, *, run_id: str, started_at, finished_at, stats, status: str) -> None:
         return None
+
+
+class StaticSeedDiscovery:
+    def ensure_compiled_seed_sets(self, seed_set_name=None):
+        del seed_set_name
+        return [SeedDefinition(name="parallel-test")]
+
+
+class BarrierAdapter:
+    def __init__(self, source_name: str, barrier: threading.Barrier) -> None:
+        self.source_name = source_name
+        self.barrier = barrier
+
+    def discover(self, seed):
+        return [
+            CrawlTask(
+                source=self.source_name,
+                kind="fetch_post",
+                url=f"https://example.com/{self.source_name}",
+                seed_name=seed.name,
+            )
+        ]
+
+    def fetch_item(self, task):
+        del task
+        self.barrier.wait(timeout=2)
+        return FetchOutcome(status_code=200)
+
+    def refresh_comments(self, item_ref):
+        del item_ref
+        return []
+
+    def comment_task_for_post(self, post, seed_name):
+        raise AssertionError("not used")
+
+
+def test_service_processes_source_queues_in_parallel(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.crawl.concurrent_requests = 2
+    barrier = threading.Barrier(2)
+    sources = {
+        "source-a": BarrierAdapter("source-a", barrier),
+        "source-b": BarrierAdapter("source-b", barrier),
+    }
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources=sources,  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    stats = service.run_cycle()
+
+    assert stats.pages_fetched == 2
 
 
 class FakeClient:

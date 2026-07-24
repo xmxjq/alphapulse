@@ -5,6 +5,7 @@ import itertools
 import logging
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -101,6 +102,10 @@ class RunStats:
             "skipped_tasks": self.skipped_tasks,
         }
 
+    def merge(self, other: "RunStats") -> None:
+        for name, value in other.to_dict().items():
+            setattr(self, name, getattr(self, name) + value)
+
 
 @dataclass
 class AlphaPulseService:
@@ -165,13 +170,13 @@ class AlphaPulseService:
             },
         )
         try:
-            queue = TaskQueue()
+            queues = {source_name: TaskQueue() for source_name in self.sources}
             for seed in self._select_seeds(seed_set_name):
                 stats.seeds_processed += 1
                 for adapter in self.sources.values():
                     discovered = adapter.discover(seed)
                     for task in discovered:
-                        self._enqueue_task(queue, task, stats)
+                        self._enqueue_task(queues[task.source], task, stats)
                     logger.debug(
                         "Seed expanded",
                         extra={
@@ -196,137 +201,35 @@ class AlphaPulseService:
                 },
             )
 
-            blocked_sources: set[str] = set()
-            guba_browser_posts_attempted = 0
-            while queue:
-                task = queue.pop()
-                if task.source in blocked_sources or self._source_circuit_open(task.source):
-                    blocked_sources.add(task.source)
-                    stats.skipped_tasks += 1
-                    logger.debug(
-                        "Task skipped (source circuit open)",
-                        extra={
-                            "event": "task_skipped",
-                            "extra_data": {
-                                "source": task.source,
-                                "kind": task.kind,
-                                "url": str(task.url),
-                                "reason": "source_circuit_open",
-                            },
-                        },
-                    )
-                    continue
-
-                if (
-                    self._is_guba_browser_post(task)
-                    and guba_browser_posts_attempted
-                    >= self.settings.sources.guba.browser.max_posts_per_cycle
-                ):
-                    stats.skipped_tasks += 1
-                    logger.debug(
-                        "Task skipped (browser post cycle limit)",
-                        extra={
-                            "event": "task_skipped",
-                            "extra_data": {
-                                "source": task.source,
-                                "kind": task.kind,
-                                "url": str(task.url),
-                                "reason": "browser_post_cycle_limit",
-                                "limit": self.settings.sources.guba.browser.max_posts_per_cycle,
-                            },
-                        },
-                    )
-                    continue
-
-                if not self.state.try_claim_url(
-                    url=str(task.url),
-                    source=task.source,
-                    kind=task.kind,
-                    seed_name=task.seed_name,
-                    min_age=self._min_age_for_task(task),
-                ):
-                    stats.skipped_tasks += 1
-                    logger.debug(
-                        "Task skipped (claim lost or still fresh)",
-                        extra={
-                            "event": "task_skipped",
-                            "extra_data": {
-                                "source": task.source,
-                                "kind": task.kind,
-                                "url": str(task.url),
-                            },
-                        },
-                    )
-                    continue
-
-                if self._is_guba_browser_post(task):
-                    guba_browser_posts_attempted += 1
-
-                if task.kind == "refresh_comments":
-                    adapter = self._adapter_for_task(task)
-                    comments = adapter.refresh_comments(
-                        ItemReference(
-                            source=task.source,
-                            source_entity_id=task.metadata["post_id"],
-                            canonical_url=task.metadata["canonical_url"],
-                            metadata=task.metadata,
-                        )
-                    )
-                    if self._source_circuit_open(task.source):
-                        blocked_sources.add(task.source)
-                        stats.blocked_responses += 1
-                        self.state.release_url_claim(str(task.url))
-                        logger.warning(
-                            "Source circuit opened during comment refresh",
-                            extra={
-                                "event": "source_circuit_open",
-                                "extra_data": {
-                                    "source": task.source,
-                                    "kind": task.kind,
-                                    "url": str(task.url),
-                                },
-                            },
-                        )
-                        continue
-                    if comments:
-                        self.store.upsert_comments(comments)
-                        stats.comments_written += len(comments)
-                        self.state.mark_comments_refreshed(task.source, task.metadata["post_id"])
-                    self.state.mark_url_fetched(str(task.url), 200)
+            active_queues = {
+                source_name: queue for source_name, queue in queues.items() if queue
+            }
+            max_workers = max(
+                1,
+                min(self.settings.crawl.concurrent_requests, len(active_queues)),
+            )
+            with ThreadPoolExecutor(
+                max_workers=max_workers,
+                thread_name_prefix="alphapulse-source",
+            ) as executor:
+                futures = {
+                    executor.submit(self._run_source_queue, source_name, queue): source_name
+                    for source_name, queue in active_queues.items()
+                }
+                for future in as_completed(futures):
+                    source_name = futures[future]
+                    source_stats = future.result()
+                    stats.merge(source_stats)
                     logger.info(
-                        "Comments refreshed",
+                        "Source queue finished",
                         extra={
-                            "event": "comments_refreshed",
+                            "event": "source_queue_done",
                             "extra_data": {
-                                "source": task.source,
-                                "post_id": task.metadata["post_id"],
-                                "comments": len(comments),
+                                "source": source_name,
+                                **source_stats.to_dict(),
                             },
                         },
                     )
-                    continue
-
-                adapter = self._adapter_for_task(task)
-                outcome = adapter.fetch_item(task)
-                self._apply_outcome(task, outcome, queue, stats)
-                if outcome.blocked:
-                    blocked_sources.add(task.source)
-                    self.state.release_url_claim(str(task.url))
-                    logger.warning(
-                        "Source stopped for the rest of the cycle after blocked response",
-                        extra={
-                            "event": "source_circuit_open",
-                            "extra_data": {
-                                "source": task.source,
-                                "kind": task.kind,
-                                "url": str(task.url),
-                            },
-                        },
-                    )
-                elif outcome.status_code is None:
-                    self.state.release_url_claim(str(task.url))
-                else:
-                    self.state.mark_url_fetched(str(task.url), outcome.status_code)
 
             duration = (datetime.now(UTC) - started_at).total_seconds()
             self.store.insert_crawl_run(
@@ -366,6 +269,154 @@ class AlphaPulseService:
                 },
             )
             raise
+
+    def _run_source_queue(self, source_name: str, queue: TaskQueue) -> RunStats:
+        assert self.state is not None
+        assert self.store is not None
+        stats = RunStats()
+        source_blocked = False
+        guba_browser_posts_attempted = 0
+        logger.info(
+            "Source queue started",
+            extra={
+                "event": "source_queue_start",
+                "extra_data": {"source": source_name, "tasks": len(queue)},
+            },
+        )
+
+        while queue:
+            task = queue.pop()
+            if source_blocked or self._source_circuit_open(task.source):
+                source_blocked = True
+                stats.skipped_tasks += 1
+                logger.debug(
+                    "Task skipped (source circuit open)",
+                    extra={
+                        "event": "task_skipped",
+                        "extra_data": {
+                            "source": task.source,
+                            "kind": task.kind,
+                            "url": str(task.url),
+                            "reason": "source_circuit_open",
+                        },
+                    },
+                )
+                continue
+
+            if (
+                self._is_guba_browser_post(task)
+                and guba_browser_posts_attempted
+                >= self.settings.sources.guba.browser.max_posts_per_cycle
+            ):
+                stats.skipped_tasks += 1
+                logger.debug(
+                    "Task skipped (browser post cycle limit)",
+                    extra={
+                        "event": "task_skipped",
+                        "extra_data": {
+                            "source": task.source,
+                            "kind": task.kind,
+                            "url": str(task.url),
+                            "reason": "browser_post_cycle_limit",
+                            "limit": self.settings.sources.guba.browser.max_posts_per_cycle,
+                        },
+                    },
+                )
+                continue
+
+            if not self.state.try_claim_url(
+                url=str(task.url),
+                source=task.source,
+                kind=task.kind,
+                seed_name=task.seed_name,
+                min_age=self._min_age_for_task(task),
+            ):
+                stats.skipped_tasks += 1
+                logger.debug(
+                    "Task skipped (claim lost or still fresh)",
+                    extra={
+                        "event": "task_skipped",
+                        "extra_data": {
+                            "source": task.source,
+                            "kind": task.kind,
+                            "url": str(task.url),
+                        },
+                    },
+                )
+                continue
+
+            if self._is_guba_browser_post(task):
+                guba_browser_posts_attempted += 1
+
+            if task.kind == "refresh_comments":
+                adapter = self._adapter_for_task(task)
+                comments = adapter.refresh_comments(
+                    ItemReference(
+                        source=task.source,
+                        source_entity_id=task.metadata["post_id"],
+                        canonical_url=task.metadata["canonical_url"],
+                        metadata=task.metadata,
+                    )
+                )
+                if self._source_circuit_open(task.source):
+                    source_blocked = True
+                    stats.blocked_responses += 1
+                    self.state.release_url_claim(str(task.url))
+                    logger.warning(
+                        "Source circuit opened during comment refresh",
+                        extra={
+                            "event": "source_circuit_open",
+                            "extra_data": {
+                                "source": task.source,
+                                "kind": task.kind,
+                                "url": str(task.url),
+                            },
+                        },
+                    )
+                    continue
+                if comments:
+                    self.store.upsert_comments(comments)
+                    stats.comments_written += len(comments)
+                    self.state.mark_comments_refreshed(
+                        task.source, task.metadata["post_id"]
+                    )
+                self.state.mark_url_fetched(str(task.url), 200)
+                logger.info(
+                    "Comments refreshed",
+                    extra={
+                        "event": "comments_refreshed",
+                        "extra_data": {
+                            "source": task.source,
+                            "post_id": task.metadata["post_id"],
+                            "comments": len(comments),
+                        },
+                    },
+                )
+                continue
+
+            adapter = self._adapter_for_task(task)
+            outcome = adapter.fetch_item(task)
+            self._apply_outcome(task, outcome, queue, stats)
+            if outcome.blocked:
+                source_blocked = True
+                self.state.release_url_claim(str(task.url))
+                logger.warning(
+                    "Source stopped for the rest of the cycle after blocked response",
+                    extra={
+                        "event": "source_circuit_open",
+                        "extra_data": {
+                            "source": task.source,
+                            "kind": task.kind,
+                            "url": str(task.url),
+                        },
+                    },
+                )
+            elif outcome.status_code is None:
+                self.state.release_url_claim(str(task.url))
+            else:
+                self.state.mark_url_fetched(str(task.url), outcome.status_code)
+
+        return stats
 
     def _apply_outcome(
         self,
