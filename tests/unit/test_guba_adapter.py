@@ -304,6 +304,29 @@ def test_blocked_response_opens_circuit_without_more_requests(tmp_path) -> None:
     assert adapter.is_circuit_open()
 
 
+def test_soft_blocked_response_marks_outcome_without_opening_circuit(tmp_path) -> None:
+    first_url = f"{BASE}/list,600519.html"
+    second_url = f"{BASE}/list,600000.html"
+    soft_blocked = GubaHttpResult(
+        url=first_url,
+        status_code=200,
+        text="<html>access denied by waf</html>",
+        blocked=True,
+        block_kind="soft_block",
+    )
+    good_second = _ok(second_url, "<html><script>var article_list={\"re\":[]};</script></html>")
+    client = FakeGubaClient({first_url: soft_blocked, second_url: good_second})
+    adapter = _adapter(tmp_path, client, block_cooldown_seconds=3600)
+
+    first = adapter.fetch_item(_discover_task(first_url, "600519"))
+    assert first.blocked
+    assert not adapter.is_circuit_open()
+
+    second = adapter.fetch_item(_discover_task(second_url, "600000"))
+    assert not second.blocked
+    assert client.get_calls == [first_url, second_url]
+
+
 def test_post_detail_parses_and_records_mod_count(tmp_path) -> None:
     url = f"{BASE}/news,600519,1743987733.html"
     client = FakeGubaClient({url: _ok(url, _read("post_detail.html"))})
@@ -871,6 +894,165 @@ def test_guba_client_does_not_fail_open_without_proxy(monkeypatch, tmp_path) -> 
     assert result.status_code == 0
     assert result.error_message == "No proxy available from proxy provider"
     assert dispatched == []
+
+
+def test_soft_block_costs_one_paid_ip_extraction_not_three(tmp_path, monkeypatch) -> None:
+    """End-to-end: a request that soft-blocks on every attempt reuses the same
+    paid IP across all retries instead of forcing a fresh extraction each time.
+    """
+    from alphapulse.sources import fetching
+    from alphapulse.sources.guba import api as guba_api
+
+    api_file = tmp_path / "kuaidaili-api-url.txt"
+    api_file.write_text("https://dps.kdlapi.com/api/getdps/?secret_id=test&num=1")
+    crawl = CrawlSettings.model_validate(
+        {
+            "proxy": {
+                "enabled": True,
+                "provider": "kuaidaili",
+                "sources": ["guba"],
+                "fail_open": False,
+            },
+            "kuaidaili": {
+                "api_url_file": str(api_file),
+                "metrics_path": str(tmp_path / "proxy-metrics.db"),
+                "batch_size": 1,
+                "low_watermark": 0,
+                "failure_threshold": 3,
+            },
+        }
+    )
+    client = guba_api.GubaClient(
+        GubaSettings(
+            enabled=True,
+            max_retries=3,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        crawl,
+    )
+
+    class FakeUrlopenResponse:
+        def __init__(self, payload: str) -> None:
+            self.payload = payload
+
+        def read(self) -> bytes:
+            return self.payload.encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    urlopen_calls: list[str] = []
+
+    def fake_urlopen(url, timeout):
+        urlopen_calls.append(url)
+        return FakeUrlopenResponse("1.2.3.4:8080")
+
+    monkeypatch.setattr(fetching.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(client, "_adaptive_sleep", lambda *, was_rate_limited: None)
+
+    dispatched_proxies: list[str | None] = []
+
+    def fake_dispatch(method, url, form, referer, proxy_url, json_body=None):
+        dispatched_proxies.append(proxy_url)
+        return 200, "<html>access denied by waf</html>", url
+
+    monkeypatch.setattr(client, "_dispatch", fake_dispatch)
+
+    result = client.get(f"{BASE}/list,600519.html", expect_marker="var article_list")
+
+    assert result.blocked
+    assert result.block_kind == "soft_block"
+    assert len(urlopen_calls) == 1
+    assert dispatched_proxies == ["http://1.2.3.4:8080"] * 3
+
+
+def test_guba_client_retries_after_proxy_acquire_exception(monkeypatch) -> None:
+    from alphapulse.sources.fetching import ProxyLease
+    from alphapulse.sources.guba import api as guba_api
+
+    client = guba_api.GubaClient(
+        GubaSettings(
+            enabled=True,
+            max_retries=2,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        CrawlSettings(),
+    )
+    acquire_calls = {"count": 0}
+
+    class FlakyProxyProvider:
+        def acquire(self):
+            acquire_calls["count"] += 1
+            if acquire_calls["count"] == 1:
+                raise RuntimeError("kuaidaili api blip")
+            return ProxyLease("http://1.2.3.4:8080", "1.2.3.4:8080", "test")
+
+        def report_bad(self, lease, reason):
+            del lease, reason
+
+        def report_success(self, lease):
+            del lease
+
+    client.proxy_provider = FlakyProxyProvider()
+    monkeypatch.setattr(client, "_adaptive_sleep", lambda *, was_rate_limited: None)
+    monkeypatch.setattr(
+        client,
+        "_dispatch",
+        lambda *args, **kwargs: (200, '<script>var article_list={"re":[]};</script>', args[1]),
+    )
+
+    result = client.get(f"{BASE}/list,600519.html", expect_marker="var article_list")
+
+    assert result.status_code == 200
+    assert not result.blocked
+    assert acquire_calls["count"] == 2
+
+
+def test_guba_client_retries_after_no_proxy_available(monkeypatch) -> None:
+    from alphapulse.sources.fetching import ProxyLease
+    from alphapulse.sources.guba import api as guba_api
+
+    client = guba_api.GubaClient(
+        GubaSettings(
+            enabled=True,
+            max_retries=2,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        CrawlSettings(),
+    )
+    acquire_calls = {"count": 0}
+
+    class EmptyThenFullProxyProvider:
+        def acquire(self):
+            acquire_calls["count"] += 1
+            if acquire_calls["count"] == 1:
+                return None
+            return ProxyLease("http://1.2.3.4:8080", "1.2.3.4:8080", "test")
+
+        def report_bad(self, lease, reason):
+            del lease, reason
+
+        def report_success(self, lease):
+            del lease
+
+    client.proxy_provider = EmptyThenFullProxyProvider()
+    monkeypatch.setattr(client, "_adaptive_sleep", lambda *, was_rate_limited: None)
+    monkeypatch.setattr(
+        client,
+        "_dispatch",
+        lambda *args, **kwargs: (200, '<script>var article_list={"re":[]};</script>', args[1]),
+    )
+
+    result = client.get(f"{BASE}/list,600519.html", expect_marker="var article_list")
+
+    assert result.status_code == 200
+    assert acquire_calls["count"] == 2
 
 
 def test_guba_client_waits_before_acquiring_short_lived_proxy(monkeypatch) -> None:

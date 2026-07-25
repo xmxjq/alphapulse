@@ -388,6 +388,15 @@ class GubaAdapter:
         return True
 
     def _trip_circuit(self, block_kind: str | None) -> None:
+        # soft_block is a heuristic (a 200 response missing its expected data
+        # marker) rather than a confirmed block, so it still stops this
+        # task/cycle via FetchOutcome.blocked but must not arm the long
+        # cooldown the way a confirmed http_403/http_429/captcha/login
+        # redirect does — that would turn a possibly IP-caused or
+        # single-URL soft block into a multi-hour outage for the whole
+        # source.
+        if block_kind == "soft_block":
+            return
         self._blocked_until = time.monotonic() + self.settings.block_cooldown_seconds
         self._blocked_kind = block_kind or "blocked"
         logger.warning(

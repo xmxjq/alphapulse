@@ -380,7 +380,7 @@ class KuaidailiProxyProvider:
     def _is_hard_failure(reason: str) -> bool:
         lowered = reason.lower()
         return (
-            lowered.startswith("blocked:")
+            (lowered.startswith("blocked:") and "soft_block" not in lowered)
             or bool(re.search(r"\bhttp (?:403|407|418|429)\b", lowered))
             or "proxy setup failed" in lowered
         )
@@ -399,19 +399,25 @@ class ScraplingClient:
         for attempt in range(attempts):
             lease: ProxyLease | None = None
             proxy_url: str | None = None
+            acquire_failed = False
 
             if self.proxy_provider is not None:
                 try:
                     lease = self.proxy_provider.acquire()
                 except Exception as exc:
-                    if not self.crawl_settings.proxy.fail_open:
-                        return self._error_result(url, f"Failed to acquire proxy: {exc}")
                     last_error = f"Failed to acquire proxy: {exc}"
+                    acquire_failed = not self.crawl_settings.proxy.fail_open
                 else:
                     if lease is None and not self.crawl_settings.proxy.fail_open:
-                        return self._error_result(url, "No proxy available from proxy provider")
-                    if lease is not None:
+                        last_error = "No proxy available from proxy provider"
+                        acquire_failed = True
+                    elif lease is not None:
                         proxy_url = lease.proxy_url
+
+            if acquire_failed:
+                if attempt + 1 < attempts:
+                    continue
+                return self._error_result(url, last_error or "Failed to acquire proxy")
 
             try:
                 response = self._dispatch_fetch(url, proxy_url)

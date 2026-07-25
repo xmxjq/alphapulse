@@ -272,6 +272,58 @@ def test_kuaidaili_provider_reuses_paid_ip_until_failure_threshold(
     assert provider.acquire().proxy_url == "http://2.3.4.5:8081"
 
 
+def test_kuaidaili_provider_soft_block_uses_failure_streak_not_instant_bench(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(tmp_path, batch_size=1, failure_threshold=3).kuaidaili
+    )
+    responses = iter(
+        [
+            DummyUrlopenResponse("1.2.3.4:8080"),
+            DummyUrlopenResponse("2.3.4.5:8081"),
+        ]
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: next(responses),
+    )
+
+    first = provider.acquire()
+    provider.report_bad(first, "blocked: soft_block")
+    assert provider.acquire().proxy_url == first.proxy_url
+    provider.report_bad(first, "blocked: soft_block")
+    assert provider.acquire().proxy_url == first.proxy_url
+    provider.report_bad(first, "blocked: soft_block")
+
+    assert provider.acquire().proxy_url == "http://2.3.4.5:8081"
+
+
+def test_kuaidaili_provider_benches_non_soft_block_reason_immediately(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(tmp_path, batch_size=1, failure_threshold=3).kuaidaili
+    )
+    responses = iter(
+        [
+            DummyUrlopenResponse("1.2.3.4:8080"),
+            DummyUrlopenResponse("2.3.4.5:8081"),
+        ]
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: next(responses),
+    )
+
+    first = provider.acquire()
+    provider.report_bad(first, "blocked: http_403")
+
+    assert provider.acquire().proxy_url == "http://2.3.4.5:8081"
+
+
 def test_kuaidaili_provider_benches_explicit_block_immediately(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -424,6 +476,96 @@ def test_scrapling_client_returns_error_after_retry_exhaustion(monkeypatch: pyte
     assert result.error_message == "dial tcp failed"
     assert result.proxy_url == "http://2.2.2.2:8080"
     assert reported == ["1.1.1.1:8080", "2.2.2.2:8080"]
+
+
+def test_scrapling_client_retries_after_proxy_acquire_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = CrawlSettings.model_validate(
+        {
+            "proxy": {"enabled": True, "provider": "proxy_pool", "max_attempts": 2, "fail_open": False},
+            "proxy_pool": {"base_url": "http://proxy_pool:5010"},
+        }
+    )
+    client = ScraplingClient(XueqiuSettings(), settings)
+    acquire_calls = {"count": 0}
+
+    def fake_acquire():
+        acquire_calls["count"] += 1
+        if acquire_calls["count"] == 1:
+            raise RuntimeError("kuaidaili api blip")
+        return ProxyLease("http://2.2.2.2:8080", "2.2.2.2:8080", "proxy_pool")
+
+    monkeypatch.setattr(client.proxy_provider, "acquire", fake_acquire)
+    monkeypatch.setattr(
+        client,
+        "_dispatch_fetch",
+        lambda url, proxy_url: type(
+            "Response", (), {"url": url, "status": 200, "text": "<html>ok</html>", "headers": {}}
+        )(),
+    )
+
+    result = client.fetch("https://xueqiu.com/test")
+
+    assert result.status_code == 200
+    assert result.proxy_url == "http://2.2.2.2:8080"
+    assert acquire_calls["count"] == 2
+
+
+def test_scrapling_client_retries_after_no_proxy_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = CrawlSettings.model_validate(
+        {
+            "proxy": {"enabled": True, "provider": "proxy_pool", "max_attempts": 2, "fail_open": False},
+            "proxy_pool": {"base_url": "http://proxy_pool:5010"},
+        }
+    )
+    client = ScraplingClient(XueqiuSettings(), settings)
+    acquire_calls = {"count": 0}
+
+    def fake_acquire():
+        acquire_calls["count"] += 1
+        if acquire_calls["count"] == 1:
+            return None
+        return ProxyLease("http://2.2.2.2:8080", "2.2.2.2:8080", "proxy_pool")
+
+    monkeypatch.setattr(client.proxy_provider, "acquire", fake_acquire)
+    monkeypatch.setattr(
+        client,
+        "_dispatch_fetch",
+        lambda url, proxy_url: type(
+            "Response", (), {"url": url, "status": 200, "text": "<html>ok</html>", "headers": {}}
+        )(),
+    )
+
+    result = client.fetch("https://xueqiu.com/test")
+
+    assert result.status_code == 200
+    assert result.proxy_url == "http://2.2.2.2:8080"
+    assert acquire_calls["count"] == 2
+
+
+def test_scrapling_client_returns_error_after_acquire_failures_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = CrawlSettings.model_validate(
+        {
+            "proxy": {"enabled": True, "provider": "proxy_pool", "max_attempts": 2, "fail_open": False},
+            "proxy_pool": {"base_url": "http://proxy_pool:5010"},
+        }
+    )
+    client = ScraplingClient(XueqiuSettings(), settings)
+
+    monkeypatch.setattr(
+        client.proxy_provider,
+        "acquire",
+        lambda: (_ for _ in ()).throw(RuntimeError("kuaidaili api down")),
+    )
+
+    result = client.fetch("https://xueqiu.com/test")
+
+    assert result.error_message == "Failed to acquire proxy: kuaidaili api down"
 
 
 def _static_settings(**overrides) -> CrawlSettings:

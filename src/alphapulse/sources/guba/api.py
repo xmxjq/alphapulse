@@ -110,6 +110,7 @@ class GubaClient:
         for attempt in range(attempts):
             lease: ProxyLease | None = None
             proxy_url: str | None = None
+            acquire_error: str | None = None
             self._adaptive_sleep(was_rate_limited=backoff_for_block)
 
             if self.proxy_provider is not None:
@@ -117,21 +118,24 @@ class GubaClient:
                     lease = self.proxy_provider.acquire()
                 except Exception as exc:
                     if not self.crawl_settings.proxy.fail_open:
-                        return GubaHttpResult(
-                            url=url,
-                            status_code=0,
-                            text="",
-                            error_message=f"Failed to acquire proxy: {exc}",
-                        )
-                if lease is not None:
-                    proxy_url = lease.proxy_url
-                elif not self.crawl_settings.proxy.fail_open:
-                    return GubaHttpResult(
-                        url=url,
-                        status_code=0,
-                        text="",
-                        error_message="No proxy available from proxy provider",
-                    )
+                        acquire_error = f"Failed to acquire proxy: {exc}"
+                else:
+                    if lease is not None:
+                        proxy_url = lease.proxy_url
+                    elif not self.crawl_settings.proxy.fail_open:
+                        acquire_error = "No proxy available from proxy provider"
+
+            if acquire_error is not None:
+                last_result = GubaHttpResult(
+                    url=url,
+                    status_code=0,
+                    text="",
+                    error_message=acquire_error,
+                )
+                if attempt + 1 < attempts:
+                    backoff_for_block = False
+                    continue
+                return last_result
 
             started = time.monotonic()
             try:
