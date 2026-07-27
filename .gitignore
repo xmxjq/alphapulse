@@ -18,3 +18,7 @@ settings.toml
 
 /seed_catalog.toml
 /.claude/settings.local.json
+
+# Cloudflare Access / GitHub OAuth credentials
+/alphapulse-github-client-id.txt
+/alphapulse-github-client-secret.txt

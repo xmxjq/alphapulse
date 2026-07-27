@@ -33,9 +33,26 @@ cloudflared tunnel info alphapulse-mac-mini-tv
 
 ## Human Access
 
-The WebUI Access application uses an Allow policy containing individual email
-addresses. Add and remove people in Cloudflare Zero Trust rather than sharing a
-common password.
+The WebUI Access application uses GitHub as its identity provider and redirects
+directly to GitHub OAuth. Its registered callback is:
+
+```text
+https://flat-field-add4.cloudflareaccess.com/cdn-cgi/access/callback
+```
+
+Authentication and authorization remain separate:
+
+- GitHub proves the user's identity and verified primary email.
+- The WebUI Allow policy decides which emails may enter AlphaPulse.
+
+Add and remove people in Cloudflare Zero Trust rather than sharing a common
+password. For a larger team, prefer a GitHub organization or team selector over
+maintaining individual email entries.
+
+The GitHub OAuth Client ID and Client Secret are operator credentials. Keep
+their local copies outside the repository in the user's private secrets
+directory. Cloudflare stores the configured provider credentials for the
+Access login flow.
 
 ## LLM Access
 
