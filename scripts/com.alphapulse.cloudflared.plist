@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  User-level LaunchAgent for the AlphaPulse Cloudflare Tunnel.
+
+  Install after creating ~/.cloudflared/alphapulse.yml:
+
+    cp scripts/com.alphapulse.cloudflared.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) \
+      ~/Library/LaunchAgents/com.alphapulse.cloudflared.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alphapulse.cloudflared</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/cloudflared</string>
+    <string>--config</string>
+    <string>/Users/xmxjq/.cloudflared/alphapulse.yml</string>
+    <string>tunnel</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/xmxjq/Library/Logs/alphapulse-cloudflared.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/xmxjq/Library/Logs/alphapulse-cloudflared.log</string>
+</dict>
+</plist>
