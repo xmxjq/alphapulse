@@ -191,7 +191,7 @@ class GubaAdapter:
             # Posts bumped by new replies resurface on early list pages sorted
             # by last-reply time; re-emitting the (stable-URL) refresh task
             # lets the state store's claim gate throttle actual refreshes.
-            if entry.comment_count:
+            if entry.comment_count and self.settings.fetch_comments:
                 outcome.discovered_tasks.append(
                     CrawlTask(
                         source=self.source_name,
@@ -410,7 +410,9 @@ class GubaAdapter:
             },
         )
 
-    def comment_task_for_post(self, post: NormalizedPost, seed_name: str) -> CrawlTask:
+    def comment_task_for_post(self, post: NormalizedPost, seed_name: str) -> CrawlTask | None:
+        if not self.settings.fetch_comments:
+            return None
         ref = extract_post_ref(str(post.canonical_url))
         board_code = ref[0] if ref else ""
         base = str(self.settings.base_url)

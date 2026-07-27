@@ -141,6 +141,11 @@ reply_page_size = 30
 # Daily reports only need the newest reply page. Raise this for explicit
 # historical backfills that need complete reply threads.
 max_reply_pages = 1
+# Post-only mode: set false to skip reply/comment crawling entirely (no
+# refresh_comments tasks at all) when a full crawl can't finish within a day.
+# Unlike max_reply_pages, which only limits pagination depth on threads that
+# are fetched, this stops comment fetching outright.
+fetch_comments = true
 list_recrawl_minutes = 30
 # Day-grouped crawl: only publish posts from the current day (in ranking_timezone)
 # and paginate to that day's boundary. Set false for the classic fixed-page crawl.

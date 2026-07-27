@@ -423,6 +423,7 @@ bilibili_video_targets = ["BV1xx411c7mu"]
 class FakeGubaClient:
     def __init__(self, fixtures: Path) -> None:
         self.fixtures = fixtures
+        self.reply_calls = 0
 
     def get(self, url: str, *, expect_marker: str | None = None):
         del expect_marker
@@ -438,6 +439,7 @@ class FakeGubaClient:
         from alphapulse.sources.guba.api import GubaHttpResult
 
         del post_id, board_code, page
+        self.reply_calls += 1
         text = (self.fixtures / "replies.json").read_text(encoding="utf-8")
         return GubaHttpResult(
             url="https://guba.eastmoney.com/interface/GetData.aspx",
@@ -511,6 +513,46 @@ guba_board_codes = ["600519"]
     second = service.run_cycle(seed_set_name="guba-core")
     assert second.posts_written == 0
     assert second.comments_written == 0
+
+
+def test_service_guba_cycle_skips_comments_when_fetch_comments_disabled(tmp_path: Path) -> None:
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.xueqiu.enabled = False
+    settings.sources.bilibili.enabled = False
+    settings.sources.guba.enabled = True
+    settings.sources.guba.max_list_pages = 1
+    settings.sources.guba.day_scoped = False
+    settings.sources.guba.fetch_comments = False
+    settings.crawl.raw_store.enabled = True
+    settings.crawl.raw_store.root_path = tmp_path / "raw"
+    settings.sources.xueqiu.seed_catalog_path = tmp_path / "seed_catalog.toml"
+    settings.sources.xueqiu.seed_refresh_minutes = 9999
+    settings.sources.xueqiu.seed_catalog_path.write_text(
+        """
+[[logical_sets]]
+name = "guba-core"
+generators = ["manual-guba"]
+
+[[generators]]
+name = "manual-guba"
+type = "manual"
+guba_board_codes = ["600519"]
+""".strip()
+    )
+
+    store = FakeStore()
+    service = AlphaPulseService(settings, store=store)
+    fake_client = FakeGubaClient(Path("tests/fixtures/guba"))
+    service.sources["guba"].client = fake_client
+
+    stats = service.run_cycle(seed_set_name="guba-core")
+
+    # Posts still crawl normally; no reply requests fire at all — this is the
+    # wall-clock saving, not just an absence of written comments.
+    assert stats.posts_written == 3
+    assert stats.comments_written == 0
+    assert fake_client.reply_calls == 0
 
 
 def test_service_caps_browser_posts_per_cycle(tmp_path: Path) -> None:

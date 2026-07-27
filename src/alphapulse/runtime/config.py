@@ -232,6 +232,12 @@ class GubaSettings(BaseModel):
     max_list_pages: int = Field(default=3, ge=1)
     reply_page_size: int = Field(default=30, ge=1, le=100)
     max_reply_pages: int = Field(default=1, ge=1)
+    # Post-only mode: skip reply/comment crawling entirely (no refresh_comments
+    # tasks are emitted), cutting a cycle's request count when a full crawl
+    # (posts + comments) can't finish within a day. Unlike max_reply_pages,
+    # which only limits pagination depth on threads that are fetched, this
+    # stops comment fetching outright.
+    fetch_comments: bool = True
     list_recrawl_minutes: int = Field(default=30, ge=1)
     # Day-grouped, homepage-ranking-driven crawling.
     day_scoped: bool = True

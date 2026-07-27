@@ -458,7 +458,8 @@ class AlphaPulseService:
                     timedelta(minutes=self.settings.crawl.comment_refresh_minutes),
                 ):
                     comment_task = self._adapter_for_source(post.source).comment_task_for_post(post, task.seed_name)
-                    self._enqueue_task(queue, comment_task, stats)
+                    if comment_task is not None:
+                        self._enqueue_task(queue, comment_task, stats)
 
         for discovered_task in outcome.discovered_tasks:
             self._enqueue_task(queue, discovered_task, stats)

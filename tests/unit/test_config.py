@@ -34,6 +34,7 @@ def test_load_settings_example() -> None:
     assert settings.sources.guba.max_list_pages == 3
     assert settings.sources.guba.reply_page_size == 30
     assert settings.sources.guba.max_reply_pages == 1
+    assert settings.sources.guba.fetch_comments is True
     assert settings.sources.guba.list_recrawl_minutes == 30
     assert settings.sources.guba.day_scoped is True
     assert settings.sources.guba.hot_boards_per_section == 12

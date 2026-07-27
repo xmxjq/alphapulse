@@ -154,6 +154,17 @@ def test_list_page_emits_posts_comments_and_next_page(tmp_path) -> None:
     assert rows[0]["content_sha256"] is not None
 
 
+def test_list_page_skips_comments_when_fetch_comments_disabled(tmp_path) -> None:
+    list_url = f"{BASE}/list,600519.html"
+    client = FakeGubaClient({list_url: _ok(list_url, _read("list_stock.html"))})
+    adapter = _adapter(tmp_path, client, fetch_comments=False)
+
+    outcome = adapter.fetch_item(_discover_task(list_url, "600519"))
+
+    assert all(task.kind != "refresh_comments" for task in outcome.discovered_tasks)
+    assert any(task.kind == "fetch_post" for task in outcome.discovered_tasks)
+
+
 def test_list_pagination_stops_at_max_pages(tmp_path) -> None:
     list_url = f"{BASE}/list,600519_3.html"
     client = FakeGubaClient({list_url: _ok(list_url, _read("list_stock.html"))})
@@ -537,6 +548,24 @@ def test_comment_task_matches_list_emitted_url(tmp_path) -> None:
     assert from_post.metadata["post_id"] == list_refresh.metadata["post_id"]
     assert from_post.metadata["canonical_url"] == list_refresh.metadata["canonical_url"]
     assert from_post.priority == 100
+
+
+def test_comment_task_for_post_returns_none_when_fetch_comments_disabled(tmp_path) -> None:
+    detail_url = f"{BASE}/news,600519,1743987733.html"
+    client = FakeGubaClient({detail_url: _ok(detail_url, _read("post_detail.html"))})
+    adapter = _adapter(tmp_path, client, fetch_comments=False)
+
+    detail_task = CrawlTask(
+        source="guba",
+        kind="fetch_post",
+        url=detail_url,
+        seed_name="test-seed",
+        priority=150,
+        metadata={"post_id": "1743987733", "board_code": "600519"},
+    )
+    detail_outcome = adapter.fetch_item(detail_task)
+
+    assert adapter.comment_task_for_post(detail_outcome.posts[0], "test-seed") is None
 
 
 def test_classify_block() -> None:

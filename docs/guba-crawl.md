@@ -33,12 +33,17 @@ This guide shows how to enable and run the Eastmoney Guba (东方财富股吧) c
 - **Replies** come from a form-encoded POST to `/interface/GetData.aspx`
   (`path=reply/api/Reply/ArticleNewReplyList`), returning plain JSON. Daily
   crawling requests page 1 only by default; raise `max_reply_pages` only for
-  an explicit historical backfill that needs complete reply threads.
+  an explicit historical backfill that needs complete reply threads. If a
+  cycle still can't finish within a day, set `fetch_comments = false` to skip
+  reply crawling entirely (post-only mode) — no `refresh_comments` tasks are
+  emitted at all, unlike `max_reply_pages`, which still fetches replies just
+  fewer pages of them.
 - **Resurfacing**: posts bumped by new replies reappear at the top of list
   pages (sorted by `post_last_time`). The adapter re-emits a stable-URL
-  `refresh_comments` task for every listed post with comments; the state
-  store's claim gate (`comment_refresh_minutes`) turns this into an
-  incremental refresh instead of a re-crawl.
+  `refresh_comments` task for every listed post with comments (unless
+  `fetch_comments = false`); the state store's claim gate
+  (`comment_refresh_minutes`) turns this into an incremental refresh instead
+  of a re-crawl.
 - **Duplicates**: the state store's URL claim (`post_recrawl_minutes`) plus
   `source:source_entity_id` upsert keys in storage dedupe re-listed posts.
 - **Edits**: storage keeps the latest version; the fetch log records
@@ -54,6 +59,7 @@ base_url = "https://guba.eastmoney.com"
 max_list_pages = 3            # per-board page cap; keep modest so cycles finish daily
 reply_page_size = 30
 max_reply_pages = 1            # newest page only; raise for explicit backfills
+fetch_comments = true          # set false for post-only crawling (no reply fetches at all)
 list_recrawl_minutes = 30
 day_scoped = true             # crawl the current day's posts (set false for classic)
 ranking_timezone = "Asia/Shanghai"
@@ -157,6 +163,9 @@ ranked boards (themes show their member boards) → the day's posts, with commen
 threads loaded on demand. Backed by `GET /api/guba/report/{date}` (requires the
 mongo storage backend). Snapshots come from the crawler state DB and posts from
 storage; a day with no snapshot falls back to grouping crawled posts by board.
+
+For feeding this same day's data to an LLM instead of a browser, see
+[llm-report-api.md](llm-report-api.md) (`GET /api/llm/guba/report/{date}`).
 
 ## Live Smoke Test
 
