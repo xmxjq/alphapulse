@@ -63,6 +63,8 @@ start_agent()
           --token-file '$AGENT_TOKEN' \
           --cloudflare-authorization-file '$CF_TOKEN' \
           --max-concurrency 1 \
+          --request-interval-min 30s \
+          --request-interval-max 60s \
           --poll-wait 20 \
           --heartbeat-interval 30 \
           >>'$LOG_FILE' 2>&1 &

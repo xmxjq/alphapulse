@@ -30,9 +30,9 @@ db_path = ".runtime/agent-pool.db"
 sources = ["guba"]
 strategy = "agent_first"
 heartbeat_ttl_seconds = 90
-lease_seconds = 60
+lease_seconds = 180
 queue_wait_seconds = 10
-job_wait_seconds = 60
+job_wait_seconds = 120
 result_poll_interval_seconds = 0.5
 blocked_cooldown_seconds = 600
 max_response_bytes = 8000000
@@ -139,6 +139,18 @@ The built-in target allowlist matches the worker defaults. Repeat
 Use `--max-concurrency 1` on routers, single-board computers, and home
 connections. Start with `2` or `3` on small VPS instances and raise it only
 after observing latency and block rates in WebUI.
+
+Stable home-network IPs should also enable Agent-local pacing:
+
+```bash
+--max-concurrency 1 \
+--request-interval-min 30s \
+--request-interval-max 60s
+```
+
+The interval is enforced inside the Agent across its worker loop, independently
+of crawler threads and processes. When interval pacing is enabled, the Agent
+rejects `max-concurrency` values other than `1`.
 
 ## systemd service
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -51,6 +52,15 @@ type config struct {
 	maxConcurrency          int
 	pollWaitSeconds         int
 	heartbeatInterval       time.Duration
+	requestIntervalMin      time.Duration
+	requestIntervalMax      time.Duration
+}
+
+type requestPacer struct {
+	mu      sync.Mutex
+	minimum time.Duration
+	maximum time.Duration
+	nextAt  time.Time
 }
 
 type agentInfo struct {
@@ -120,6 +130,10 @@ func main() {
 		Capabilities:   []string{"http"},
 		MaxConcurrency: cfg.maxConcurrency,
 	}
+	pacer := &requestPacer{
+		minimum: cfg.requestIntervalMin,
+		maximum: cfg.requestIntervalMax,
+	}
 	apiClient := &http.Client{Timeout: 90 * time.Second}
 	if err := heartbeat(ctx, apiClient, cfg, info); err != nil {
 		log.Printf("initial heartbeat failed: %v", err)
@@ -135,16 +149,18 @@ func main() {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			workerLoop(ctx, workerID, apiClient, cfg, info)
+			workerLoop(ctx, workerID, apiClient, cfg, info, pacer)
 		}(worker + 1)
 	}
 	log.Printf(
-		"alphapulse-agent %s started id=%s platform=%s/%s workers=%d",
+		"alphapulse-agent %s started id=%s platform=%s/%s workers=%d request_interval=%s..%s",
 		version,
 		cfg.agentID,
 		runtime.GOOS,
 		runtime.GOARCH,
 		cfg.maxConcurrency,
+		cfg.requestIntervalMin,
+		cfg.requestIntervalMax,
 	)
 	<-ctx.Done()
 	wg.Wait()
@@ -173,6 +189,16 @@ func parseConfig() (config, error) {
 	maxConcurrency := flag.Int("max-concurrency", 1, "Number of concurrent fetch workers")
 	pollWait := flag.Int("poll-wait", 20, "Server-side long poll duration in seconds")
 	heartbeatSeconds := flag.Int("heartbeat-interval", 30, "Heartbeat interval in seconds")
+	requestIntervalMin := flag.Duration(
+		"request-interval-min",
+		0,
+		"Minimum delay between target requests, for example 30s",
+	)
+	requestIntervalMax := flag.Duration(
+		"request-interval-max",
+		0,
+		"Maximum delay between target requests, for example 60s",
+	)
 	flag.Var(&allowedHosts, "allow-host", "Allowed target hostname; may be repeated")
 	flag.Parse()
 
@@ -193,6 +219,20 @@ func parseConfig() (config, error) {
 	}
 	if *heartbeatSeconds < 10 {
 		return config{}, errors.New("--heartbeat-interval must be at least 10 seconds")
+	}
+	if *requestIntervalMin < 0 || *requestIntervalMax < 0 {
+		return config{}, errors.New("request intervals cannot be negative")
+	}
+	if *requestIntervalMax == 0 && *requestIntervalMin > 0 {
+		*requestIntervalMax = *requestIntervalMin
+	}
+	if *requestIntervalMax < *requestIntervalMin {
+		return config{}, errors.New("--request-interval-max must be >= --request-interval-min")
+	}
+	if *requestIntervalMax > 0 && *maxConcurrency != 1 {
+		return config{}, errors.New(
+			"--max-concurrency must be 1 when request interval pacing is enabled",
+		)
 	}
 	token, err := readSecret(*tokenFile)
 	if err != nil {
@@ -232,6 +272,8 @@ func parseConfig() (config, error) {
 		maxConcurrency:          *maxConcurrency,
 		pollWaitSeconds:         *pollWait,
 		heartbeatInterval:       time.Duration(*heartbeatSeconds) * time.Second,
+		requestIntervalMin:      *requestIntervalMin,
+		requestIntervalMax:      *requestIntervalMax,
 	}, nil
 }
 
@@ -303,6 +345,7 @@ func workerLoop(
 	apiClient *http.Client,
 	cfg config,
 	info agentInfo,
+	pacer *requestPacer,
 ) {
 	for ctx.Err() == nil {
 		job, err := lease(ctx, apiClient, cfg, info)
@@ -313,6 +356,9 @@ func workerLoop(
 		}
 		if job == nil {
 			continue
+		}
+		if err := pacer.wait(ctx); err != nil {
+			return
 		}
 		result, err := executeJob(ctx, cfg, *job)
 		if err != nil {
@@ -325,6 +371,37 @@ func workerLoop(
 		if err := reportCompletion(ctx, apiClient, cfg, *job, result); err != nil {
 			log.Printf("worker=%d job=%s completion report failed: %v", workerID, job.JobID, err)
 		}
+	}
+}
+
+func (pacer *requestPacer) wait(ctx context.Context) error {
+	if pacer.maximum <= 0 {
+		return nil
+	}
+	pacer.mu.Lock()
+	now := time.Now()
+	startAt := now
+	if pacer.nextAt.After(startAt) {
+		startAt = pacer.nextAt
+	}
+	interval := pacer.minimum
+	if spread := pacer.maximum - pacer.minimum; spread > 0 {
+		interval += time.Duration(rand.Int63n(int64(spread) + 1))
+	}
+	pacer.nextAt = startAt.Add(interval)
+	pacer.mu.Unlock()
+
+	delay := time.Until(startAt)
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

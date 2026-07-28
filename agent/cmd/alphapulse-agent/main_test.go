@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 )
 
 func TestValidateTarget(t *testing.T) {
@@ -43,5 +45,23 @@ func TestCopyAllowedHeaders(t *testing.T) {
 	}
 	if headers.Get("Cookie") != "" || headers.Get("Authorization") != "" {
 		t.Fatal("sensitive headers must not be copied")
+	}
+}
+
+func TestRequestPacerSpacesRequests(t *testing.T) {
+	pacer := &requestPacer{
+		minimum: 20 * time.Millisecond,
+		maximum: 20 * time.Millisecond,
+	}
+	ctx := context.Background()
+	if err := pacer.wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if err := pacer.wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed < 15*time.Millisecond {
+		t.Fatalf("second request was not paced: %s", elapsed)
 	}
 }

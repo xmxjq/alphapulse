@@ -25,7 +25,8 @@ def test_load_settings_example() -> None:
     assert settings.crawl.agent_pool.db_path.is_absolute()
     assert settings.crawl.agent_pool.sources == ["guba"]
     assert settings.crawl.agent_pool.queue_wait_seconds == 10
-    assert settings.crawl.agent_pool.job_wait_seconds == 60
+    assert settings.crawl.agent_pool.lease_seconds == 180
+    assert settings.crawl.agent_pool.job_wait_seconds == 120
     assert settings.crawl.agent_pool.max_response_bytes == 8_000_000
     assert settings.crawl.agent_pool.response_body_retention_hours == 24
     assert settings.crawl.agent_pool.job_metadata_retention_days == 30
