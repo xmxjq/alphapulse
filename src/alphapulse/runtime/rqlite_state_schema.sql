@@ -12,6 +12,25 @@ CREATE TABLE IF NOT EXISTS url_state (
 CREATE INDEX IF NOT EXISTS idx_url_state_source_fetched
     ON url_state (source, last_fetched_at);
 
+CREATE TABLE IF NOT EXISTS pending_tasks (
+    dedupe_key TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    seed_name TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    pubdate_ts INTEGER NOT NULL DEFAULT 0,
+    discovered_at TEXT NOT NULL,
+    task_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_tasks_seed_priority
+    ON pending_tasks (
+        seed_name,
+        priority DESC,
+        pubdate_ts DESC,
+        discovered_at ASC
+    );
+
 CREATE TABLE IF NOT EXISTS item_state (
     source TEXT NOT NULL,
     source_entity_id TEXT NOT NULL,

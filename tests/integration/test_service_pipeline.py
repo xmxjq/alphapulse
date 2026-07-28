@@ -101,6 +101,107 @@ def test_service_processes_source_queues_in_parallel(tmp_path: Path) -> None:
     assert stats.pages_fetched == 2
 
 
+class RecoverableSeedDiscovery:
+    def ensure_compiled_seed_sets(self, seed_set_name=None):
+        return [SeedDefinition(name=seed_set_name or "recovery-test")]
+
+
+class InterruptingAdapter:
+    source_name = "guba"
+
+    def __init__(self, *, block_first_post: bool) -> None:
+        self.block_first_post = block_first_post
+        self.post_calls: list[str] = []
+
+    def discover(self, seed):
+        return [
+            CrawlTask(
+                source="guba",
+                kind="discover",
+                url="https://guba.eastmoney.com/list,600519.html",
+                seed_name=seed.name,
+                priority=160,
+                metadata={"board_code": "600519", "page": 1},
+            )
+        ]
+
+    def fetch_item(self, task):
+        if task.kind == "discover":
+            return FetchOutcome(
+                status_code=200,
+                discovered_tasks=[
+                    CrawlTask(
+                        source="guba",
+                        kind="fetch_post",
+                        url="https://guba.eastmoney.com/news,600519,2.html",
+                        seed_name=task.seed_name,
+                        priority=150,
+                        metadata={"post_id": "2", "pubdate_ts": 200},
+                    ),
+                    CrawlTask(
+                        source="guba",
+                        kind="fetch_post",
+                        url="https://guba.eastmoney.com/news,600519,1.html",
+                        seed_name=task.seed_name,
+                        priority=150,
+                        metadata={"post_id": "1", "pubdate_ts": 100},
+                    ),
+                ],
+            )
+        self.post_calls.append(str(task.url))
+        if self.block_first_post:
+            self.block_first_post = False
+            return FetchOutcome(status_code=200, blocked=True, errors=["blocked"])
+        return FetchOutcome(status_code=200)
+
+    def refresh_comments(self, item_ref):
+        raise AssertionError("not used")
+
+    def comment_task_for_post(self, post, seed_name):
+        raise AssertionError("not used")
+
+
+def test_service_recovers_dynamic_tasks_after_interrupted_source_queue(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    state = None
+    first_adapter = InterruptingAdapter(block_first_post=True)
+    first_service = AlphaPulseService(
+        settings,
+        state=state,
+        store=FakeStore(),
+        sources={"guba": first_adapter},  # type: ignore[arg-type]
+        seed_discovery=RecoverableSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    first = first_service.run_cycle(seed_set_name="recovery-test")
+    pending = first_service.state.load_pending_tasks("recovery-test")
+
+    assert first.blocked_responses == 1
+    assert first_adapter.post_calls == [
+        "https://guba.eastmoney.com/news,600519,2.html"
+    ]
+    assert {task.metadata["post_id"] for task in pending} == {"1", "2"}
+
+    second_adapter = InterruptingAdapter(block_first_post=False)
+    second_service = AlphaPulseService(
+        settings,
+        state=first_service.state,
+        store=FakeStore(),
+        sources={"guba": second_adapter},  # type: ignore[arg-type]
+        seed_discovery=RecoverableSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    second = second_service.run_cycle(seed_set_name="recovery-test")
+
+    assert second.pages_fetched == 2
+    assert second_adapter.post_calls == [
+        "https://guba.eastmoney.com/news,600519,2.html",
+        "https://guba.eastmoney.com/news,600519,1.html",
+    ]
+    assert second_service.state.load_pending_tasks("recovery-test") == []
+
+
 class FakeClient:
     def __init__(self, fixtures: Path) -> None:
         self.fixtures = fixtures

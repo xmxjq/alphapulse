@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-from alphapulse.pipeline.contracts import SeedDefinition
+from alphapulse.pipeline.contracts import CrawlTask, SeedDefinition
 from alphapulse.seeds.catalog import GeneratedSeedItem
 
 
@@ -49,6 +49,25 @@ class StateStore:
 
                 CREATE INDEX IF NOT EXISTS idx_url_state_source_fetched
                     ON url_state (source, last_fetched_at);
+
+                CREATE TABLE IF NOT EXISTS pending_tasks (
+                    dedupe_key TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    seed_name TEXT NOT NULL,
+                    priority INTEGER NOT NULL,
+                    pubdate_ts INTEGER NOT NULL DEFAULT 0,
+                    discovered_at TEXT NOT NULL,
+                    task_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_pending_tasks_seed_priority
+                    ON pending_tasks (
+                        seed_name,
+                        priority DESC,
+                        pubdate_ts DESC,
+                        discovered_at ASC
+                    );
 
                 CREATE TABLE IF NOT EXISTS item_state (
                     source TEXT NOT NULL,
@@ -221,6 +240,79 @@ class StateStore:
             conn.execute(
                 "UPDATE url_state SET last_fetched_at = NULL, last_status = NULL WHERE url = ?",
                 (url,),
+            )
+
+    def upsert_pending_tasks(self, tasks: list[CrawlTask]) -> None:
+        if not tasks:
+            return
+        now = datetime.now(UTC).isoformat()
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO pending_tasks (
+                    dedupe_key,
+                    source,
+                    seed_name,
+                    priority,
+                    pubdate_ts,
+                    discovered_at,
+                    task_json,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dedupe_key) DO UPDATE SET
+                    source = excluded.source,
+                    seed_name = excluded.seed_name,
+                    priority = excluded.priority,
+                    pubdate_ts = excluded.pubdate_ts,
+                    discovered_at = excluded.discovered_at,
+                    task_json = excluded.task_json,
+                    updated_at = excluded.updated_at
+                """,
+                [
+                    (
+                        task.dedupe_key,
+                        task.source,
+                        task.seed_name,
+                        task.priority,
+                        int(task.metadata.get("pubdate_ts") or 0),
+                        task.discovered_at.isoformat(),
+                        json.dumps(task.model_dump(mode="json"), ensure_ascii=True),
+                        now,
+                    )
+                    for task in tasks
+                ],
+            )
+
+    def load_pending_tasks(self, seed_name: str | None = None) -> list[CrawlTask]:
+        with self.connection() as conn:
+            if seed_name is None:
+                rows = conn.execute(
+                    """
+                    SELECT task_json
+                    FROM pending_tasks
+                    ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT task_json
+                    FROM pending_tasks
+                    WHERE seed_name = ?
+                    ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
+                    """,
+                    (seed_name,),
+                ).fetchall()
+        return [
+            CrawlTask.model_validate(json.loads(row["task_json"]))
+            for row in rows
+        ]
+
+    def delete_pending_task(self, dedupe_key: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "DELETE FROM pending_tasks WHERE dedupe_key = ?",
+                (dedupe_key,),
             )
 
     def should_refresh_comments(self, source: str, source_entity_id: str, min_age: timedelta) -> bool:

@@ -189,6 +189,31 @@ class AlphaPulseService:
                         },
                     )
 
+            pending_tasks = self.state.load_pending_tasks(seed_set_name)
+            recovered = 0
+            for task in pending_tasks:
+                queue = queues.get(task.source)
+                if queue is None:
+                    continue
+                # try_claim_url records an optimistic timestamp before the
+                # request starts. A crash can therefore leave a pending task
+                # looking fresh even though it never completed.
+                self.state.release_url_claim(str(task.url))
+                self._enqueue_task(queue, task, stats)
+                recovered += 1
+            if recovered:
+                logger.info(
+                    "Pending tasks recovered",
+                    extra={
+                        "event": "pending_tasks_recovered",
+                        "extra_data": {
+                            "run_id": run_id,
+                            "seed_set": seed_set_name,
+                            "tasks": recovered,
+                        },
+                    },
+                )
+
             logger.info(
                 "Seed discovery complete",
                 extra={
@@ -332,6 +357,7 @@ class AlphaPulseService:
                 min_age=self._min_age_for_task(task),
             ):
                 stats.skipped_tasks += 1
+                self.state.delete_pending_task(task.dedupe_key)
                 logger.debug(
                     "Task skipped (claim lost or still fresh)",
                     extra={
@@ -381,6 +407,7 @@ class AlphaPulseService:
                         task.source, task.metadata["post_id"]
                     )
                 self.state.mark_url_fetched(str(task.url), 200)
+                self.state.delete_pending_task(task.dedupe_key)
                 logger.info(
                     "Comments refreshed",
                     extra={
@@ -415,6 +442,7 @@ class AlphaPulseService:
                 self.state.release_url_claim(str(task.url))
             else:
                 self.state.mark_url_fetched(str(task.url), outcome.status_code)
+                self.state.delete_pending_task(task.dedupe_key)
 
         return stats
 
@@ -449,6 +477,7 @@ class AlphaPulseService:
         if outcome.posts:
             self.store.upsert_posts(outcome.posts)
             stats.posts_written += len(outcome.posts)
+            comment_tasks: list[CrawlTask] = []
             for post in outcome.posts:
                 metadata = {"canonical_url": str(post.canonical_url)}
                 self.state.upsert_item(post.source, post.source_entity_id, str(post.canonical_url), metadata)
@@ -459,10 +488,10 @@ class AlphaPulseService:
                 ):
                     comment_task = self._adapter_for_source(post.source).comment_task_for_post(post, task.seed_name)
                     if comment_task is not None:
-                        self._enqueue_task(queue, comment_task, stats)
+                        comment_tasks.append(comment_task)
+            self._enqueue_tasks(queue, comment_tasks, stats, persist=True)
 
-        for discovered_task in outcome.discovered_tasks:
-            self._enqueue_task(queue, discovered_task, stats)
+        self._enqueue_tasks(queue, outcome.discovered_tasks, stats, persist=True)
 
         log_level = logging.WARNING if (outcome.blocked or outcome.errors) else logging.INFO
         logger.log(
@@ -487,6 +516,22 @@ class AlphaPulseService:
     def _enqueue_task(self, queue: TaskQueue, task: CrawlTask, stats: RunStats) -> None:
         queue.push(task)
         stats.tasks_enqueued += 1
+
+    def _enqueue_tasks(
+        self,
+        queue: TaskQueue,
+        tasks: list[CrawlTask],
+        stats: RunStats,
+        *,
+        persist: bool,
+    ) -> None:
+        if not tasks:
+            return
+        assert self.state is not None
+        if persist:
+            self.state.upsert_pending_tasks(tasks)
+        for task in tasks:
+            self._enqueue_task(queue, task, stats)
 
     def _min_age_for_task(self, task: CrawlTask) -> timedelta:
         if task.kind == "discover":

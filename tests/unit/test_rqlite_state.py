@@ -1,3 +1,6 @@
+import json
+
+from alphapulse.pipeline.contracts import CrawlTask
 from alphapulse.runtime.config import RqliteSettings
 from alphapulse.runtime.rqlite_state import RqliteStateStore
 
@@ -5,10 +8,15 @@ from alphapulse.runtime.rqlite_state import RqliteStateStore
 class FakeRqliteClient:
     def __init__(self) -> None:
         self.executed: list[tuple[list, bool]] = []
+        self.query_response = {"results": [{"values": []}]}
 
     def execute(self, statements, queued=False):
         self.executed.append((statements, queued))
         return {"results": [{"rows_affected": 1}]}
+
+    def query_params(self, statements):
+        self.queried = statements
+        return self.query_response
 
 
 def test_release_url_claim_clears_fetch_state() -> None:
@@ -21,3 +29,43 @@ def test_release_url_claim_clears_fetch_state() -> None:
     assert queued is False
     assert "last_fetched_at = NULL" in statements[0][0]
     assert statements[0][1] == "https://guba.eastmoney.com/news,600519,42.html"
+
+
+def test_pending_tasks_use_parameterized_rqlite_statements() -> None:
+    client = FakeRqliteClient()
+    state = RqliteStateStore(RqliteSettings(), client=client)
+    task = CrawlTask(
+        source="guba",
+        kind="fetch_post",
+        url="https://guba.eastmoney.com/news,600519,42.html",
+        seed_name="cn-core",
+        priority=150,
+        metadata={"pubdate_ts": 123},
+    )
+
+    state.upsert_pending_tasks([task])
+
+    statements, queued = client.executed[0]
+    assert queued is False
+    assert "INSERT INTO pending_tasks" in statements[0][0]
+    assert statements[0][1] == task.dedupe_key
+    assert json.loads(statements[0][7])["metadata"]["pubdate_ts"] == 123
+
+    client.query_response = {
+        "results": [
+            {
+                "values": [
+                    [json.dumps(task.model_dump(mode="json"))],
+                ]
+            }
+        ]
+    }
+    loaded = state.load_pending_tasks("cn-core")
+    assert [item.dedupe_key for item in loaded] == [task.dedupe_key]
+    assert client.queried[0][1] == "cn-core"
+
+    state.delete_pending_task(task.dedupe_key)
+    delete_statements, delete_queued = client.executed[1]
+    assert delete_queued is False
+    assert "DELETE FROM pending_tasks" in delete_statements[0][0]
+    assert delete_statements[0][1] == task.dedupe_key

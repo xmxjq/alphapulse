@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from typing import Any
 
-from alphapulse.pipeline.contracts import SeedDefinition
+from alphapulse.pipeline.contracts import CrawlTask, SeedDefinition
 from alphapulse.runtime.config import RqliteSettings
 from alphapulse.seeds.catalog import GeneratedSeedItem
 from alphapulse.storage.rqlite import RqliteClient
@@ -108,6 +108,76 @@ class RqliteStateStore:
                     url,
                 ]
             ],
+            queued=False,
+        )
+
+    def upsert_pending_tasks(self, tasks: list[CrawlTask]) -> None:
+        if not tasks:
+            return
+        now = datetime.now(UTC).isoformat()
+        statements: list[str | list[Any]] = [
+            [
+                """
+                INSERT INTO pending_tasks (
+                    dedupe_key,
+                    source,
+                    seed_name,
+                    priority,
+                    pubdate_ts,
+                    discovered_at,
+                    task_json,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(dedupe_key) DO UPDATE SET
+                    source = excluded.source,
+                    seed_name = excluded.seed_name,
+                    priority = excluded.priority,
+                    pubdate_ts = excluded.pubdate_ts,
+                    discovered_at = excluded.discovered_at,
+                    task_json = excluded.task_json,
+                    updated_at = excluded.updated_at
+                """,
+                task.dedupe_key,
+                task.source,
+                task.seed_name,
+                task.priority,
+                int(task.metadata.get("pubdate_ts") or 0),
+                task.discovered_at.isoformat(),
+                json.dumps(task.model_dump(mode="json"), ensure_ascii=True),
+                now,
+            ]
+            for task in tasks
+        ]
+        self.client.execute(statements, queued=False)
+
+    def load_pending_tasks(self, seed_name: str | None = None) -> list[CrawlTask]:
+        if seed_name is None:
+            statement: list[Any] = [
+                """
+                SELECT task_json
+                FROM pending_tasks
+                ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
+                """
+            ]
+        else:
+            statement = [
+                """
+                SELECT task_json
+                FROM pending_tasks
+                WHERE seed_name = ?
+                ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
+                """,
+                seed_name,
+            ]
+        response = self.client.query_params([statement])
+        return [
+            CrawlTask.model_validate(json.loads(row[0]))
+            for row in _values(response)
+        ]
+
+    def delete_pending_task(self, dedupe_key: str) -> None:
+        self.client.execute(
+            [["DELETE FROM pending_tasks WHERE dedupe_key = ?", dedupe_key]],
             queued=False,
         )
 
