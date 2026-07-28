@@ -3,6 +3,11 @@ set -eu
 
 repo="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 output="${1:-$repo/dist/agents}"
+version="${VERSION:-}"
+if [ -z "$version" ] && command -v git >/dev/null 2>&1; then
+    version="$(git -C "$repo" rev-parse --short HEAD)"
+fi
+version="${version:-dev}"
 mkdir -p "$output"
 cd "$repo/agent"
 
@@ -13,7 +18,8 @@ build() {
     name="$4"
     echo "Building $os/$arch -> $output/$name"
     CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" GOARM="$arm" \
-        go build -trimpath -ldflags="-s -w" -o "$output/$name" ./cmd/alphapulse-agent
+        go build -trimpath -ldflags="-s -w -X main.version=$version" \
+        -o "$output/$name" ./cmd/alphapulse-agent
 }
 
 build linux amd64 "" alphapulse-agent-linux-amd64

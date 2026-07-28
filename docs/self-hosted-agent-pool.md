@@ -93,7 +93,8 @@ On Windows:
 
 Outputs are written to `dist/agents/`. Builds use `CGO_ENABLED=0`, `-trimpath`,
 and stripped symbols, so the resulting executables have no external runtime
-library requirement.
+library requirement. The current Git revision is embedded in the binary and is
+reported in node heartbeats.
 
 ## Run a node
 

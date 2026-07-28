@@ -1,5 +1,6 @@
 param(
-    [string]$OutputDirectory = "dist/agents"
+    [string]$OutputDirectory = "dist/agents",
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -7,6 +8,9 @@ $repo = Split-Path -Parent $PSScriptRoot
 $agent = Join-Path $repo "agent"
 $output = Join-Path $repo $OutputDirectory
 New-Item -ItemType Directory -Force -Path $output | Out-Null
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = (& git -C $repo rev-parse --short HEAD).Trim()
+}
 
 $targets = @(
     @{ GOOS = "linux"; GOARCH = "amd64"; GOARM = ""; Name = "alphapulse-agent-linux-amd64" },
@@ -29,7 +33,7 @@ foreach ($target in $targets) {
     }
     $destination = Join-Path $output $target.Name
     Write-Host "Building $($target.GOOS)/$($target.GOARCH) -> $destination"
-    & go build -trimpath -ldflags "-s -w" -o $destination ./cmd/alphapulse-agent
+    & go build -trimpath -ldflags "-s -w -X main.version=$Version" -o $destination ./cmd/alphapulse-agent
     if ($LASTEXITCODE -ne 0) {
         throw "Go build failed for $($target.GOOS)/$($target.GOARCH)"
     }
