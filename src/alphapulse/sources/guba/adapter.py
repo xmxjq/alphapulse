@@ -135,7 +135,9 @@ class GubaAdapter:
             used_browser = task.kind == "fetch_post" and self.browser_client is not None
             self._trip_circuit(
                 response.block_kind,
-                transport_scoped=transport is not None and not used_browser,
+                transport_scoped=(
+                    transport in {"agent", "existing"} and not used_browser
+                ),
             )
             self._save_raw(response, task.kind, requested_url=str(task.url))
             outcome = FetchOutcome(blocked=True, status_code=response.status_code)

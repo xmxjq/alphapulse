@@ -622,7 +622,7 @@ class AlphaPulseService:
                     self._apply_outcome(task, outcome, queue, stats)
                     if outcome.blocked:
                         self.state.release_url_claim(str(task.url))
-                        if self._source_circuit_open("guba"):
+                        if route == "auto" or self._source_circuit_open("guba"):
                             source_blocked = True
                         logger.warning(
                             "Guba transport blocked; other pool remains eligible",
@@ -674,6 +674,8 @@ class AlphaPulseService:
             self.settings.sources.guba.concurrent_agent_requests,
             capacity,
         )
+        if agent_slots == 0:
+            return ["auto"] * paid_slots
         return ["existing"] * paid_slots + ["agent"] * agent_slots
 
     def _guba_hybrid_enabled(self) -> bool:

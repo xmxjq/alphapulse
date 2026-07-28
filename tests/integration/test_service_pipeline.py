@@ -104,9 +104,15 @@ def test_service_processes_source_queues_in_parallel(tmp_path: Path) -> None:
 class HybridGubaAdapter:
     source_name = "guba"
 
-    def __init__(self, *, block_existing: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        block_existing: bool = False,
+        agent_capacity: int = 1,
+    ) -> None:
         self.block_existing = block_existing
-        self.barrier = threading.Barrier(2)
+        self.agent_capacity = agent_capacity
+        self.barrier = threading.Barrier(2 if agent_capacity else 1)
         self.calls: list[tuple[str, str]] = []
         self.client = type(
             "HybridClient",
@@ -128,12 +134,12 @@ class HybridGubaAdapter:
         ]
 
     def available_agent_capacity(self) -> int:
-        return 1
+        return self.agent_capacity
 
     def fetch_item_with_transport(self, task, transport):
         self.calls.append((transport, str(task.url)))
         self.barrier.wait(timeout=2)
-        if self.block_existing and transport == "existing":
+        if self.block_existing and transport in {"existing", "auto"}:
             return FetchOutcome(
                 status_code=403,
                 blocked=True,
@@ -193,6 +199,29 @@ def test_guba_hybrid_block_does_not_stop_other_pool(tmp_path: Path) -> None:
     assert stats.blocked_responses == 1
     assert len(adapter.calls) == 2
     assert len(pending) == 1
+
+
+def test_guba_without_online_agents_keeps_conservative_block_stop(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.guba.concurrent_paid_requests = 1
+    settings.sources.guba.concurrent_agent_requests = 4
+    adapter = HybridGubaAdapter(
+        block_existing=True,
+        agent_capacity=0,
+    )
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={"guba": adapter},  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    stats = service.run_cycle()
+
+    assert stats.pages_fetched == 1
+    assert stats.blocked_responses == 1
+    assert [route for route, _ in adapter.calls] == ["auto"]
 
 
 class RecoverableSeedDiscovery:
