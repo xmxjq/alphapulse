@@ -15,7 +15,7 @@ from alphapulse.pipeline.contracts import (
     SeedDefinition,
 )
 from alphapulse.runtime.config import CrawlSettings, GubaSettings
-from alphapulse.sources.guba.api import GubaClient, GubaHttpResult
+from alphapulse.sources.guba.api import GubaClient, GubaHttpResult, GubaTransport
 from alphapulse.sources.guba.browser import GubaBrowserClient
 from alphapulse.sources.guba.parser import GubaListEntry, parse_article_list, parse_post_detail, parse_replies
 from alphapulse.sources.guba.urls import (
@@ -88,6 +88,21 @@ class GubaAdapter:
         return tasks
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
+        return self._fetch_item(task, transport=None)
+
+    def fetch_item_with_transport(
+        self,
+        task: CrawlTask,
+        transport: GubaTransport,
+    ) -> FetchOutcome:
+        return self._fetch_item(task, transport=transport)
+
+    def _fetch_item(
+        self,
+        task: CrawlTask,
+        *,
+        transport: GubaTransport | None,
+    ) -> FetchOutcome:
         if self.is_circuit_open():
             return FetchOutcome(blocked=True)
 
@@ -101,6 +116,12 @@ class GubaAdapter:
         expect_marker = "var article_list" if task.kind == "discover" else "var post_article"
         if task.kind == "fetch_post" and self.browser_client is not None:
             response = self.browser_client.get(str(task.url))
+        elif transport is not None:
+            response = self.client.get(
+                str(task.url),
+                expect_marker=expect_marker,
+                transport=transport,
+            )
         else:
             response = self.client.get(str(task.url), expect_marker=expect_marker)
 
@@ -111,7 +132,11 @@ class GubaAdapter:
             return outcome
 
         if response.blocked:
-            self._trip_circuit(response.block_kind)
+            used_browser = task.kind == "fetch_post" and self.browser_client is not None
+            self._trip_circuit(
+                response.block_kind,
+                transport_scoped=transport is not None and not used_browser,
+            )
             self._save_raw(response, task.kind, requested_url=str(task.url))
             outcome = FetchOutcome(blocked=True, status_code=response.status_code)
             outcome.errors.append(f"Blocked ({response.block_kind}) from {task.url}")
@@ -387,7 +412,12 @@ class GubaAdapter:
             return False
         return True
 
-    def _trip_circuit(self, block_kind: str | None) -> None:
+    def _trip_circuit(
+        self,
+        block_kind: str | None,
+        *,
+        transport_scoped: bool = False,
+    ) -> None:
         # soft_block is a heuristic (a 200 response missing its expected data
         # marker) rather than a confirmed block, so it still stops this
         # task/cycle via FetchOutcome.blocked but must not arm the long
@@ -395,7 +425,7 @@ class GubaAdapter:
         # redirect does — that would turn a possibly IP-caused or
         # single-URL soft block into a multi-hour outage for the whole
         # source.
-        if block_kind == "soft_block":
+        if block_kind == "soft_block" or transport_scoped:
             return
         self._blocked_until = time.monotonic() + self.settings.block_cooldown_seconds
         self._blocked_kind = block_kind or "blocked"
@@ -430,6 +460,12 @@ class GubaAdapter:
                 "pubdate_ts": pubdate_ts,
             },
         )
+
+    def available_agent_capacity(self) -> int:
+        agent_pool = getattr(self.client, "agent_pool", None)
+        if agent_pool is None:
+            return 0
+        return agent_pool.store.available_capacity("http")
 
     @staticmethod
     def _entry_ts(entry: GubaListEntry) -> int:

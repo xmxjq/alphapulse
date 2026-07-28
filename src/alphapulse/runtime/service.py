@@ -70,6 +70,9 @@ class TaskQueue:
     def pop(self) -> CrawlTask:
         return heapq.heappop(self._heap)[3]
 
+    def peek(self) -> CrawlTask:
+        return self._heap[0][3]
+
     def __bool__(self) -> bool:
         return bool(self._heap)
 
@@ -296,6 +299,9 @@ class AlphaPulseService:
             raise
 
     def _run_source_queue(self, source_name: str, queue: TaskQueue) -> RunStats:
+        if source_name == "guba" and self._guba_hybrid_enabled():
+            return self._run_guba_hybrid_queue(queue)
+
         assert self.state is not None
         assert self.store is not None
         stats = RunStats()
@@ -445,6 +451,240 @@ class AlphaPulseService:
                 self.state.delete_pending_task(task.dedupe_key)
 
         return stats
+
+    def _run_guba_hybrid_queue(self, queue: TaskQueue) -> RunStats:
+        assert self.state is not None
+        assert self.store is not None
+        adapter = self._adapter_for_source("guba")
+        stats = RunStats()
+        source_blocked = False
+        guba_browser_posts_attempted = 0
+        max_workers = (
+            self.settings.sources.guba.concurrent_paid_requests
+            + self.settings.sources.guba.concurrent_agent_requests
+        )
+        logger.info(
+            "Guba hybrid source queue started",
+            extra={
+                "event": "source_queue_start",
+                "extra_data": {
+                    "source": "guba",
+                    "tasks": len(queue),
+                    "routing": "hybrid",
+                    "paid_slots": self.settings.sources.guba.concurrent_paid_requests,
+                    "agent_slot_limit": self.settings.sources.guba.concurrent_agent_requests,
+                },
+            },
+        )
+
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="alphapulse-guba",
+        ) as executor:
+            while queue:
+                if source_blocked or self._source_circuit_open("guba"):
+                    source_blocked = True
+                    while queue:
+                        task = queue.pop()
+                        stats.skipped_tasks += 1
+                        logger.debug(
+                            "Task skipped (source circuit open)",
+                            extra={
+                                "event": "task_skipped",
+                                "extra_data": {
+                                    "source": task.source,
+                                    "kind": task.kind,
+                                    "url": str(task.url),
+                                    "reason": "source_circuit_open",
+                                },
+                            },
+                        )
+                    break
+
+                routes = self._guba_hybrid_routes(adapter)
+                first = queue.peek()
+                if first.kind == "refresh_comments" or self._is_guba_browser_post(first):
+                    routes = ["existing"]
+
+                batch: list[tuple[CrawlTask, str]] = []
+                for route in routes:
+                    if not queue:
+                        break
+                    task = queue.peek()
+                    if batch and (
+                        task.kind == "refresh_comments"
+                        or self._is_guba_browser_post(task)
+                    ):
+                        break
+                    task = queue.pop()
+                    # Hybrid mode intentionally continues after a blocked
+                    # transport. Persist every claimed task, including seed
+                    # tasks, so the blocked member of a parallel batch remains
+                    # recoverable while successful peers are removed.
+                    self.state.upsert_pending_tasks([task])
+
+                    if (
+                        self._is_guba_browser_post(task)
+                        and guba_browser_posts_attempted
+                        >= self.settings.sources.guba.browser.max_posts_per_cycle
+                    ):
+                        stats.skipped_tasks += 1
+                        logger.debug(
+                            "Task skipped (browser post cycle limit)",
+                            extra={
+                                "event": "task_skipped",
+                                "extra_data": {
+                                    "source": task.source,
+                                    "kind": task.kind,
+                                    "url": str(task.url),
+                                    "reason": "browser_post_cycle_limit",
+                                    "limit": self.settings.sources.guba.browser.max_posts_per_cycle,
+                                },
+                            },
+                        )
+                        continue
+
+                    if not self.state.try_claim_url(
+                        url=str(task.url),
+                        source=task.source,
+                        kind=task.kind,
+                        seed_name=task.seed_name,
+                        min_age=self._min_age_for_task(task),
+                    ):
+                        stats.skipped_tasks += 1
+                        self.state.delete_pending_task(task.dedupe_key)
+                        logger.debug(
+                            "Task skipped (claim lost or still fresh)",
+                            extra={
+                                "event": "task_skipped",
+                                "extra_data": {
+                                    "source": task.source,
+                                    "kind": task.kind,
+                                    "url": str(task.url),
+                                },
+                            },
+                        )
+                        continue
+
+                    if self._is_guba_browser_post(task):
+                        guba_browser_posts_attempted += 1
+                        route = "existing"
+                    batch.append((task, route))
+
+                if not batch:
+                    continue
+
+                futures = [
+                    (
+                        task,
+                        route,
+                        executor.submit(
+                            self._execute_guba_hybrid_task,
+                            adapter,
+                            task,
+                            route,
+                        ),
+                    )
+                    for task, route in batch
+                ]
+                for task, route, future in futures:
+                    result_kind, payload = future.result()
+                    if result_kind == "comments":
+                        comments = payload
+                        if self._source_circuit_open("guba"):
+                            source_blocked = True
+                            stats.blocked_responses += 1
+                            self.state.release_url_claim(str(task.url))
+                            logger.warning(
+                                "Source circuit opened during comment refresh",
+                                extra={
+                                    "event": "source_circuit_open",
+                                    "extra_data": {
+                                        "source": task.source,
+                                        "kind": task.kind,
+                                        "url": str(task.url),
+                                    },
+                                },
+                            )
+                            continue
+                        if comments:
+                            self.store.upsert_comments(comments)
+                            stats.comments_written += len(comments)
+                            self.state.mark_comments_refreshed(
+                                task.source,
+                                task.metadata["post_id"],
+                            )
+                        self.state.mark_url_fetched(str(task.url), 200)
+                        self.state.delete_pending_task(task.dedupe_key)
+                        continue
+
+                    outcome = payload
+                    self._apply_outcome(task, outcome, queue, stats)
+                    if outcome.blocked:
+                        self.state.release_url_claim(str(task.url))
+                        if self._source_circuit_open("guba"):
+                            source_blocked = True
+                        logger.warning(
+                            "Guba transport blocked; other pool remains eligible",
+                            extra={
+                                "event": "guba_transport_blocked",
+                                "extra_data": {
+                                    "source": task.source,
+                                    "kind": task.kind,
+                                    "url": str(task.url),
+                                    "transport": route,
+                                    "source_circuit_open": source_blocked,
+                                },
+                            },
+                        )
+                    elif outcome.status_code is None:
+                        self.state.release_url_claim(str(task.url))
+                    else:
+                        self.state.mark_url_fetched(
+                            str(task.url),
+                            outcome.status_code,
+                        )
+                        self.state.delete_pending_task(task.dedupe_key)
+
+        return stats
+
+    @staticmethod
+    def _execute_guba_hybrid_task(
+        adapter: SourceAdapter,
+        task: CrawlTask,
+        route: str,
+    ) -> tuple[str, object]:
+        if task.kind == "refresh_comments":
+            comments = adapter.refresh_comments(
+                ItemReference(
+                    source=task.source,
+                    source_entity_id=task.metadata["post_id"],
+                    canonical_url=task.metadata["canonical_url"],
+                    metadata=task.metadata,
+                )
+            )
+            return "comments", comments
+        fetch_with_transport = getattr(adapter, "fetch_item_with_transport")
+        return "outcome", fetch_with_transport(task, route)
+
+    def _guba_hybrid_routes(self, adapter: SourceAdapter) -> list[str]:
+        paid_slots = self.settings.sources.guba.concurrent_paid_requests
+        capacity = getattr(adapter, "available_agent_capacity")()
+        agent_slots = min(
+            self.settings.sources.guba.concurrent_agent_requests,
+            capacity,
+        )
+        return ["existing"] * paid_slots + ["agent"] * agent_slots
+
+    def _guba_hybrid_enabled(self) -> bool:
+        adapter = self.sources.get("guba")
+        if adapter is None:
+            return False
+        client = getattr(adapter, "client", None)
+        return bool(
+            getattr(client, "agent_pool", None) is not None
+            and getattr(client, "proxy_provider", None) is not None
+        )
 
     def _apply_outcome(
         self,

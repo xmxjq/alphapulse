@@ -99,3 +99,6 @@ def test_agent_pool_dashboard_endpoint(tmp_path) -> None:
     assert response.status_code == 200
     assert response.json()["enabled"] is True
     assert response.json()["online_nodes"] == 0
+    assert response.json()["routing_mode"] == "hybrid"
+    assert response.json()["paid_slots"] == 1
+    assert response.json()["combined_capacity"] == 1

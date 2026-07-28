@@ -338,6 +338,28 @@ def test_soft_blocked_response_marks_outcome_without_opening_circuit(tmp_path) -
     assert client.get_calls == [first_url, second_url]
 
 
+def test_transport_scoped_hard_block_does_not_open_global_circuit(tmp_path) -> None:
+    first_url = "https://guba.eastmoney.com/list,600519.html"
+    blocked = GubaHttpResult(
+        url=first_url,
+        status_code=403,
+        text="captcha",
+        blocked=True,
+        block_kind="http_403",
+    )
+    client = FakeGubaClient({first_url: blocked})
+    adapter = _adapter(tmp_path, client, block_cooldown_seconds=3600)
+    task = adapter.discover(
+        SeedDefinition(name="test", guba_board_codes=["600519"])
+    )[0]
+    client.get = lambda url, expect_marker=None, transport="auto": blocked
+
+    outcome = adapter.fetch_item_with_transport(task, "existing")
+
+    assert outcome.blocked
+    assert not adapter.is_circuit_open()
+
+
 def test_post_detail_parses_and_records_mod_count(tmp_path) -> None:
     url = f"{BASE}/news,600519,1743987733.html"
     client = FakeGubaClient({url: _ok(url, _read("post_detail.html"))})

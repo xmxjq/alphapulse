@@ -101,6 +101,100 @@ def test_service_processes_source_queues_in_parallel(tmp_path: Path) -> None:
     assert stats.pages_fetched == 2
 
 
+class HybridGubaAdapter:
+    source_name = "guba"
+
+    def __init__(self, *, block_existing: bool = False) -> None:
+        self.block_existing = block_existing
+        self.barrier = threading.Barrier(2)
+        self.calls: list[tuple[str, str]] = []
+        self.client = type(
+            "HybridClient",
+            (),
+            {"agent_pool": object(), "proxy_provider": object()},
+        )()
+
+    def discover(self, seed):
+        return [
+            CrawlTask(
+                source="guba",
+                kind="fetch_post",
+                url=f"https://guba.eastmoney.com/news,600519,{post_id}.html",
+                seed_name=seed.name,
+                priority=150,
+                metadata={"post_id": post_id, "pubdate_ts": int(post_id)},
+            )
+            for post_id in ("2", "1")
+        ]
+
+    def available_agent_capacity(self) -> int:
+        return 1
+
+    def fetch_item_with_transport(self, task, transport):
+        self.calls.append((transport, str(task.url)))
+        self.barrier.wait(timeout=2)
+        if self.block_existing and transport == "existing":
+            return FetchOutcome(
+                status_code=403,
+                blocked=True,
+                errors=["blocked"],
+            )
+        return FetchOutcome(status_code=200)
+
+    def fetch_item(self, task):
+        raise AssertionError("hybrid queue must select a transport")
+
+    def is_circuit_open(self) -> bool:
+        return False
+
+    def refresh_comments(self, item_ref):
+        raise AssertionError("not used")
+
+    def comment_task_for_post(self, post, seed_name):
+        raise AssertionError("not used")
+
+
+def test_guba_hybrid_queue_uses_paid_and_agent_slots_together(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.guba.concurrent_paid_requests = 1
+    settings.sources.guba.concurrent_agent_requests = 1
+    adapter = HybridGubaAdapter()
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={"guba": adapter},  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    stats = service.run_cycle()
+
+    assert stats.pages_fetched == 2
+    assert {route for route, _ in adapter.calls} == {"existing", "agent"}
+
+
+def test_guba_hybrid_block_does_not_stop_other_pool(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.guba.concurrent_paid_requests = 1
+    settings.sources.guba.concurrent_agent_requests = 1
+    adapter = HybridGubaAdapter(block_existing=True)
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={"guba": adapter},  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    stats = service.run_cycle()
+    pending = service.state.load_pending_tasks("parallel-test")
+
+    assert stats.pages_fetched == 2
+    assert stats.blocked_responses == 1
+    assert len(adapter.calls) == 2
+    assert len(pending) == 1
+
+
 class RecoverableSeedDiscovery:
     def ensure_compiled_seed_sets(self, seed_set_name=None):
         return [SeedDefinition(name=seed_set_name or "recovery-test")]

@@ -97,3 +97,29 @@ def test_guba_falls_back_when_no_agent_is_available(monkeypatch, tmp_path) -> No
 
     assert result.status_code == 200
     assert result.text == "<html>local</html>"
+
+
+def test_guba_existing_transport_bypasses_agent(monkeypatch, tmp_path) -> None:
+    client = _client(tmp_path)
+    agent_pool = FakeAgentPool(
+        error=AssertionError("existing route must not call the agent pool")
+    )
+    client.agent_pool = agent_pool
+    monkeypatch.setattr(
+        client,
+        "_dispatch",
+        lambda *args, **kwargs: (
+            200,
+            "<html>paid</html>",
+            "https://guba.eastmoney.com/list,600519.html",
+        ),
+    )
+
+    result = client.get(
+        "https://guba.eastmoney.com/list,600519.html",
+        transport="existing",
+    )
+
+    assert result.status_code == 200
+    assert result.text == "<html>paid</html>"
+    assert agent_pool.calls == []

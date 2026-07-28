@@ -50,6 +50,18 @@ allowed_hosts = [
 The crawler and WebUI containers must share the same `.runtime` directory. This
 is already true in the project Compose file.
 
+Set the guba transport concurrency:
+
+```toml
+[sources.guba]
+concurrent_paid_requests = 1
+concurrent_agent_requests = 4
+```
+
+These pools run together on different queued tasks. The effective number of
+Agent slots is capped by online nodes' reported `max-concurrency`; the paid
+slots continue working when all Agent nodes are offline or benched.
+
 Restart `web` after enabling the pool so the Agent API is available. Restart
 `crawler` to enable agent-first request routing.
 
@@ -157,14 +169,17 @@ WantedBy=multi-user.target
 
 ## Request routing and failure behavior
 
-When an eligible agent is online, guba HTTP requests are queued to the agent
-pool first. If no agent is online, the queue wait expires, or the agent reports
-a transport failure, AlphaPulse falls back to the existing paid proxy/direct
-transport when `fallback_to_existing_transport = true`.
+When eligible agents are online, guba consumes different queued tasks through
+the paid proxy and Agent pools concurrently. If an Agent disappears after
+advertising capacity, its task waits up to `queue_wait_seconds` for a lease,
+then returns to the existing paid proxy/direct transport when
+`fallback_to_existing_transport = true`.
 
 After guba classifies a response as blocked, that agent is benched for
-`blocked_cooldown_seconds`. Pending crawler tasks remain in the normal durable
-`pending_tasks` state and are not owned by the agent pool.
+`blocked_cooldown_seconds`; paid proxies continue rotating independently.
+Likewise, a blocked paid proxy does not stop healthy Agent nodes. Pending
+crawler tasks remain in the normal durable `pending_tasks` state and are not
+owned by the agent pool.
 
 The WebUI `Agent pool` tab shows online, offline, and benched nodes, queue
 depth, success and block counts, platform/architecture, and recent jobs.

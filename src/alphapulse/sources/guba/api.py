@@ -6,7 +6,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib import error, parse, request
 
 from curl_cffi import requests as curl_requests
@@ -33,6 +33,7 @@ DEFAULT_USER_AGENT = (
 )
 
 BLOCKED_KINDS = {"http_403", "http_429", "captcha", "login_redirect", "soft_block"}
+GubaTransport = Literal["auto", "agent", "existing"]
 
 
 def classify_block(status_code: int, text: str, final_url: str) -> str | None:
@@ -87,14 +88,39 @@ class GubaClient:
         )
         self._backoff_multiplier = 1.0
 
-    def get(self, url: str, *, expect_marker: str | None = None) -> GubaHttpResult:
-        return self._request("GET", url, form=None, expect_marker=expect_marker)
+    def get(
+        self,
+        url: str,
+        *,
+        expect_marker: str | None = None,
+        transport: GubaTransport = "auto",
+    ) -> GubaHttpResult:
+        return self._request(
+            "GET",
+            url,
+            form=None,
+            expect_marker=expect_marker,
+            transport=transport,
+        )
 
     def post_json(self, url: str, payload: dict[str, Any]) -> GubaHttpResult:
         """POST a JSON body (used by ranking APIs that reject form-encoded input)."""
-        return self._request("POST", url, form=None, json_body=json.dumps(payload))
+        return self._request(
+            "POST",
+            url,
+            form=None,
+            json_body=json.dumps(payload),
+            transport="auto",
+        )
 
-    def post_replies(self, *, post_id: str, board_code: str, page: int) -> GubaHttpResult:
+    def post_replies(
+        self,
+        *,
+        post_id: str,
+        board_code: str,
+        page: int,
+        transport: GubaTransport = "auto",
+    ) -> GubaHttpResult:
         base = str(self.settings.base_url)
         param = (
             f"postid={post_id}&sort=1&sorttype=1&p={page}&ps={self.settings.reply_page_size}"
@@ -105,7 +131,13 @@ class GubaClient:
             "env": "2",
         }
         referer = f"{base.rstrip('/')}/news,{board_code},{post_id}.html"
-        return self._request("POST", getdata_url(base), form=form, referer=referer)
+        return self._request(
+            "POST",
+            getdata_url(base),
+            form=form,
+            referer=referer,
+            transport=transport,
+        )
 
     def _request(
         self,
@@ -116,6 +148,7 @@ class GubaClient:
         referer: str | None = None,
         expect_marker: str | None = None,
         json_body: str | None = None,
+        transport: GubaTransport = "auto",
     ) -> GubaHttpResult:
         attempts = max(1, self.settings.max_retries)
         last_result: GubaHttpResult | None = None
@@ -130,7 +163,7 @@ class GubaClient:
 
             remote_response = None
             remote_error: str | None = None
-            if self.agent_pool is not None:
+            if self.agent_pool is not None and transport != "existing":
                 headers, body = self._request_parts(
                     form=form,
                     referer=referer,
@@ -165,6 +198,7 @@ class GubaClient:
             if remote_response is None:
                 if (
                     self.agent_pool is not None
+                    and transport != "existing"
                     and not self.crawl_settings.agent_pool.fallback_to_existing_transport
                 ):
                     return GubaHttpResult(

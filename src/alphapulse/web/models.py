@@ -260,6 +260,11 @@ class AgentPoolResponse(BaseModel):
 
     generated_at: datetime
     enabled: bool
+    routing_mode: str
+    paid_slots: int
+    agent_slot_limit: int
+    online_capacity: int
+    combined_capacity: int
     online_nodes: int
     offline_nodes: int
     benched_nodes: int

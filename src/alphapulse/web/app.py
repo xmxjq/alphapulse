@@ -119,7 +119,22 @@ def create_app(
 
     @app.get("/api/agent-pool", response_model=AgentPoolResponse)
     def agent_pool_status() -> AgentPoolResponse:
-        return AgentPoolResponse.model_validate(agent_pool.snapshot())
+        snapshot = agent_pool.snapshot()
+        paid_slots = settings.sources.guba.concurrent_paid_requests
+        agent_slot_limit = settings.sources.guba.concurrent_agent_requests
+        active_agent_slots = min(
+            agent_slot_limit,
+            int(snapshot["online_capacity"]),
+        )
+        return AgentPoolResponse.model_validate(
+            {
+                **snapshot,
+                "routing_mode": "hybrid",
+                "paid_slots": paid_slots,
+                "agent_slot_limit": agent_slot_limit,
+                "combined_capacity": paid_slots + active_agent_slots,
+            }
+        )
 
     def authenticated_agent(
         agent_id: str = Header(alias="X-AlphaPulse-Agent-ID"),

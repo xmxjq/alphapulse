@@ -261,19 +261,38 @@ class AgentPoolStore:
             )
 
     def has_eligible_agent(self, capability: str) -> bool:
+        return self.available_capacity(capability) > 0
+
+    def available_capacity(self, capability: str) -> int:
         now = _utcnow()
         threshold = (now - timedelta(seconds=self.settings.heartbeat_ttl_seconds)).isoformat()
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT capabilities_json
-                FROM agent_nodes
-                WHERE last_seen_at >= ?
-                  AND (benched_until IS NULL OR benched_until <= ?)
+                SELECT
+                    node.agent_id,
+                    node.capabilities_json,
+                    node.max_concurrency,
+                    COUNT(job.job_id) AS active_jobs
+                FROM agent_nodes AS node
+                LEFT JOIN agent_jobs AS job
+                  ON job.leased_by = node.agent_id
+                 AND job.status = 'leased'
+                 AND job.lease_expires_at > ?
+                WHERE node.last_seen_at >= ?
+                  AND (node.benched_until IS NULL OR node.benched_until <= ?)
+                GROUP BY
+                    node.agent_id,
+                    node.capabilities_json,
+                    node.max_concurrency
                 """,
-                (threshold, now.isoformat()),
+                (now.isoformat(), threshold, now.isoformat()),
             ).fetchall()
-        return any(capability in json.loads(row["capabilities_json"]) for row in rows)
+        return sum(
+            max(0, int(row["max_concurrency"]) - int(row["active_jobs"]))
+            for row in rows
+            if capability in json.loads(row["capabilities_json"])
+        )
 
     def submit_job(
         self,
@@ -668,6 +687,7 @@ class AgentPoolStore:
         return {
             "generated_at": now,
             "enabled": self.settings.enabled,
+            "online_capacity": self.available_capacity("http"),
             "online_nodes": sum(node["status"] == "online" for node in nodes),
             "offline_nodes": sum(node["status"] == "offline" for node in nodes),
             "benched_nodes": sum(node["status"] == "benched" for node in nodes),

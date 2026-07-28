@@ -87,6 +87,32 @@ def test_agent_job_round_trip_and_outcome_metrics(tmp_path) -> None:
     assert snapshot["nodes"][0]["success_count"] == 1
 
 
+def test_available_capacity_subtracts_active_leases(tmp_path) -> None:
+    store = _store(tmp_path)
+    store.heartbeat(
+        agent_id="home-arm",
+        version="test",
+        os_name="linux",
+        arch="arm",
+        capabilities=["http"],
+        max_concurrency=2,
+    )
+    for post_id in ("1", "2"):
+        store.submit_job(
+            source="guba",
+            capability="http",
+            method="GET",
+            url=f"https://guba.eastmoney.com/news,600519,{post_id}.html",
+            headers={},
+            body=None,
+            timeout_seconds=30,
+        )
+
+    assert store.available_capacity("http") == 2
+    assert store.lease_job(agent_id="home-arm", capabilities=["http"]) is not None
+    assert store.available_capacity("http") == 1
+
+
 def test_blocked_outcome_benches_agent(tmp_path) -> None:
     store = _store(tmp_path)
     _heartbeat(store)

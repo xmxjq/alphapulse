@@ -288,6 +288,8 @@ class GubaSettings(BaseModel):
     )
     request_interval_min_seconds: float = Field(default=2.0, ge=0.0)
     request_interval_max_seconds: float = Field(default=6.0, ge=0.0)
+    concurrent_paid_requests: int = Field(default=1, ge=1, le=16)
+    concurrent_agent_requests: int = Field(default=4, ge=1, le=64)
     max_retries: int = Field(default=3, ge=1)
     block_cooldown_seconds: int = Field(default=21600, ge=1)
     user_agent: str | None = None

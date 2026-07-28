@@ -578,6 +578,9 @@ function renderAgentSummary(payload) {
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Online"), el("div", { class: "value status-ok" }, String(payload.online_nodes))]),
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Benched"), el("div", { class: "value status-running" }, String(payload.benched_nodes))]),
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Offline"), el("div", { class: "value" }, String(payload.offline_nodes))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Paid slots"), el("div", { class: "value" }, String(payload.paid_slots))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Agent slots"), el("div", { class: "value" }, `${payload.online_capacity} / ${payload.agent_slot_limit}`)]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Combined capacity"), el("div", { class: "value" }, String(payload.combined_capacity))]),
   ]));
 }
 

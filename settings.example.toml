@@ -194,6 +194,10 @@ hot_boards_per_section = 12
 # an adaptive backoff multiplier before firing. No login or cookies required.
 request_interval_min_seconds = 2.0
 request_interval_max_seconds = 6.0
+# Hybrid guba mode runs these paid-proxy and self-hosted-agent request slots
+# together. Agent slots shrink automatically to current online capacity.
+concurrent_paid_requests = 1
+concurrent_agent_requests = 4
 max_retries = 3
 # Stop all guba work after a blocked response and retry after this cooldown.
 block_cooldown_seconds = 21600
