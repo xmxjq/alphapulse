@@ -167,6 +167,33 @@ ProtectHome=true
 WantedBy=multi-user.target
 ```
 
+## Synology DSM
+
+Synology systems can run the static binary from `/volume1` and use an
+`/usr/local/etc/rc.d` script for boot persistence. The project includes the
+deployed template:
+
+```bash
+scripts/alphapulse-agent-synology.sh
+```
+
+Install it after placing the binary and credentials in
+`/volume1/alphapulse-agent`:
+
+```bash
+sudo install -o root -g root -m 755 \
+  scripts/alphapulse-agent-synology.sh \
+  /usr/local/etc/rc.d/alphapulse-agent.sh
+
+sudo /usr/local/etc/rc.d/alphapulse-agent.sh start
+sudo /usr/local/etc/rc.d/alphapulse-agent.sh status
+```
+
+The service process runs as the unprivileged `xmxjq` user. The directory and
+credential files should be mode `700` and `600` respectively. The DS120j used
+by this project reports `aarch64`, so it uses the `linux-arm64` binary even
+though the hardware is resource-constrained.
+
 ## Request routing and failure behavior
 
 When eligible agents are online, guba consumes different queued tasks through
