@@ -181,6 +181,97 @@ class ProxyPoolResponse(BaseModel):
     events: list[ProxyPoolEvent] = Field(default_factory=list)
 
 
+class AgentHeartbeatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(min_length=1, max_length=128)
+    version: str = Field(default="unknown", max_length=64)
+    os: str = Field(default="unknown", max_length=32)
+    arch: str = Field(default="unknown", max_length=32)
+    capabilities: list[str] = Field(default_factory=lambda: ["http"])
+    max_concurrency: int = Field(default=1, ge=1, le=64)
+
+
+class AgentLeaseRequest(AgentHeartbeatRequest):
+    wait_seconds: int = Field(default=20, ge=0, le=30)
+
+
+class AgentCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lease_id: str = Field(min_length=1, max_length=128)
+    status_code: int = Field(ge=0, le=999)
+    final_url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    body_base64: str
+    duration_ms: int | None = Field(default=None, ge=0)
+
+
+class AgentFailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lease_id: str = Field(min_length=1, max_length=128)
+    error_message: str = Field(min_length=1, max_length=2000)
+    retryable: bool = True
+
+
+class AgentPoolNode(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    agent_id: str
+    version: str
+    os: str
+    arch: str
+    capabilities: list[str]
+    max_concurrency: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    benched_until: datetime | None
+    leased_count: int
+    success_count: int
+    failure_count: int
+    blocked_count: int
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    last_failure_reason: str | None
+    status: str
+    success_rate: float | None
+
+
+class AgentPoolJob(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    job_id: str
+    source: str
+    capability: str
+    host: str
+    status: str
+    created_at: datetime
+    leased_by: str | None
+    attempts: int
+    response_status: int | None
+    duration_ms: int | None
+    error_message: str | None
+    outcome: str | None
+
+
+class AgentPoolResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: datetime
+    enabled: bool
+    online_nodes: int
+    offline_nodes: int
+    benched_nodes: int
+    queued_jobs: int
+    leased_jobs: int
+    completed_jobs: int
+    failed_jobs: int
+    cancelled_jobs: int
+    nodes: list[AgentPoolNode] = Field(default_factory=list)
+    jobs: list[AgentPoolJob] = Field(default_factory=list)
+
+
 class PostSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

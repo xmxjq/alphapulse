@@ -11,6 +11,11 @@ from urllib import error, parse, request
 
 from curl_cffi import requests as curl_requests
 
+from alphapulse.runtime.agent_pool import (
+    AgentJobFailed,
+    AgentPoolClient,
+    AgentPoolUnavailable,
+)
 from alphapulse.runtime.config import CrawlSettings, GubaSettings
 from alphapulse.sources.fetching import ProxyLease, _build_proxy_provider
 from alphapulse.sources.guba.parser import extract_embedded_json
@@ -71,6 +76,15 @@ class GubaClient:
         self.settings = settings
         self.crawl_settings = crawl_settings
         self.proxy_provider = _build_proxy_provider(crawl_settings, source="guba")
+        self.agent_pool = (
+            AgentPoolClient(crawl_settings.agent_pool)
+            if crawl_settings.agent_pool.enabled
+            and (
+                not crawl_settings.agent_pool.sources
+                or "guba" in crawl_settings.agent_pool.sources
+            )
+            else None
+        )
         self._backoff_multiplier = 1.0
 
     def get(self, url: str, *, expect_marker: str | None = None) -> GubaHttpResult:
@@ -111,19 +125,65 @@ class GubaClient:
             lease: ProxyLease | None = None
             proxy_url: str | None = None
             acquire_error: str | None = None
+            agent_job_id: str | None = None
             self._adaptive_sleep(was_rate_limited=backoff_for_block)
 
-            if self.proxy_provider is not None:
+            remote_response = None
+            remote_error: str | None = None
+            if self.agent_pool is not None:
+                headers, body = self._request_parts(
+                    form=form,
+                    referer=referer,
+                    json_body=json_body,
+                    include_cookies=False,
+                )
                 try:
-                    lease = self.proxy_provider.acquire()
-                except Exception as exc:
-                    if not self.crawl_settings.proxy.fail_open:
-                        acquire_error = f"Failed to acquire proxy: {exc}"
-                else:
-                    if lease is not None:
-                        proxy_url = lease.proxy_url
-                    elif not self.crawl_settings.proxy.fail_open:
-                        acquire_error = "No proxy available from proxy provider"
+                    remote_response = self.agent_pool.fetch(
+                        source="guba",
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        body=body,
+                        timeout_seconds=self.crawl_settings.request_timeout_seconds,
+                        priority=100,
+                    )
+                    agent_job_id = remote_response.job_id
+                except (AgentPoolUnavailable, AgentJobFailed, ValueError) as exc:
+                    remote_error = str(exc)
+                    logger.info(
+                        "Guba remote agent unavailable; using existing transport",
+                        extra={
+                            "event": "guba_agent_fallback",
+                            "extra_data": {
+                                "url": url,
+                                "reason": remote_error,
+                                "attempt": attempt + 1,
+                            },
+                        },
+                    )
+
+            if remote_response is None:
+                if (
+                    self.agent_pool is not None
+                    and not self.crawl_settings.agent_pool.fallback_to_existing_transport
+                ):
+                    return GubaHttpResult(
+                        url=url,
+                        status_code=0,
+                        text="",
+                        error_message=remote_error or "No remote agent available",
+                    )
+                if self.proxy_provider is not None:
+                    try:
+                        lease = self.proxy_provider.acquire()
+                    except Exception as exc:
+                        if not self.crawl_settings.proxy.fail_open:
+                            acquire_error = f"Failed to acquire proxy: {exc}"
+                    else:
+                        if lease is not None:
+                            proxy_url = lease.proxy_url
+                        elif not self.crawl_settings.proxy.fail_open:
+                            acquire_error = "No proxy available from proxy provider"
 
             if acquire_error is not None:
                 last_result = GubaHttpResult(
@@ -139,9 +199,14 @@ class GubaClient:
 
             started = time.monotonic()
             try:
-                status_code, text, final_url = self._dispatch(
-                    method, url, form, referer, proxy_url, json_body
-                )
+                if remote_response is not None:
+                    status_code = remote_response.status_code
+                    text = remote_response.text
+                    final_url = remote_response.final_url
+                else:
+                    status_code, text, final_url = self._dispatch(
+                        method, url, form, referer, proxy_url, json_body
+                    )
             except error.HTTPError as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 body = exc.read().decode("utf-8", errors="ignore")
@@ -199,6 +264,8 @@ class GubaClient:
                 return last_result
 
             duration_ms = int((time.monotonic() - started) * 1000)
+            if remote_response is not None and remote_response.duration_ms is not None:
+                duration_ms = remote_response.duration_ms
             block_kind = classify_block(status_code, text, final_url)
             if (
                 block_kind is None
@@ -237,12 +304,20 @@ class GubaClient:
                 )
                 if lease is not None:
                     self._report_bad_proxy(lease, f"blocked: {block_kind}")
+                if agent_job_id is not None:
+                    self.agent_pool.store.record_outcome(
+                        agent_job_id,
+                        "blocked",
+                        f"blocked: {block_kind}",
+                    )
                 last_result = result
                 if attempt + 1 < attempts:
                     backoff_for_block = True
                     continue
             elif lease is not None:
                 self._report_success_proxy(lease)
+            elif agent_job_id is not None:
+                self.agent_pool.store.record_outcome(agent_job_id, "success")
             return result
 
         return last_result or GubaHttpResult(url=url, status_code=0, text="", error_message="Request failed")
@@ -267,14 +342,12 @@ class GubaClient:
             )
 
         opener = request.build_opener()
-        headers = self._headers(referer)
-        data = None
-        if json_body is not None:
-            data = json_body.encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        elif form is not None:
-            data = parse.urlencode(form).encode("utf-8")
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        headers, data = self._request_parts(
+            form=form,
+            referer=referer,
+            json_body=json_body,
+            include_cookies=True,
+        )
         req = request.Request(url, data=data, headers=headers, method=method)
         with opener.open(req, timeout=self.crawl_settings.request_timeout_seconds) as response:
             charset = response.headers.get_content_charset()
@@ -291,14 +364,12 @@ class GubaClient:
         proxy_url: str,
         json_body: str | None,
     ) -> tuple[int, str, str]:
-        headers = self._headers(referer)
-        data: bytes | None = None
-        if json_body is not None:
-            data = json_body.encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        elif form is not None:
-            data = parse.urlencode(form).encode("utf-8")
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        headers, data = self._request_parts(
+            form=form,
+            referer=referer,
+            json_body=json_body,
+            include_cookies=True,
+        )
         try:
             response = curl_requests.request(
                 method,
@@ -390,13 +461,36 @@ class GubaClient:
         except UnicodeDecodeError:
             return raw.decode("gb18030", errors="replace")
 
-    def _headers(self, referer: str | None) -> dict[str, str]:
+    def _request_parts(
+        self,
+        *,
+        form: dict[str, str] | None,
+        referer: str | None,
+        json_body: str | None,
+        include_cookies: bool,
+    ) -> tuple[dict[str, str], bytes | None]:
+        headers = self._headers(referer, include_cookies=include_cookies)
+        data: bytes | None = None
+        if json_body is not None:
+            data = json_body.encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        elif form is not None:
+            data = parse.urlencode(form).encode("utf-8")
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        return headers, data
+
+    def _headers(
+        self,
+        referer: str | None,
+        *,
+        include_cookies: bool = True,
+    ) -> dict[str, str]:
         headers = {
             "User-Agent": self.settings.user_agent or DEFAULT_USER_AGENT,
             "Referer": referer or f"{str(self.settings.base_url).rstrip('/')}/",
             "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
         }
-        if self.settings.cookies:
+        if include_cookies and self.settings.cookies:
             headers["Cookie"] = "; ".join(
                 f"{name}={value}" for name, value in self.settings.cookies.items()
             )

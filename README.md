@@ -26,6 +26,8 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 - Durable local crawl state in SQLite
 - Optional raw-response archive: sha256-addressed gzip blobs plus a SQLite fetch log (`[crawl.raw_store]`)
 - Proxy providers: `proxy_pool` sidecar or `static_list` for self-hosted xray tunnels (see `docs/xray-proxy.md`)
+- Self-hosted outbound fetch agents with small static Go binaries for Linux,
+  Windows, macOS, amd64, arm64, and Linux armv7
 - CLI commands for config validation, DB init, health checks, run loop, and backfill
 - Read-only web dashboard for crawl status, seed-set inventory, posts, and comments
 - Docker Compose for the crawler; storage is external (rqlite/ClickHouse/Mongo) via `settings.toml`
@@ -143,6 +145,12 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
    cooldown_seconds = 300
    ```
 
+9. Optional: add your own VPS or home-network egress nodes without exposing an
+   inbound proxy port. Enable `[crawl.agent_pool]`, create a per-node token, and
+   run the static `alphapulse-agent` binary. See
+   `docs/self-hosted-agent-pool.md` for build, Cloudflare Access, systemd, and
+   Windows examples.
+
 ## Storage
 
 - `rqlite` is the default backend in `settings.example.toml` and is intended for lighter remote persistence.
@@ -159,6 +167,9 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 - Guba requires no cookies or JS; request pacing is randomized with adaptive backoff, and blocked responses are classified into the fetch log. See `docs/guba-crawl.md` for mechanics and the live smoke test.
 - Proxy support is provider-based: the `proxy_pool` sidecar (free public proxies, unstable but zero-setup) or `static_list` (fixed upstreams such as self-hosted xray tunnels, see `docs/xray-proxy.md`). `crawl.proxy.sources` scopes proxying per source.
 - The proxy abstraction is intentionally generic so stronger external pools, including paid residential or mobile providers, can be added later without rewriting the adapters.
+- Self-hosted agents are transport executors rather than open proxies. The
+  worker retains scheduling, parsing, persistence, and source-specific block
+  classification; agents only fetch exact allowlisted HTTP(S) targets.
 - The comments API template is configurable because Xueqiu can change its endpoints and payload shapes.
 - Seed generation is configured in `seed_catalog.toml`; `settings.toml` now points at the catalog and controls refresh cadence plus TTL.
 - V1 seed generator types are `manual`, `stock_universe`, and `longhubang`. The built-in providers are deterministic and file-backed.

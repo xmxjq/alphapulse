@@ -7,6 +7,7 @@ from pathlib import Path
 
 from alphapulse.cli.sql_shell import run_once, run_repl, SqlExecutor
 from alphapulse.runtime.config import Settings, load_settings
+from alphapulse.runtime.agent_pool import AgentPoolStore
 from alphapulse.runtime.logging import configure_logging
 from alphapulse.runtime.service import AlphaPulseService
 from alphapulse.seeds.catalog import SeedCatalogLoader
@@ -32,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
     web_parser = subparsers.add_parser("web", help="Start the read-only web dashboard.")
     web_parser.add_argument("--host", help="Bind host (overrides settings.web.host).")
     web_parser.add_argument("--port", type=int, help="Bind port (overrides settings.web.port).")
+
+    token_parser = subparsers.add_parser(
+        "agent-token", help="Create, list, or revoke remote agent credentials."
+    )
+    token_parser.add_argument("action", choices=("create", "list", "revoke"))
+    token_parser.add_argument("--agent-id", help="Stable id of the remote agent.")
 
     subparsers.add_parser("validate-config", help="Validate config and print normalized settings.")
     subparsers.add_parser("init-db", help="Create configured storage schema.")
@@ -74,6 +81,22 @@ def main(argv: list[str] | None = None) -> int:
                 raise SystemExit("No SQL provided on stdin.")
             return run_once(executor, sql, args.pretty)
         return run_repl(executor, args.pretty)
+
+    if args.command == "agent-token":
+        settings = load_settings(Path(args.config))
+        store = AgentPoolStore(settings.crawl.agent_pool)
+        if args.action in {"create", "revoke"} and not args.agent_id:
+            parser.error("--agent-id is required for create and revoke")
+        if args.action == "create":
+            token = store.issue_token(args.agent_id)
+            print(json.dumps({"agent_id": args.agent_id, "token": token}, indent=2))
+            return 0
+        if args.action == "revoke":
+            revoked = store.revoke_token(args.agent_id)
+            print(json.dumps({"agent_id": args.agent_id, "revoked": revoked}, indent=2))
+            return 0
+        print(json.dumps(store.list_tokens(), indent=2))
+        return 0
 
     if args.command == "web":
         import uvicorn

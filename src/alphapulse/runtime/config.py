@@ -11,6 +11,7 @@ StorageBackend = Literal["clickhouse", "rqlite", "mongo"]
 StateBackend = Literal["sqlite", "rqlite"]
 ProxyProviderType = Literal["proxy_pool", "static_list", "kuaidaili"]
 SpaceDiscoveryBackend = Literal["api", "cli"]
+AgentPoolStrategy = Literal["agent_first"]
 
 
 class StorageSettings(BaseModel):
@@ -76,6 +77,7 @@ class CrawlSettings(BaseModel):
     kuaidaili: "CrawlKuaidailiSettings" = Field(
         default_factory=lambda: CrawlKuaidailiSettings()
     )
+    agent_pool: "AgentPoolSettings" = Field(default_factory=lambda: AgentPoolSettings())
     raw_store: "RawStoreSettings" = Field(default_factory=lambda: RawStoreSettings())
 
     @model_validator(mode="after")
@@ -148,6 +150,33 @@ class CrawlKuaidailiSettings(BaseModel):
         if self.low_watermark >= self.batch_size:
             raise ValueError("crawl.kuaidaili.low_watermark must be less than batch_size")
         return self
+
+
+class AgentPoolSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    db_path: Path = Path(".runtime/agent-pool.db")
+    sources: list[str] = Field(default_factory=lambda: ["guba"])
+    strategy: AgentPoolStrategy = "agent_first"
+    heartbeat_ttl_seconds: int = Field(default=90, ge=10, le=3600)
+    lease_seconds: int = Field(default=60, ge=10, le=3600)
+    queue_wait_seconds: int = Field(default=10, ge=1, le=30)
+    job_wait_seconds: int = Field(default=60, ge=1, le=3600)
+    result_poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=10.0)
+    blocked_cooldown_seconds: int = Field(default=600, ge=0, le=86400)
+    max_response_bytes: int = Field(default=8_000_000, ge=1024, le=50_000_000)
+    max_pending_jobs: int = Field(default=10_000, ge=1, le=1_000_000)
+    response_body_retention_hours: int = Field(default=24, ge=1, le=168)
+    job_metadata_retention_days: int = Field(default=30, ge=1, le=365)
+    fallback_to_existing_transport: bool = True
+    allowed_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "guba.eastmoney.com",
+            "emappdata.eastmoney.com",
+            "push2.eastmoney.com",
+        ]
+    )
 
 
 class RawStoreSettings(BaseModel):
@@ -360,6 +389,9 @@ def load_settings(path: Path) -> Settings:
     )
     settings.crawl.kuaidaili.metrics_path = _resolve_path(
         config_dir, settings.crawl.kuaidaili.metrics_path
+    )
+    settings.crawl.agent_pool.db_path = _resolve_path(
+        config_dir, settings.crawl.agent_pool.db_path
     )
     settings.sources.xueqiu.seed_catalog_path = _resolve_path(config_dir, settings.sources.xueqiu.seed_catalog_path)
     if settings.crawl.state_backend == "sqlite":

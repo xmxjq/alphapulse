@@ -83,6 +83,35 @@ acquire_timeout_seconds = 20
 # consecutive failures. Explicit blocks and proxy setup failures bench it now.
 failure_threshold = 3
 
+[crawl.agent_pool]
+# Self-hosted outbound fetch agents. Agents make outbound HTTPS connections to
+# this worker's Web API, so neither the worker nor home/VPS nodes need inbound
+# ports. Create one credential per node with:
+#   uv run alphapulse --config settings.toml agent-token create --agent-id home-arm
+enabled = false
+db_path = ".runtime/agent-pool.db"
+sources = ["guba"]
+strategy = "agent_first"
+heartbeat_ttl_seconds = 90
+lease_seconds = 60
+queue_wait_seconds = 10
+job_wait_seconds = 60
+result_poll_interval_seconds = 0.5
+blocked_cooldown_seconds = 600
+max_response_bytes = 8000000
+max_pending_jobs = 10000
+response_body_retention_hours = 24
+job_metadata_retention_days = 30
+# When no suitable agent is online, continue through the configured paid proxy
+# or direct transport instead of stopping the source.
+fallback_to_existing_transport = true
+# Both the worker and agent binary enforce this exact hostname allowlist.
+allowed_hosts = [
+  "guba.eastmoney.com",
+  "emappdata.eastmoney.com",
+  "push2.eastmoney.com",
+]
+
 [crawl.raw_store]
 # Disk archive of raw HTTP responses: gzip blobs content-addressed by sha256
 # under {root_path}/blobs plus a {root_path}/fetch_log.db SQLite index that

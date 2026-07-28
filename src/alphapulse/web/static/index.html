@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AlphaPulse dashboard</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260724-proxy-pool" />
+    <link rel="stylesheet" href="/static/style.css?v=20260728-agent-pool" />
   </head>
   <body>
     <header>
@@ -14,6 +14,7 @@
         <button data-tab="posts" class="tab">Posts</button>
         <button data-tab="guba" class="tab">Guba</button>
         <button data-tab="proxy" class="tab">Proxy pool</button>
+        <button data-tab="agents" class="tab">Agent pool</button>
         <a href="/report/guba" class="tab report-link">📰 股吧日报</a>
         <a href="/report/tgb" class="tab report-link">📰 淘股吧日报</a>
       </nav>
@@ -160,8 +161,33 @@
           <div id="proxy-events" class="body">Loading...</div>
         </article>
       </section>
+
+      <section id="agents-view" class="view">
+        <div class="toolbar">
+          <button id="agents-refresh">Refresh</button>
+          <span id="agents-meta" class="meta"></span>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <h2>Agent health</h2>
+            <div id="agents-summary" class="body">Loading...</div>
+          </article>
+          <article class="card">
+            <h2>Job queue</h2>
+            <div id="agents-jobs-summary" class="body">Loading...</div>
+          </article>
+        </div>
+        <article class="card">
+          <h2>Self-hosted nodes</h2>
+          <div id="agents-nodes" class="body">Loading...</div>
+        </article>
+        <article class="card">
+          <h2>Recent agent jobs</h2>
+          <div id="agents-jobs" class="body">Loading...</div>
+        </article>
+      </section>
     </main>
 
-    <script src="/static/app.js?v=20260724-proxy-pool"></script>
+    <script src="/static/app.js?v=20260728-agent-pool"></script>
   </body>
 </html>

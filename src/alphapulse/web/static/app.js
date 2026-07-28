@@ -13,6 +13,7 @@ const state = {
   gubaPosts: [],
   gubaBoardFilter: "",
   proxyHours: 24,
+  agents: null,
 };
 
 function el(tag, attrs = {}, children = []) {
@@ -569,6 +570,91 @@ async function refreshProxyPool() {
   }
 }
 
+function renderAgentSummary(payload) {
+  const target = document.getElementById("agents-summary");
+  target.innerHTML = "";
+  target.appendChild(el("div", { class: "stats" }, [
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Enabled"), el("div", { class: "value" }, payload.enabled ? "yes" : "no")]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Online"), el("div", { class: "value status-ok" }, String(payload.online_nodes))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Benched"), el("div", { class: "value status-running" }, String(payload.benched_nodes))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Offline"), el("div", { class: "value" }, String(payload.offline_nodes))]),
+  ]));
+}
+
+function renderAgentJobSummary(payload) {
+  const target = document.getElementById("agents-jobs-summary");
+  target.innerHTML = "";
+  target.appendChild(el("div", { class: "stats" }, [
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Queued"), el("div", { class: "value" }, String(payload.queued_jobs))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Leased"), el("div", { class: "value" }, String(payload.leased_jobs))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Completed"), el("div", { class: "value status-ok" }, String(payload.completed_jobs))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Failed"), el("div", { class: "value status-failed" }, String(payload.failed_jobs))]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "Cancelled"), el("div", { class: "value" }, String(payload.cancelled_jobs))]),
+  ]));
+}
+
+function renderAgentNodes(payload) {
+  const target = document.getElementById("agents-nodes");
+  target.innerHTML = "";
+  if (!payload.nodes.length) {
+    target.appendChild(el("div", { class: "empty" }, "No self-hosted agents have connected yet."));
+    return;
+  }
+  const head = el("tr", {}, ["Agent", "Status", "Platform", "Capabilities", "Workers", "Leases", "OK", "Blocked", "Failure", "Rate", "Last seen"].map(h => el("th", {}, h)));
+  const rows = payload.nodes.map(node => el("tr", {}, [
+    el("td", { class: "mono" }, node.agent_id),
+    el("td", { class: `agent-status ${node.status}` }, node.status),
+    el("td", { class: "mono" }, `${node.os}/${node.arch}`),
+    el("td", {}, node.capabilities.join(", ")),
+    el("td", { class: "num" }, String(node.max_concurrency)),
+    el("td", { class: "num" }, String(node.leased_count)),
+    el("td", { class: "num" }, String(node.success_count)),
+    el("td", { class: "num" }, String(node.blocked_count)),
+    el("td", { class: "num" }, String(node.failure_count)),
+    el("td", { class: "num" }, fmtPercent(node.success_rate)),
+    el("td", { class: "mono" }, fmtDate(node.last_seen_at)),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
+function renderAgentJobs(payload) {
+  const target = document.getElementById("agents-jobs");
+  target.innerHTML = "";
+  if (!payload.jobs.length) {
+    target.appendChild(el("div", { class: "empty" }, "No agent jobs recorded yet."));
+    return;
+  }
+  const head = el("tr", {}, ["Created", "Source", "Host", "Status", "Agent", "Attempts", "HTTP", "Duration", "Outcome", "Error"].map(h => el("th", {}, h)));
+  const rows = payload.jobs.map(job => el("tr", {}, [
+    el("td", { class: "mono" }, fmtDate(job.created_at)),
+    el("td", {}, job.source),
+    el("td", { class: "mono" }, job.host),
+    el("td", { class: `agent-status ${job.status}` }, job.status),
+    el("td", { class: "mono" }, job.leased_by || "-"),
+    el("td", { class: "num" }, String(job.attempts)),
+    el("td", { class: "num" }, job.response_status === null ? "-" : String(job.response_status)),
+    el("td", { class: "num" }, job.duration_ms === null ? "-" : `${job.duration_ms} ms`),
+    el("td", {}, job.outcome || "-"),
+    el("td", { class: "err" }, job.error_message || "-"),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
+async function refreshAgentPool() {
+  const meta = document.getElementById("agents-meta");
+  try {
+    const payload = await fetchJSON("/api/agent-pool");
+    state.agents = payload;
+    renderAgentSummary(payload);
+    renderAgentJobSummary(payload);
+    renderAgentNodes(payload);
+    renderAgentJobs(payload);
+    meta.textContent = `updated ${new Date().toLocaleTimeString(undefined, { hour12: false })}`;
+  } catch (err) {
+    meta.textContent = `error: ${err.message}`;
+  }
+}
+
 function switchTab(tab) {
   state.activeTab = tab;
   for (const b of document.querySelectorAll(".tab")) b.classList.toggle("active", b.dataset.tab === tab);
@@ -576,6 +662,7 @@ function switchTab(tab) {
   if (tab === "posts") refreshPosts();
   if (tab === "guba") refreshGuba();
   if (tab === "proxy") refreshProxyPool();
+  if (tab === "agents") refreshAgentPool();
 }
 
 function wireEvents() {
@@ -611,6 +698,7 @@ function wireEvents() {
     refreshProxyPool();
   });
   document.getElementById("proxy-refresh").addEventListener("click", refreshProxyPool);
+  document.getElementById("agents-refresh").addEventListener("click", refreshAgentPool);
 }
 
 function start() {
@@ -620,6 +708,7 @@ function start() {
     refreshStatus();
     if (state.activeTab === "guba") refreshGuba();
     if (state.activeTab === "proxy") refreshProxyPool();
+    if (state.activeTab === "agents") refreshAgentPool();
   }, POLL_INTERVAL_MS);
 }
 
