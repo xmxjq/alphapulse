@@ -34,7 +34,7 @@ lease_seconds = 180
 queue_wait_seconds = 10
 job_wait_seconds = 120
 result_poll_interval_seconds = 0.5
-blocked_cooldown_seconds = 600
+blocked_cooldown_seconds = 21600
 max_response_bytes = 8000000
 max_pending_jobs = 10000
 response_body_retention_hours = 24
@@ -219,6 +219,10 @@ After guba classifies a response as blocked, that agent is benched for
 Likewise, a blocked paid proxy does not stop healthy Agent nodes. Pending
 crawler tasks remain in the normal durable `pending_tasks` state and are not
 owned by the agent pool.
+
+For stable residential IPs, keep this cooldown long (the project default is six
+hours). Repeatedly probing a fixed exit every few minutes after a block usually
+extends the restriction rather than recovering it.
 
 The WebUI `Agent pool` tab shows online, offline, and benched nodes, queue
 depth, success and block counts, platform/architecture, and recent jobs.

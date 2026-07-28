@@ -164,7 +164,7 @@ class AgentPoolSettings(BaseModel):
     queue_wait_seconds: int = Field(default=10, ge=1, le=30)
     job_wait_seconds: int = Field(default=120, ge=1, le=3600)
     result_poll_interval_seconds: float = Field(default=0.5, ge=0.05, le=10.0)
-    blocked_cooldown_seconds: int = Field(default=600, ge=0, le=86400)
+    blocked_cooldown_seconds: int = Field(default=21600, ge=0, le=86400)
     max_response_bytes: int = Field(default=8_000_000, ge=1024, le=50_000_000)
     max_pending_jobs: int = Field(default=10_000, ge=1, le=1_000_000)
     response_body_retention_hours: int = Field(default=24, ge=1, le=168)
