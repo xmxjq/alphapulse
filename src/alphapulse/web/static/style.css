@@ -130,7 +130,7 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
 .proxy-chart { display: grid; gap: 6px; min-width: 560px; }
 .proxy-chart-row {
   display: grid;
-  grid-template-columns: 130px minmax(240px, 1fr) 180px;
+  grid-template-columns: 130px minmax(240px, 1fr) 210px;
   gap: 10px;
   align-items: center;
 }
@@ -164,5 +164,5 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
   main { padding: 12px; }
   .grid { grid-template-columns: 1fr; }
   .split { grid-template-columns: 1fr; }
-  .proxy-chart-row { grid-template-columns: 105px minmax(180px, 1fr) 155px; }
+  .proxy-chart-row { grid-template-columns: 105px minmax(180px, 1fr) 185px; }
 }

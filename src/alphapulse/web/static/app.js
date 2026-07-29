@@ -532,7 +532,7 @@ function renderProxyTrend(payload) {
         el("div", { class: "proxy-bar success", style: `width:${successWidth}`, title: `successes ${point.successes}` }),
         el("div", { class: "proxy-bar failure", style: `width:${failureWidth}`, title: `failures ${point.failures}` }),
       ]),
-      el("div", { class: "proxy-chart-values" }, `IP ${point.extracted} | lease ${point.leases} | ok ${point.successes} | bad ${point.failures}`),
+      el("div", { class: "proxy-chart-values" }, `IP ${point.extracted} | L ${point.leases} | OK ${point.successes} | Fail ${point.failures}`),
     ]));
   }
   target.appendChild(chart);
