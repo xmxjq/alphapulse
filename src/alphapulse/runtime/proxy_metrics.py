@@ -77,6 +77,18 @@ class ProxyMetricsStore:
                     ON proxy_events (provider, occurred_at);
                 """
             )
+            event_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(proxy_events)").fetchall()
+            }
+            if "source" not in event_columns:
+                conn.execute("ALTER TABLE proxy_events ADD COLUMN source TEXT")
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_proxy_events_provider_source_time
+                ON proxy_events (provider, source, occurred_at)
+                """
+            )
 
     def record_batch(
         self,
@@ -84,6 +96,7 @@ class ProxyMetricsStore:
         proxy_urls: list[str],
         *,
         expires_at: datetime,
+        source: str | None = None,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         expiry = expires_at.isoformat()
@@ -114,13 +127,16 @@ class ProxyMetricsStore:
                 event_type="batch_fetched",
                 occurred_at=now,
                 count=len(identifiers),
+                source=source,
                 detail={
                     "returned": len(identifiers),
                     "new": sum(identifier not in existing for identifier in identifiers),
                 },
             )
 
-    def record_acquire(self, provider: str, proxy_url: str) -> None:
+    def record_acquire(
+        self, provider: str, proxy_url: str, *, source: str | None = None
+    ) -> None:
         now = datetime.now(UTC).isoformat()
         identifier = proxy_id(proxy_url)
         with self.connection() as conn:
@@ -138,9 +154,12 @@ class ProxyMetricsStore:
                 event_type="lease_acquired",
                 occurred_at=now,
                 proxy_identifier=identifier,
+                source=source,
             )
 
-    def record_success(self, provider: str, proxy_url: str) -> None:
+    def record_success(
+        self, provider: str, proxy_url: str, *, source: str | None = None
+    ) -> None:
         now = datetime.now(UTC).isoformat()
         identifier = proxy_id(proxy_url)
         with self.connection() as conn:
@@ -158,6 +177,7 @@ class ProxyMetricsStore:
                 event_type="request_success",
                 occurred_at=now,
                 proxy_identifier=identifier,
+                source=source,
             )
 
     def record_failure(
@@ -167,6 +187,7 @@ class ProxyMetricsStore:
         *,
         reason: str,
         benched_until: datetime | None,
+        source: str | None = None,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         identifier = proxy_id(proxy_url)
@@ -199,26 +220,31 @@ class ProxyMetricsStore:
                 event_type="proxy_benched" if benched_until else "request_failure",
                 occurred_at=now,
                 proxy_identifier=identifier,
+                source=source,
                 detail={"reason": safe_reason, "benched": benched_until is not None},
             )
 
-    def record_api_error(self, provider: str, reason: str) -> None:
+    def record_api_error(
+        self, provider: str, reason: str, *, source: str | None = None
+    ) -> None:
         with self.connection() as conn:
             self._insert_event(
                 conn,
                 provider=provider,
                 event_type="api_error",
                 occurred_at=datetime.now(UTC).isoformat(),
+                source=source,
                 detail={"reason": _safe_reason(reason)},
             )
 
-    def record_pool_empty(self, provider: str) -> None:
+    def record_pool_empty(self, provider: str, *, source: str | None = None) -> None:
         with self.connection() as conn:
             self._insert_event(
                 conn,
                 provider=provider,
                 event_type="pool_empty",
                 occurred_at=datetime.now(UTC).isoformat(),
+                source=source,
             )
 
     @staticmethod
@@ -230,13 +256,14 @@ class ProxyMetricsStore:
         occurred_at: str,
         proxy_identifier: str | None = None,
         count: int = 1,
+        source: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None:
         conn.execute(
             """
             INSERT INTO proxy_events (
-                occurred_at, provider, event_type, proxy_id, count, detail_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                occurred_at, provider, event_type, proxy_id, count, source, detail_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 occurred_at,
@@ -244,6 +271,7 @@ class ProxyMetricsStore:
                 event_type,
                 proxy_identifier,
                 count,
+                source,
                 json.dumps(detail or {}, ensure_ascii=True),
             ),
         )
@@ -269,7 +297,7 @@ class ProxyMetricsStore:
             ).fetchall()
             event_rows = conn.execute(
                 """
-                SELECT occurred_at, event_type, proxy_id, count, detail_json
+                SELECT occurred_at, event_type, proxy_id, count, source, detail_json
                 FROM proxy_events
                 WHERE provider = ? AND occurred_at >= ?
                 ORDER BY id DESC
@@ -287,6 +315,20 @@ class ProxyMetricsStore:
                 FROM proxy_events
                 WHERE provider = ? AND occurred_at >= ?
                 GROUP BY event_type
+                """,
+                (provider, since_iso),
+            ).fetchall()
+            source_aggregate_rows = conn.execute(
+                """
+                SELECT
+                    COALESCE(source, 'unknown') AS source,
+                    event_type,
+                    SUM(count) AS count,
+                    MAX(occurred_at) AS last_at
+                FROM proxy_events
+                WHERE provider = ? AND occurred_at >= ?
+                GROUP BY COALESCE(source, 'unknown'), event_type
+                ORDER BY source, event_type
                 """,
                 (provider, since_iso),
             ).fetchall()
@@ -368,6 +410,52 @@ class ProxyMetricsStore:
         )
         attempts = successes + failures
         extracted = aggregates.get("batch_fetched", {}).get("count", 0)
+        source_summaries: dict[str, dict[str, Any]] = {}
+        for row in source_aggregate_rows:
+            source = str(row["source"])
+            summary = source_summaries.setdefault(
+                source,
+                {
+                    "source": source,
+                    "extracted": 0,
+                    "leases": 0,
+                    "successes": 0,
+                    "failures": 0,
+                    "api_errors": 0,
+                    "pool_empty_events": 0,
+                    "success_rate": None,
+                    "last_activity_at": None,
+                },
+            )
+            event_type = str(row["event_type"])
+            count = int(row["count"] or 0)
+            field = {
+                "batch_fetched": "extracted",
+                "lease_acquired": "leases",
+                "request_success": "successes",
+                "proxy_benched": "failures",
+                "request_failure": "failures",
+                "api_error": "api_errors",
+                "pool_empty": "pool_empty_events",
+            }.get(event_type)
+            if field:
+                summary[field] += count
+            last_at = row["last_at"]
+            if (
+                last_at
+                and (
+                    summary["last_activity_at"] is None
+                    or last_at > summary["last_activity_at"]
+                )
+            ):
+                summary["last_activity_at"] = last_at
+        for summary in source_summaries.values():
+            source_attempts = summary["successes"] + summary["failures"]
+            summary["success_rate"] = (
+                summary["successes"] / source_attempts
+                if source_attempts
+                else None
+            )
         return {
             "provider": provider,
             "generated_at": now,
@@ -394,6 +482,7 @@ class ProxyMetricsStore:
                 ),
                 default=None,
             ),
+            "sources": list(source_summaries.values()),
             "nodes": nodes,
             "trend": list(trend.values()),
             "events": [
@@ -402,6 +491,7 @@ class ProxyMetricsStore:
                     "event_type": row["event_type"],
                     "proxy_id": row["proxy_id"],
                     "count": int(row["count"]),
+                    "source": row["source"] or "unknown",
                     "detail": json.loads(row["detail_json"] or "{}"),
                 }
                 for row in event_rows

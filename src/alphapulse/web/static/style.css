@@ -145,6 +145,10 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
 .proxy-status.active { color: var(--ok); }
 .proxy-status.benched { color: var(--warn); }
 .proxy-status.expired { color: var(--muted); }
+.source-name { font-family: var(--mono); font-weight: 700; text-transform: uppercase; }
+.source-stack { display: grid; gap: 3px; min-width: 220px; }
+.source-line { display: flex; justify-content: space-between; gap: 10px; white-space: nowrap; }
+.source-line.benched { color: var(--warn); }
 .agent-status { font-family: var(--mono); font-size: 11px; text-transform: uppercase; }
 .agent-status.online, .agent-status.completed { color: var(--ok); }
 .agent-status.benched, .agent-status.leased, .agent-status.queued { color: var(--warn); }

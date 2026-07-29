@@ -181,6 +181,14 @@ class AgentPoolStore:
                     ON agent_events (occurred_at);
                 """
             )
+            node_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(agent_nodes)").fetchall()
+            }
+            if "last_ip_address" not in node_columns:
+                conn.execute(
+                    "ALTER TABLE agent_nodes ADD COLUMN last_ip_address TEXT"
+                )
             # Before source-specific cooldowns, the pool only served guba and
             # stored a single node-wide bench. Preserve that state as guba
             # health, then stop applying it globally.
@@ -267,6 +275,7 @@ class AgentPoolStore:
         arch: str,
         capabilities: list[str],
         max_concurrency: int,
+        ip_address: str | None = None,
     ) -> None:
         now = _utcnow().isoformat()
         rendered_capabilities = json.dumps(
@@ -277,15 +286,19 @@ class AgentPoolStore:
                 """
                 INSERT INTO agent_nodes (
                     agent_id, version, os, arch, capabilities_json,
-                    max_concurrency, first_seen_at, last_seen_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    max_concurrency, first_seen_at, last_seen_at, last_ip_address
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(agent_id) DO UPDATE SET
                     version = excluded.version,
                     os = excluded.os,
                     arch = excluded.arch,
                     capabilities_json = excluded.capabilities_json,
                     max_concurrency = excluded.max_concurrency,
-                    last_seen_at = excluded.last_seen_at
+                    last_seen_at = excluded.last_seen_at,
+                    last_ip_address = COALESCE(
+                        excluded.last_ip_address,
+                        agent_nodes.last_ip_address
+                    )
                 """,
                 (
                     agent_id,
@@ -296,6 +309,7 @@ class AgentPoolStore:
                     max_concurrency,
                     now,
                     now,
+                    ip_address,
                 ),
             )
 
@@ -763,6 +777,41 @@ class AgentPoolStore:
                 GROUP BY status
                 """
             ).fetchall()
+            source_job_rows = conn.execute(
+                """
+                SELECT
+                    source,
+                    SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_jobs,
+                    SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END) AS leased_jobs,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_jobs,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_jobs,
+                    SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_jobs,
+                    MAX(COALESCE(completed_at, leased_at, created_at)) AS last_activity_at
+                FROM agent_jobs
+                GROUP BY source
+                ORDER BY source
+                """
+            ).fetchall()
+            source_outcome_rows = conn.execute(
+                """
+                SELECT
+                    source,
+                    SUM(success_count) AS successes,
+                    SUM(failure_count) AS failures,
+                    SUM(blocked_count) AS blocked,
+                    MAX(
+                        CASE
+                            WHEN last_success_at IS NULL THEN last_failure_at
+                            WHEN last_failure_at IS NULL THEN last_success_at
+                            WHEN last_success_at >= last_failure_at THEN last_success_at
+                            ELSE last_failure_at
+                        END
+                    ) AS last_outcome_at
+                FROM agent_source_health
+                GROUP BY source
+                ORDER BY source
+                """
+            ).fetchall()
             job_rows = conn.execute(
                 """
                 SELECT job_id, source, capability, url, status, created_at,
@@ -794,6 +843,50 @@ class AgentPoolStore:
                 }
             )
         statuses = {row["status"]: int(row["count"]) for row in status_rows}
+        source_summaries: dict[str, dict[str, Any]] = {}
+        for row in source_job_rows:
+            source = str(row["source"])
+            source_summaries[source] = {
+                "source": source,
+                "queued_jobs": int(row["queued_jobs"] or 0),
+                "leased_jobs": int(row["leased_jobs"] or 0),
+                "completed_jobs": int(row["completed_jobs"] or 0),
+                "failed_jobs": int(row["failed_jobs"] or 0),
+                "cancelled_jobs": int(row["cancelled_jobs"] or 0),
+                "successes": 0,
+                "failures": 0,
+                "blocked": 0,
+                "last_activity_at": row["last_activity_at"],
+            }
+        for row in source_outcome_rows:
+            source = str(row["source"])
+            summary = source_summaries.setdefault(
+                source,
+                {
+                    "source": source,
+                    "queued_jobs": 0,
+                    "leased_jobs": 0,
+                    "completed_jobs": 0,
+                    "failed_jobs": 0,
+                    "cancelled_jobs": 0,
+                    "successes": 0,
+                    "failures": 0,
+                    "blocked": 0,
+                    "last_activity_at": None,
+                },
+            )
+            summary["successes"] = int(row["successes"] or 0)
+            summary["failures"] = int(row["failures"] or 0)
+            summary["blocked"] = int(row["blocked"] or 0)
+            last_outcome_at = row["last_outcome_at"]
+            if (
+                last_outcome_at
+                and (
+                    summary["last_activity_at"] is None
+                    or last_outcome_at > summary["last_activity_at"]
+                )
+            ):
+                summary["last_activity_at"] = last_outcome_at
         jobs = []
         for row in job_rows:
             parsed = urlparse(str(row["url"]))
@@ -815,6 +908,7 @@ class AgentPoolStore:
             "completed_jobs": statuses.get("completed", 0),
             "failed_jobs": statuses.get("failed", 0),
             "cancelled_jobs": statuses.get("cancelled", 0),
+            "sources": list(source_summaries.values()),
             "nodes": nodes,
             "jobs": jobs,
         }

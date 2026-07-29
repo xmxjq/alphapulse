@@ -21,7 +21,11 @@ def _store(tmp_path) -> AgentPoolStore:
     )
 
 
-def _heartbeat(store: AgentPoolStore, agent_id: str = "home-arm") -> None:
+def _heartbeat(
+    store: AgentPoolStore,
+    agent_id: str = "home-arm",
+    ip_address: str | None = None,
+) -> None:
     store.heartbeat(
         agent_id=agent_id,
         version="test",
@@ -29,6 +33,7 @@ def _heartbeat(store: AgentPoolStore, agent_id: str = "home-arm") -> None:
         arch="arm",
         capabilities=["http"],
         max_concurrency=1,
+        ip_address=ip_address,
     )
 
 
@@ -45,7 +50,7 @@ def test_agent_token_lifecycle(tmp_path) -> None:
 
 def test_agent_job_round_trip_and_outcome_metrics(tmp_path) -> None:
     store = _store(tmp_path)
-    _heartbeat(store)
+    _heartbeat(store, ip_address="203.0.113.9")
     assert store.has_eligible_agent("http")
 
     job_id = store.submit_job(
@@ -85,6 +90,9 @@ def test_agent_job_round_trip_and_outcome_metrics(tmp_path) -> None:
     assert snapshot["online_nodes"] == 1
     assert snapshot["completed_jobs"] == 1
     assert snapshot["nodes"][0]["success_count"] == 1
+    assert snapshot["nodes"][0]["last_ip_address"] == "203.0.113.9"
+    assert snapshot["sources"][0]["source"] == "guba"
+    assert snapshot["sources"][0]["successes"] == 1
 
 
 def test_available_capacity_subtracts_active_leases(tmp_path) -> None:
@@ -188,6 +196,21 @@ def test_source_bench_does_not_block_other_source_jobs(tmp_path) -> None:
 
     assert tgb_lease is not None
     assert tgb_lease["job_id"] == tgb_job
+    assert store.complete_job(
+        agent_id="home-arm",
+        job_id=tgb_job,
+        lease_id=tgb_lease["lease_id"],
+        status_code=200,
+        final_url="https://www.tgb.cn/a/post-1",
+        headers={},
+        body=b"ok",
+        duration_ms=4,
+    )
+    store.record_outcome(tgb_job, "success")
+
+    sources = {item["source"]: item for item in store.snapshot()["sources"]}
+    assert sources["guba"]["blocked"] == 1
+    assert sources["tgb"]["successes"] == 1
 
 
 def test_expired_lease_is_requeued(tmp_path) -> None:

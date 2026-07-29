@@ -39,10 +39,11 @@ def test_agent_api_authenticates_and_completes_job(tmp_path) -> None:
     client, store, headers = _client(tmp_path)
     heartbeat = client.post(
         "/api/agent/v1/heartbeat",
-        headers=headers,
+        headers={**headers, "CF-Connecting-IP": "198.51.100.24"},
         json=_agent_payload(),
     )
     assert heartbeat.status_code == 200
+    assert store.snapshot()["nodes"][0]["last_ip_address"] == "198.51.100.24"
 
     job_id = store.submit_job(
         source="guba",

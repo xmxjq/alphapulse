@@ -203,8 +203,11 @@ class KuaidailiProxyProvider:
 
     provider_name = "kuaidaili"
 
-    def __init__(self, settings: CrawlKuaidailiSettings) -> None:
+    def __init__(
+        self, settings: CrawlKuaidailiSettings, *, source: str | None = None
+    ) -> None:
         self.settings = settings
+        self.source = source
         self.metrics = ProxyMetricsStore(settings.metrics_path)
         self._urls: list[str] = []
         self._expires_at: dict[str, float] = {}
@@ -221,16 +224,24 @@ class KuaidailiProxyProvider:
                 self._refresh(now)
             available = set(self._available(now))
             if not available:
-                self.metrics.record_pool_empty(self.provider_name)
+                self.metrics.record_pool_empty(
+                    self.provider_name, source=self.source
+                )
                 return None
             for _ in range(len(self._urls)):
                 url = self._urls[self._next_index % len(self._urls)]
                 self._next_index += 1
                 if url in available:
                     lease = self._lease(url)
-                    self.metrics.record_acquire(self.provider_name, lease.proxy_url)
+                    self.metrics.record_acquire(
+                        self.provider_name,
+                        lease.proxy_url,
+                        source=self.source,
+                    )
                     return lease
-            self.metrics.record_pool_empty(self.provider_name)
+            self.metrics.record_pool_empty(
+                self.provider_name, source=self.source
+            )
             return None
 
     def report_bad(self, lease: ProxyLease, reason: str) -> None:
@@ -254,12 +265,17 @@ class KuaidailiProxyProvider:
                 lease.proxy_url,
                 reason=reason,
                 benched_until=benched_until,
+                source=self.source,
             )
 
     def report_success(self, lease: ProxyLease) -> None:
         with self._lock:
             self._failure_streaks.pop(lease.proxy_url, None)
-        self.metrics.record_success(self.provider_name, lease.proxy_url)
+        self.metrics.record_success(
+            self.provider_name,
+            lease.proxy_url,
+            source=self.source,
+        )
 
     def _refresh(self, now: float) -> None:
         try:
@@ -295,6 +311,7 @@ class KuaidailiProxyProvider:
             self.metrics.record_api_error(
                 self.provider_name,
                 f"{type(exc).__name__}: {exc}",
+                source=self.source,
             )
             raise
         expires_at = now + self.settings.lease_ttl_seconds
@@ -306,6 +323,7 @@ class KuaidailiProxyProvider:
             self.provider_name,
             proxy_urls,
             expires_at=expires_at_wall,
+            source=self.source,
         )
         for proxy in proxies:
             url = _proxy_url(proxy)
@@ -524,5 +542,5 @@ def _build_proxy_provider(
     if proxy.provider == "static_list":
         return StaticListProxyProvider(crawl_settings.static_proxies)
     if proxy.provider == "kuaidaili":
-        return KuaidailiProxyProvider(crawl_settings.kuaidaili)
+        return KuaidailiProxyProvider(crawl_settings.kuaidaili, source=source)
     return None

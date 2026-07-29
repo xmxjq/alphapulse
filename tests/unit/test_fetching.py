@@ -638,10 +638,9 @@ def test_build_proxy_provider_scopes_to_configured_sources() -> None:
 def test_build_kuaidaili_provider_scopes_to_guba(tmp_path) -> None:
     settings = _kuaidaili_settings(tmp_path)
 
-    assert isinstance(
-        _build_proxy_provider(settings, source="guba"),
-        KuaidailiProxyProvider,
-    )
+    provider = _build_proxy_provider(settings, source="guba")
+    assert isinstance(provider, KuaidailiProxyProvider)
+    assert provider.source == "guba"
     assert _build_proxy_provider(settings, source="bilibili") is None
 
 

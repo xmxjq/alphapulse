@@ -20,7 +20,7 @@ authentication is preferred because every guba request uses HTTPS CONNECT.
 [crawl.proxy]
 enabled = true
 provider = "kuaidaili"
-sources = ["guba"]
+sources = ["guba", "tgb"]
 max_attempts = 2
 fail_open = false
 
@@ -49,9 +49,13 @@ an instant bench empties the pool and forces an immediate re-extraction, so
 treating `soft_block` as hard would turn one blocked request into up to
 `max_retries` paid extractions instead of one. Any success resets the streak.
 
-Guba requests with an acquired proxy use the browser-impersonating
+Guba and TGB requests with an acquired proxy use the browser-impersonating
 `curl_cffi` transport because some private proxy exits truncate urllib's
 HTTP/1 response stream even when the upstream page is complete.
+
+The WebUI `Proxy pool` tab attributes leases, successes, failures, API errors,
+and empty-pool events to Guba or TGB. Events recorded before source attribution
+was introduced remain visible as `unknown`.
 
 A failure to acquire a proxy at all (Kuaidaili GetDPS API error, or an empty
 pool) is retried within the same request up to `sources.guba.max_retries` /

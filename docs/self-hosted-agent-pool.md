@@ -280,5 +280,6 @@ For stable residential IPs, keep this cooldown long (the project default is six
 hours). Repeatedly probing a fixed exit every few minutes after a block usually
 extends the restriction rather than recovering it.
 
-The WebUI `Agent pool` tab shows online, offline, and benched nodes, queue
-depth, success and block counts, platform/architecture, and recent jobs.
+The WebUI `Agent pool` tab shows online, offline, and benched nodes, their most
+recent public IP observed through Cloudflare, queue depth, platform/architecture,
+per-source Guba/TGB outcomes, and recent jobs.

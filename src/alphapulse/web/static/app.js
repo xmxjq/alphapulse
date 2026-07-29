@@ -490,6 +490,28 @@ function renderProxyEconomics(payload) {
   ]));
 }
 
+function renderProxySources(payload) {
+  const target = document.getElementById("proxy-sources");
+  target.innerHTML = "";
+  if (!payload.sources.length) {
+    target.appendChild(el("div", { class: "empty" }, "No source-specific proxy activity in this window."));
+    return;
+  }
+  const head = el("tr", {}, ["Source", "Requests", "OK", "Failure", "Rate", "Leases", "IPs extracted", "API / empty", "Last activity"].map(h => el("th", {}, h)));
+  const rows = payload.sources.map(source => el("tr", {}, [
+    el("td", { class: "source-name" }, source.source),
+    el("td", { class: "num" }, String(source.successes + source.failures)),
+    el("td", { class: "num status-ok" }, String(source.successes)),
+    el("td", { class: "num status-failed" }, String(source.failures)),
+    el("td", { class: "num" }, fmtPercent(source.success_rate)),
+    el("td", { class: "num" }, String(source.leases)),
+    el("td", { class: "num" }, String(source.extracted)),
+    el("td", { class: "num" }, `${source.api_errors} / ${source.pool_empty_events}`),
+    el("td", { class: "mono" }, fmtDate(source.last_activity_at)),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
 function renderProxyTrend(payload) {
   const target = document.getElementById("proxy-trend");
   target.innerHTML = "";
@@ -544,9 +566,10 @@ function renderProxyEvents(payload) {
     target.appendChild(el("div", { class: "empty" }, "No proxy events in this window."));
     return;
   }
-  const head = el("tr", {}, ["When", "Event", "Node", "Count", "Detail"].map(h => el("th", {}, h)));
+  const head = el("tr", {}, ["When", "Source", "Event", "Node", "Count", "Detail"].map(h => el("th", {}, h)));
   const rows = payload.events.map(event => el("tr", {}, [
     el("td", { class: "mono" }, fmtDate(event.occurred_at)),
+    el("td", { class: "source-name" }, event.source),
     el("td", {}, event.event_type),
     el("td", { class: "mono" }, event.proxy_id || "-"),
     el("td", { class: "num" }, String(event.count)),
@@ -561,6 +584,7 @@ async function refreshProxyPool() {
     const payload = await fetchJSON(`/api/proxy-pool?hours=${state.proxyHours}`);
     renderProxySummary(payload);
     renderProxyEconomics(payload);
+    renderProxySources(payload);
     renderProxyTrend(payload);
     renderProxyNodes(payload);
     renderProxyEvents(payload);
@@ -596,6 +620,39 @@ function renderAgentJobSummary(payload) {
   ]));
 }
 
+function renderAgentSources(payload) {
+  const target = document.getElementById("agents-sources");
+  target.innerHTML = "";
+  if (!payload.sources.length) {
+    target.appendChild(el("div", { class: "empty" }, "No source-specific agent activity recorded yet."));
+    return;
+  }
+  const head = el("tr", {}, ["Source", "Queued", "Leased", "Completed", "Failed jobs", "OK", "Blocked", "Other failure", "Last activity"].map(h => el("th", {}, h)));
+  const rows = payload.sources.map(source => el("tr", {}, [
+    el("td", { class: "source-name" }, source.source),
+    el("td", { class: "num" }, String(source.queued_jobs)),
+    el("td", { class: "num" }, String(source.leased_jobs)),
+    el("td", { class: "num" }, String(source.completed_jobs)),
+    el("td", { class: "num status-failed" }, String(source.failed_jobs)),
+    el("td", { class: "num status-ok" }, String(source.successes)),
+    el("td", { class: "num status-running" }, String(source.blocked)),
+    el("td", { class: "num status-failed" }, String(Math.max(0, source.failures - source.blocked))),
+    el("td", { class: "mono" }, fmtDate(source.last_activity_at)),
+  ]));
+  target.appendChild(el("table", {}, [el("thead", {}, head), el("tbody", {}, rows)]));
+}
+
+function renderAgentNodeSources(sourceHealth) {
+  if (!sourceHealth.length) return "-";
+  return el("div", { class: "source-stack" }, sourceHealth.map(source => {
+    const benched = source.benched_until && new Date(source.benched_until) > new Date();
+    return el("div", { class: `source-line${benched ? " benched" : ""}` }, [
+      el("span", { class: "source-name" }, source.source),
+      el("span", { class: "mono" }, `${source.success_count} ok / ${source.blocked_count} block / ${Math.max(0, source.failure_count - source.blocked_count)} fail`),
+    ]);
+  }));
+}
+
 function renderAgentNodes(payload) {
   const target = document.getElementById("agents-nodes");
   target.innerHTML = "";
@@ -603,12 +660,14 @@ function renderAgentNodes(payload) {
     target.appendChild(el("div", { class: "empty" }, "No self-hosted agents have connected yet."));
     return;
   }
-  const head = el("tr", {}, ["Agent", "Status", "Platform", "Capabilities", "Workers", "Leases", "OK", "Blocked", "Failure", "Rate", "Last seen"].map(h => el("th", {}, h)));
+  const head = el("tr", {}, ["Agent", "IP address", "Status", "Platform", "Capabilities", "Sources", "Workers", "Leases", "OK", "Blocked", "Failure", "Rate", "Last seen"].map(h => el("th", {}, h)));
   const rows = payload.nodes.map(node => el("tr", {}, [
     el("td", { class: "mono" }, node.agent_id),
+    el("td", { class: "mono" }, node.last_ip_address || "-"),
     el("td", { class: `agent-status ${node.status}` }, node.status),
     el("td", { class: "mono" }, `${node.os}/${node.arch}`),
     el("td", {}, node.capabilities.join(", ")),
+    el("td", {}, renderAgentNodeSources(node.source_health)),
     el("td", { class: "num" }, String(node.max_concurrency)),
     el("td", { class: "num" }, String(node.leased_count)),
     el("td", { class: "num" }, String(node.success_count)),
@@ -650,6 +709,7 @@ async function refreshAgentPool() {
     state.agents = payload;
     renderAgentSummary(payload);
     renderAgentJobSummary(payload);
+    renderAgentSources(payload);
     renderAgentNodes(payload);
     renderAgentJobs(payload);
     meta.textContent = `updated ${new Date().toLocaleTimeString(undefined, { hour12: false })}`;

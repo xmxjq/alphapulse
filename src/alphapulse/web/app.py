@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import json
 import re
 import time
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from toon_format import encode
@@ -32,6 +33,22 @@ from alphapulse.web.models import (
     StatusResponse,
 )
 from alphapulse.web.queries import ALLOWED_SOURCES, WebQueries, build_queries
+
+
+def _agent_ip_address(request: Request) -> str | None:
+    candidates = [
+        request.headers.get("CF-Connecting-IP"),
+        (request.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip(),
+        request.client.host if request.client else None,
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            continue
+    return None
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -149,6 +166,7 @@ def create_app(
     @app.post("/api/agent/v1/heartbeat")
     def agent_heartbeat(
         payload: AgentHeartbeatRequest,
+        request: Request,
         agent_id: str = Depends(authenticated_agent),
     ) -> dict[str, object]:
         if payload.agent_id != agent_id:
@@ -160,12 +178,14 @@ def create_app(
             arch=payload.arch,
             capabilities=payload.capabilities,
             max_concurrency=payload.max_concurrency,
+            ip_address=_agent_ip_address(request),
         )
         return {"ok": True}
 
     @app.post("/api/agent/v1/jobs/lease")
     def agent_lease(
         payload: AgentLeaseRequest,
+        request: Request,
         agent_id: str = Depends(authenticated_agent),
     ) -> Response:
         if payload.agent_id != agent_id:
@@ -177,6 +197,7 @@ def create_app(
             arch=payload.arch,
             capabilities=payload.capabilities,
             max_concurrency=payload.max_concurrency,
+            ip_address=_agent_ip_address(request),
         )
         deadline = time.monotonic() + payload.wait_seconds
         while True:

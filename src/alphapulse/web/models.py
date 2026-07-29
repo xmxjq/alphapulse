@@ -148,7 +148,22 @@ class ProxyPoolEvent(BaseModel):
     event_type: str
     proxy_id: str | None
     count: int
+    source: str
     detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProxyPoolSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    extracted: int
+    leases: int
+    successes: int
+    failures: int
+    api_errors: int
+    pool_empty_events: int
+    success_rate: float | None
+    last_activity_at: datetime | None
 
 
 class ProxyPoolResponse(BaseModel):
@@ -176,6 +191,7 @@ class ProxyPoolResponse(BaseModel):
     last_batch_at: datetime | None
     last_success_at: datetime | None
     last_failure_at: datetime | None
+    sources: list[ProxyPoolSource] = Field(default_factory=list)
     nodes: list[ProxyPoolNode] = Field(default_factory=list)
     trend: list[ProxyPoolTrendPoint] = Field(default_factory=list)
     events: list[ProxyPoolEvent] = Field(default_factory=list)
@@ -222,6 +238,7 @@ class AgentPoolNode(BaseModel):
     version: str
     os: str
     arch: str
+    last_ip_address: str | None
     capabilities: list[str]
     max_concurrency: int
     first_seen_at: datetime
@@ -237,6 +254,21 @@ class AgentPoolNode(BaseModel):
     status: str
     success_rate: float | None
     source_health: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AgentPoolSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    queued_jobs: int
+    leased_jobs: int
+    completed_jobs: int
+    failed_jobs: int
+    cancelled_jobs: int
+    successes: int
+    failures: int
+    blocked: int
+    last_activity_at: datetime | None
 
 
 class AgentPoolJob(BaseModel):
@@ -274,6 +306,7 @@ class AgentPoolResponse(BaseModel):
     completed_jobs: int
     failed_jobs: int
     cancelled_jobs: int
+    sources: list[AgentPoolSource] = Field(default_factory=list)
     nodes: list[AgentPoolNode] = Field(default_factory=list)
     jobs: list[AgentPoolJob] = Field(default_factory=list)
 
