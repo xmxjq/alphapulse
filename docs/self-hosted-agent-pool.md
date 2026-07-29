@@ -152,6 +152,27 @@ The interval is enforced inside the Agent across its worker loop, independently
 of crawler threads and processes. When interval pacing is enabled, the Agent
 rejects `max-concurrency` values other than `1`.
 
+Home and residential exits should not advertise fetch capacity around the
+clock. Configure one or more daily local-time windows:
+
+```bash
+--active-timezone Asia/Shanghai \
+--active-window 08:30-12:00 \
+--active-window 14:00-18:00 \
+--active-window 20:00-23:00 \
+--active-window-jitter 20m
+```
+
+Outside these windows the process stays alive but stops both heartbeats and job
+leases. The worker therefore marks it offline after
+`heartbeat_ttl_seconds` and continues through paid proxies or other agents.
+It resumes automatically at the next window.
+
+Jitter is deterministic for each node and local date, so process restarts do
+not reset it. Start boundaries move later and end boundaries move earlier by
+up to the configured duration; the Agent never fetches beyond the configured
+outer windows. Overnight windows such as `22:00-02:00` are supported.
+
 ## systemd service
 
 ```ini

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"math/rand"
@@ -18,10 +19,12 @@ import (
 	"os/signal"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 )
 
 var version = "dev"
@@ -34,6 +37,21 @@ func (values *stringList) String() string {
 
 func (values *stringList) Set(value string) error {
 	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return errors.New("value cannot be empty")
+	}
+	*values = append(*values, value)
+	return nil
+}
+
+type valueList []string
+
+func (values *valueList) String() string {
+	return strings.Join(*values, ",")
+}
+
+func (values *valueList) Set(value string) error {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return errors.New("value cannot be empty")
 	}
@@ -54,6 +72,7 @@ type config struct {
 	heartbeatInterval       time.Duration
 	requestIntervalMin      time.Duration
 	requestIntervalMax      time.Duration
+	activeSchedule          *dailySchedule
 }
 
 type requestPacer struct {
@@ -61,6 +80,25 @@ type requestPacer struct {
 	minimum time.Duration
 	maximum time.Duration
 	nextAt  time.Time
+}
+
+type dailyWindow struct {
+	spec        string
+	startMinute int
+	endMinute   int
+	index       int
+}
+
+type resolvedWindow struct {
+	start time.Time
+	end   time.Time
+}
+
+type dailySchedule struct {
+	location *time.Location
+	windows  []dailyWindow
+	jitter   time.Duration
+	seed     string
 }
 
 type agentInfo struct {
@@ -135,8 +173,10 @@ func main() {
 		maximum: cfg.requestIntervalMax,
 	}
 	apiClient := &http.Client{Timeout: 90 * time.Second}
-	if err := heartbeat(ctx, apiClient, cfg, info); err != nil {
-		log.Printf("initial heartbeat failed: %v", err)
+	if cfg.activeSchedule == nil || cfg.activeSchedule.activeAt(time.Now()) {
+		if err := heartbeat(ctx, apiClient, cfg, info); err != nil {
+			log.Printf("initial heartbeat failed: %v", err)
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -152,8 +192,12 @@ func main() {
 			workerLoop(ctx, workerID, apiClient, cfg, info, pacer)
 		}(worker + 1)
 	}
+	scheduleDescription := "always"
+	if cfg.activeSchedule != nil {
+		scheduleDescription = cfg.activeSchedule.String()
+	}
 	log.Printf(
-		"alphapulse-agent %s started id=%s platform=%s/%s workers=%d request_interval=%s..%s",
+		"alphapulse-agent %s started id=%s platform=%s/%s workers=%d request_interval=%s..%s active_schedule=%q",
 		version,
 		cfg.agentID,
 		runtime.GOOS,
@@ -161,6 +205,7 @@ func main() {
 		cfg.maxConcurrency,
 		cfg.requestIntervalMin,
 		cfg.requestIntervalMax,
+		scheduleDescription,
 	)
 	<-ctx.Done()
 	wg.Wait()
@@ -168,6 +213,7 @@ func main() {
 
 func parseConfig() (config, error) {
 	var allowedHosts stringList
+	var activeWindows valueList
 	serverURL := flag.String("server", "", "AlphaPulse server base URL")
 	agentID := flag.String("id", "", "Stable agent id")
 	tokenFile := flag.String("token-file", "", "File containing the AlphaPulse agent token")
@@ -199,7 +245,22 @@ func parseConfig() (config, error) {
 		0,
 		"Maximum delay between target requests, for example 60s",
 	)
+	activeTimezone := flag.String(
+		"active-timezone",
+		"Local",
+		"IANA timezone used by active windows, for example Asia/Shanghai",
+	)
+	activeWindowJitter := flag.Duration(
+		"active-window-jitter",
+		0,
+		"Maximum daily inward jitter applied to each active-window boundary",
+	)
 	flag.Var(&allowedHosts, "allow-host", "Allowed target hostname; may be repeated")
+	flag.Var(
+		&activeWindows,
+		"active-window",
+		"Daily local-time fetch window in HH:MM-HH:MM form; may be repeated",
+	)
 	flag.Parse()
 
 	if strings.TrimSpace(*serverURL) == "" {
@@ -233,6 +294,15 @@ func parseConfig() (config, error) {
 		return config{}, errors.New(
 			"--max-concurrency must be 1 when request interval pacing is enabled",
 		)
+	}
+	activeSchedule, err := newDailySchedule(
+		activeWindows,
+		*activeTimezone,
+		*activeWindowJitter,
+		strings.TrimSpace(*agentID),
+	)
+	if err != nil {
+		return config{}, err
 	}
 	token, err := readSecret(*tokenFile)
 	if err != nil {
@@ -274,7 +344,213 @@ func parseConfig() (config, error) {
 		heartbeatInterval:       time.Duration(*heartbeatSeconds) * time.Second,
 		requestIntervalMin:      *requestIntervalMin,
 		requestIntervalMax:      *requestIntervalMax,
+		activeSchedule:          activeSchedule,
 	}, nil
+}
+
+func newDailySchedule(
+	specs []string,
+	timezone string,
+	jitter time.Duration,
+	seed string,
+) (*dailySchedule, error) {
+	if len(specs) == 0 {
+		if jitter != 0 {
+			return nil, errors.New("--active-window-jitter requires --active-window")
+		}
+		return nil, nil
+	}
+	if jitter < 0 {
+		return nil, errors.New("--active-window-jitter cannot be negative")
+	}
+	timezone = strings.TrimSpace(timezone)
+	if timezone == "" {
+		return nil, errors.New("--active-timezone cannot be empty")
+	}
+	location := time.Local
+	if timezone != "Local" {
+		var err error
+		location, err = time.LoadLocation(timezone)
+		if err != nil {
+			return nil, fmt.Errorf("load active timezone %q: %w", timezone, err)
+		}
+	}
+	windows := make([]dailyWindow, 0, len(specs))
+	for index, spec := range specs {
+		window, err := parseDailyWindow(spec, index)
+		if err != nil {
+			return nil, err
+		}
+		duration := windowDuration(window)
+		if jitter*2 >= duration {
+			return nil, fmt.Errorf(
+				"--active-window-jitter must be less than half of window %q",
+				window.spec,
+			)
+		}
+		windows = append(windows, window)
+	}
+	return &dailySchedule{
+		location: location,
+		windows:  windows,
+		jitter:   jitter,
+		seed:     seed,
+	}, nil
+}
+
+func parseDailyWindow(spec string, index int) (dailyWindow, error) {
+	spec = strings.TrimSpace(spec)
+	parts := strings.Split(spec, "-")
+	if len(parts) != 2 {
+		return dailyWindow{}, fmt.Errorf(
+			"invalid --active-window %q; expected HH:MM-HH:MM",
+			spec,
+		)
+	}
+	startMinute, err := parseClockMinute(parts[0])
+	if err != nil {
+		return dailyWindow{}, fmt.Errorf("invalid --active-window %q: %w", spec, err)
+	}
+	endMinute, err := parseClockMinute(parts[1])
+	if err != nil {
+		return dailyWindow{}, fmt.Errorf("invalid --active-window %q: %w", spec, err)
+	}
+	if startMinute == endMinute {
+		return dailyWindow{}, fmt.Errorf(
+			"invalid --active-window %q: start and end must differ",
+			spec,
+		)
+	}
+	return dailyWindow{
+		spec:        spec,
+		startMinute: startMinute,
+		endMinute:   endMinute,
+		index:       index,
+	}, nil
+}
+
+func parseClockMinute(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 5 || raw[2] != ':' {
+		return 0, errors.New("time must use HH:MM")
+	}
+	hour, hourErr := strconv.Atoi(raw[:2])
+	minute, minuteErr := strconv.Atoi(raw[3:])
+	if hourErr != nil || minuteErr != nil {
+		return 0, errors.New("time must use HH:MM")
+	}
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, errors.New("time is outside 00:00-23:59")
+	}
+	return hour*60 + minute, nil
+}
+
+func windowDuration(window dailyWindow) time.Duration {
+	endMinute := window.endMinute
+	if endMinute <= window.startMinute {
+		endMinute += 24 * 60
+	}
+	return time.Duration(endMinute-window.startMinute) * time.Minute
+}
+
+func (schedule *dailySchedule) String() string {
+	specs := make([]string, 0, len(schedule.windows))
+	for _, window := range schedule.windows {
+		specs = append(specs, window.spec)
+	}
+	return fmt.Sprintf(
+		"%s timezone=%s jitter<=%s",
+		strings.Join(specs, ","),
+		schedule.location.String(),
+		schedule.jitter,
+	)
+}
+
+func (schedule *dailySchedule) activeAt(now time.Time) bool {
+	now = now.In(schedule.location)
+	day := localMidnight(now, schedule.location)
+	for _, offset := range []int{-1, 0} {
+		windowDay := day.AddDate(0, 0, offset)
+		for _, window := range schedule.windows {
+			resolved := schedule.resolve(windowDay, window)
+			if !now.Before(resolved.start) && now.Before(resolved.end) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (schedule *dailySchedule) nextStart(now time.Time) time.Time {
+	now = now.In(schedule.location)
+	day := localMidnight(now, schedule.location)
+	var next time.Time
+	for offset := 0; offset <= 2; offset++ {
+		windowDay := day.AddDate(0, 0, offset)
+		for _, window := range schedule.windows {
+			start := schedule.resolve(windowDay, window).start
+			if !start.After(now) {
+				continue
+			}
+			if next.IsZero() || start.Before(next) {
+				next = start
+			}
+		}
+	}
+	return next
+}
+
+func (schedule *dailySchedule) resolve(
+	day time.Time,
+	window dailyWindow,
+) resolvedWindow {
+	start := clockOnDay(day, window.startMinute)
+	endDay := day
+	if window.endMinute <= window.startMinute {
+		endDay = endDay.AddDate(0, 0, 1)
+	}
+	end := clockOnDay(endDay, window.endMinute)
+	start = start.Add(schedule.boundaryJitter(day, window.index, "start"))
+	end = end.Add(-schedule.boundaryJitter(day, window.index, "end"))
+	return resolvedWindow{start: start, end: end}
+}
+
+func clockOnDay(day time.Time, minuteOfDay int) time.Time {
+	return time.Date(
+		day.Year(),
+		day.Month(),
+		day.Day(),
+		minuteOfDay/60,
+		minuteOfDay%60,
+		0,
+		0,
+		day.Location(),
+	)
+}
+
+func (schedule *dailySchedule) boundaryJitter(
+	day time.Time,
+	windowIndex int,
+	boundary string,
+) time.Duration {
+	if schedule.jitter <= 0 {
+		return 0
+	}
+	hash := fnv.New64a()
+	_, _ = fmt.Fprintf(
+		hash,
+		"%s|%s|%d|%s",
+		schedule.seed,
+		day.Format("2006-01-02"),
+		windowIndex,
+		boundary,
+	)
+	return time.Duration(hash.Sum64() % (uint64(schedule.jitter) + 1))
+}
+
+func localMidnight(now time.Time, location *time.Location) time.Time {
+	local := now.In(location)
+	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
 }
 
 func readSecret(path string) (string, error) {
@@ -309,6 +585,10 @@ func heartbeatLoop(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if cfg.activeSchedule != nil &&
+				!cfg.activeSchedule.activeAt(time.Now()) {
+				continue
+			}
 			if err := heartbeat(ctx, client, cfg, info); err != nil {
 				log.Printf("heartbeat failed: %v", err)
 			}
@@ -348,6 +628,22 @@ func workerLoop(
 	pacer *requestPacer,
 ) {
 	for ctx.Err() == nil {
+		if cfg.activeSchedule != nil &&
+			!cfg.activeSchedule.activeAt(time.Now()) {
+			next := cfg.activeSchedule.nextStart(time.Now())
+			if workerID == 1 {
+				log.Printf(
+					"outside active schedule; next fetch window starts at %s",
+					next.Format(time.RFC3339),
+				)
+			}
+			if next.IsZero() {
+				sleepContext(ctx, time.Minute)
+			} else {
+				sleepContext(ctx, time.Until(next))
+			}
+			continue
+		}
 		job, err := lease(ctx, apiClient, cfg, info)
 		if err != nil {
 			log.Printf("worker=%d lease failed: %v", workerID, err)

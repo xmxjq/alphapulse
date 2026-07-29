@@ -65,6 +65,11 @@ start_agent()
           --max-concurrency 1 \
           --request-interval-min 30s \
           --request-interval-max 60s \
+          --active-timezone Asia/Shanghai \
+          --active-window 08:30-12:00 \
+          --active-window 14:00-18:00 \
+          --active-window 20:00-23:00 \
+          --active-window-jitter 20m \
           --poll-wait 20 \
           --heartbeat-interval 30 \
           >>'$LOG_FILE' 2>&1 &
