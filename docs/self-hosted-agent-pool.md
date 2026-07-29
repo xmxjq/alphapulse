@@ -227,6 +227,38 @@ credential files should be mode `700` and `600` respectively. The DS120j used
 by this project reports `aarch64`, so it uses the `linux-arm64` binary even
 though the hardware is resource-constrained.
 
+## QNAP QTS
+
+The project's `xmxjq-NAS` is an x86_64 QNAP system. Install the
+`linux-amd64` binary and credentials under:
+
+```text
+/share/CACHEDEV1_DATA/alphapulse-agent
+```
+
+The project includes its service script:
+
+```bash
+scripts/alphapulse-agent-qnap.sh
+```
+
+Install the script as
+`/share/CACHEDEV1_DATA/alphapulse-agent/alphapulse-agent.sh`, then add this
+idempotent start command to QNAP's persistent autorun script:
+
+```bash
+/share/CACHEDEV1_DATA/alphapulse-agent/alphapulse-agent.sh start
+```
+
+Manage the process manually with:
+
+```bash
+/share/CACHEDEV1_DATA/alphapulse-agent/alphapulse-agent.sh start
+/share/CACHEDEV1_DATA/alphapulse-agent/alphapulse-agent.sh stop
+/share/CACHEDEV1_DATA/alphapulse-agent/alphapulse-agent.sh restart
+/share/CACHEDEV1_DATA/alphapulse-agent/alphapulse-agent.sh status
+```
+
 ## Request routing and failure behavior
 
 When eligible agents are online, guba consumes different queued tasks through
