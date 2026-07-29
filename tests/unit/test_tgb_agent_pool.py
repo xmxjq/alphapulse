@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from alphapulse.runtime.agent_pool import AgentPoolUnavailable, RemoteFetchResponse
 from alphapulse.runtime.config import CrawlSettings, TgbSettings
+from alphapulse.sources.tgb import api as tgb_api
 from alphapulse.sources.tgb.api import TgbClient
 
 
@@ -136,3 +137,61 @@ def test_tgb_records_blocked_agent_outcome(monkeypatch, tmp_path) -> None:
     assert agent_pool.store.outcomes == [
         ("job-1", "blocked", "blocked: soft_block")
     ]
+
+
+def test_tgb_missing_page_is_not_treated_as_block(monkeypatch, tmp_path) -> None:
+    client = _client(tmp_path)
+    response = RemoteFetchResponse(
+        job_id="job-1",
+        agent_id="home-arm",
+        status_code=200,
+        final_url="https://www.tgb.cn/a/missing",
+        headers={"content-type": "text/html; charset=utf-8"},
+        body="<html><title>错误页面_淘股吧</title></html>".encode(),
+        duration_ms=12,
+    )
+    agent_pool = FakeAgentPool(response=response)
+    client.agent_pool = agent_pool
+    monkeypatch.setattr(
+        client,
+        "_dispatch",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("local transport should not run")
+        ),
+    )
+
+    result = client.get(
+        "https://www.tgb.cn/a/missing",
+        expect_marker="article-content",
+    )
+
+    assert result.blocked is False
+    assert agent_pool.store.outcomes == [("job-1", "success", None)]
+
+
+def test_tgb_paid_proxy_uses_chrome_impersonation(monkeypatch, tmp_path) -> None:
+    client = _client(tmp_path)
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = "<html>ok</html>"
+        url = "https://www.tgb.cn/zongban/1/1"
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(tgb_api.curl_requests, "get", fake_get)
+
+    status_code, text, final_url = client._dispatch(
+        "https://www.tgb.cn/zongban/1/1",
+        "http://proxy.example:8080",
+    )
+
+    assert status_code == 200
+    assert text == "<html>ok</html>"
+    assert final_url == "https://www.tgb.cn/zongban/1/1"
+    assert captured["proxy"] == "http://proxy.example:8080"
+    assert captured["impersonate"] == "chrome"

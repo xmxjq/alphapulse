@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib import error, request
 
+from curl_cffi import requests as curl_requests
+
 from alphapulse.runtime.agent_pool import (
     AgentJobFailed,
     AgentPoolClient,
@@ -27,6 +29,10 @@ DEFAULT_USER_AGENT = (
 
 BLOCKED_KINDS = {"http_403", "http_429", "captcha", "login_redirect", "soft_block"}
 TgbTransport = Literal["auto", "agent", "existing"]
+MISSING_PAGE_MARKERS = (
+    "<title>错误页面_淘股吧</title>",
+    "<title>閿欒椤甸潰_娣樿偂鍚?/title>",
+)
 
 
 def classify_block(status_code: int, text: str, final_url: str) -> str | None:
@@ -42,6 +48,10 @@ def classify_block(status_code: int, text: str, final_url: str) -> str | None:
     if len(text) < 5000 and ("验证码" in text or "captcha" in lowered_url):
         return "captcha"
     return None
+
+
+def is_missing_page(text: str) -> bool:
+    return any(marker in text for marker in MISSING_PAGE_MARKERS)
 
 
 @dataclass
@@ -229,6 +239,7 @@ class TgbClient:
                 block_kind is None
                 and expect_marker is not None
                 and expect_marker not in text
+                and not is_missing_page(text)
             ):
                 # An HTTP 200 missing its expected DOM marker is a WAF/soft-block page
                 # classify_block cannot recognize; flag it blocked to engage retries,
@@ -277,17 +288,29 @@ class TgbClient:
         return last_result or TgbHttpResult(url=url, status_code=0, text="", error_message="Request failed")
 
     def _dispatch(self, url: str, proxy_url: str | None) -> tuple[int, str, str]:
-        opener = request.build_opener()
         if proxy_url is not None:
-            opener = request.build_opener(
-                request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-            )
+            return self._dispatch_with_curl(url, proxy_url)
+        opener = request.build_opener()
         req = request.Request(url, headers=self._headers(), method="GET")
         with opener.open(req, timeout=self.crawl_settings.request_timeout_seconds) as response:
             raw = response.read()
             charset = response.headers.get_content_charset()
             text = self._decode(raw, charset)
             return response.status, text, response.geturl()
+
+    def _dispatch_with_curl(self, url: str, proxy_url: str) -> tuple[int, str, str]:
+        try:
+            response = curl_requests.get(
+                url,
+                headers=self._headers(),
+                proxy=proxy_url,
+                impersonate="chrome",
+                timeout=self.crawl_settings.request_timeout_seconds,
+                allow_redirects=True,
+            )
+        except Exception as exc:
+            raise OSError(str(exc)) from exc
+        return response.status_code, response.text, str(response.url)
 
     @staticmethod
     def _decode(raw: bytes, charset: str | None) -> str:

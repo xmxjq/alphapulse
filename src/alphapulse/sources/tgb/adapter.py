@@ -14,7 +14,7 @@ from alphapulse.pipeline.contracts import (
     SeedDefinition,
 )
 from alphapulse.runtime.config import CrawlSettings, TgbSettings
-from alphapulse.sources.tgb.api import TgbClient, TgbHttpResult
+from alphapulse.sources.tgb.api import TgbClient, TgbHttpResult, is_missing_page
 from alphapulse.sources.tgb.parser import (
     TgbListEntry,
     parse_comments,
@@ -112,6 +112,18 @@ class TgbAdapter:
             self._save_raw(response, task.kind, requested_url=str(task.url))
             outcome = FetchOutcome(blocked=True, status_code=response.status_code)
             outcome.errors.append(f"Blocked ({response.block_kind}) from {task.url}")
+            return outcome
+
+        if task.kind == "fetch_post" and is_missing_page(response.text):
+            self._save_raw(
+                response,
+                task.kind,
+                requested_url=str(task.url),
+                block_kind="missing",
+                meta={"post_id": task.metadata.get("post_id")},
+            )
+            outcome = FetchOutcome(blocked=False, status_code=response.status_code)
+            outcome.errors.append(f"Post deleted or missing: {task.url}")
             return outcome
 
         if task.kind == "discover":

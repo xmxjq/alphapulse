@@ -203,6 +203,25 @@ def test_blocked_response(tmp_path) -> None:
     assert outcome.status_code == 403
 
 
+def test_missing_post_page_does_not_open_block_circuit(tmp_path) -> None:
+    url = f"{BASE}/a/missing"
+    response = _ok(url, "<html><title>错误页面_淘股吧</title></html>")
+    adapter = _adapter(tmp_path, FakeTgbClient({url: response}))
+    task = CrawlTask(
+        source="tgb",
+        kind="fetch_post",
+        url=url,
+        seed_name="tgb",
+        metadata={"post_id": "missing", "board_code": "zongban"},
+    )
+
+    outcome = adapter.fetch_item(task)
+
+    assert outcome.blocked is False
+    assert outcome.status_code == 200
+    assert outcome.errors == [f"Post deleted or missing: {url}"]
+
+
 def test_expect_markers_by_task_kind(tmp_path) -> None:
     list_url = f"{BASE}/zongban/1/1"
     stock_url = f"{BASE}/quotes/sz1"
