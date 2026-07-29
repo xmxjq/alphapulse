@@ -100,7 +100,7 @@ class CrawlProxySettings(BaseModel):
     provider: ProxyProviderType | None = None
     max_attempts: int = Field(default=2, ge=1)
     fail_open: bool = False
-    # Source names ("guba", "tgb", "xueqiu", "bilibili") that should use the proxy.
+    # Source names ("guba", "tgb", "jiuyan", "xueqiu", "bilibili") that should use the proxy.
     # Empty means all sources. Scoping matters when a source carries an
     # authenticated cookie: routing it through rotating exits looks like
     # account sharing to the site.
@@ -157,7 +157,7 @@ class AgentPoolSettings(BaseModel):
 
     enabled: bool = False
     db_path: Path = Path(".runtime/agent-pool.db")
-    sources: list[str] = Field(default_factory=lambda: ["guba", "tgb"])
+    sources: list[str] = Field(default_factory=lambda: ["guba", "tgb", "jiuyan"])
     strategy: AgentPoolStrategy = "agent_first"
     heartbeat_ttl_seconds: int = Field(default=90, ge=10, le=3600)
     lease_seconds: int = Field(default=180, ge=10, le=3600)
@@ -176,6 +176,7 @@ class AgentPoolSettings(BaseModel):
             "emappdata.eastmoney.com",
             "push2.eastmoney.com",
             "www.tgb.cn",
+            "app.jiuyangongshe.com",
         ]
     )
 
@@ -356,6 +357,37 @@ class TgbSettings(BaseModel):
         return self
 
 
+class JiuyanSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    base_url: HttpUrl = "https://www.jiuyangongshe.com"
+    api_base_url: HttpUrl = "https://app.jiuyangongshe.com/jystock-app"
+    fixed_targets: list[str] = Field(
+        default_factory=lambda: ["上证指数", "创业板指", "科创50", "上证50"]
+    )
+    hot_targets_limit: int = Field(default=10, ge=1, le=100)
+    max_search_pages: int = Field(default=3, ge=1, le=100)
+    list_recrawl_minutes: int = Field(default=30, ge=1)
+    day_scoped: bool = True
+    ranking_timezone: str = "Asia/Shanghai"
+    request_interval_min_seconds: float = Field(default=1.0, ge=0.0)
+    request_interval_max_seconds: float = Field(default=3.0, ge=0.0)
+    max_retries: int = Field(default=3, ge=1)
+    fetch_comments: bool = False
+    user_agent: str | None = None
+    cookies: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_request_interval(self) -> "JiuyanSettings":
+        if self.request_interval_max_seconds < self.request_interval_min_seconds:
+            raise ValueError(
+                "sources.jiuyan.request_interval_max_seconds must be >= "
+                "request_interval_min_seconds"
+            )
+        return self
+
+
 class SourcesSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -363,6 +395,7 @@ class SourcesSettings(BaseModel):
     bilibili: BilibiliSettings = Field(default_factory=BilibiliSettings)
     guba: GubaSettings = Field(default_factory=GubaSettings)
     tgb: TgbSettings = Field(default_factory=TgbSettings)
+    jiuyan: JiuyanSettings = Field(default_factory=JiuyanSettings)
 
 
 class WebSettings(BaseModel):

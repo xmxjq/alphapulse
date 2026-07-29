@@ -7,6 +7,10 @@ generators = ["cn-core-manual", "guba-hot"]
 name = "tgb-daily"
 generators = ["tgb-hot"]
 
+[[logical_sets]]
+name = "jiuyan-daily"
+generators = ["jiuyan-hot"]
+
 [[generators]]
 name = "cn-core-manual"
 type = "manual"
@@ -44,3 +48,9 @@ type = "tgb_hot_boards"
 # include_general = true
 # include_fixed_boards = true
 # hot_stocks_limit = 12   # overrides sources.tgb.hot_stocks_limit
+
+[[generators]]
+name = "jiuyan-hot"
+type = "jiuyan_hot_targets"
+# include_fixed_targets = true
+# hot_targets_limit = 10

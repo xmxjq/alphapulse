@@ -67,3 +67,39 @@ CREATE TABLE IF NOT EXISTS compiled_seed_sets (
     seed_json TEXT NOT NULL,
     refreshed_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS guba_daily_ranking (
+    day TEXT NOT NULL,
+    section TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT,
+    url TEXT,
+    members TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (day, section, rank)
+);
+
+CREATE TABLE IF NOT EXISTS tgb_daily_ranking (
+    day TEXT NOT NULL,
+    section TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT,
+    url TEXT,
+    members TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (day, section, rank)
+);
+
+CREATE TABLE IF NOT EXISTS jiuyan_daily_ranking (
+    day TEXT NOT NULL,
+    section TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT,
+    url TEXT,
+    members TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (day, section, rank)
+);

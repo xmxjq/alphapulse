@@ -286,6 +286,74 @@ def test_tgb_report_api_rejects_bad_date(tmp_path: Path) -> None:
     assert client.get("/api/tgb/report/2026-7-2").status_code == 400
 
 
+def test_jiuyan_report_and_llm_api(tmp_path: Path) -> None:
+    reader = FakeReader()
+    summary = PostSummary(
+        source="jiuyan",
+        source_entity_id="p1",
+        canonical_url="https://www.jiuyangongshe.com/a/p1",
+        author_entity_id="u1",
+        title="今日市场",
+        content_preview="preview",
+        published_at=datetime(2026, 7, 24, 1, tzinfo=UTC),
+        fetched_at=datetime(2026, 7, 24, 2, tzinfo=UTC),
+        like_count=3,
+        comment_count=0,
+        board_code="上证指数",
+    )
+    reader.range_posts = [summary]
+    reader.post_details[("jiuyan", "p1")] = PostDetail(
+        source="jiuyan",
+        source_entity_id="p1",
+        canonical_url=summary.canonical_url,
+        author_entity_id="u1",
+        title=summary.title,
+        content_text="完整韭研正文",
+        language="zh",
+        published_at=summary.published_at,
+        fetched_at=summary.fetched_at,
+        like_count=3,
+        comment_count=0,
+        repost_count=0,
+        raw_topic_ids=["上证指数"],
+    )
+    client = _build_client(tmp_path, reader)
+    StateStore(tmp_path / "state.db").replace_jiuyan_ranking(
+        "2026-07-24",
+        [
+            {
+                "section": "fixed",
+                "rank": 1,
+                "code": "上证指数",
+                "name": "上证指数",
+                "url": (
+                    "https://www.jiuyangongshe.com/search/new?"
+                    "k=%E4%B8%8A%E8%AF%81%E6%8C%87%E6%95%B0"
+                ),
+                "members": None,
+            }
+        ],
+    )
+
+    report = client.get("/api/jiuyan/report/2026-07-24")
+    assert report.status_code == 200
+    assert report.json()["sections"][0]["key"] == "fixed"
+
+    response = client.get("/api/llm/jiuyan/report/2026-07-24")
+    assert response.status_code == 200
+    payload = decode(response.text)
+    assert payload["schema"] == "alphapulse.jiuyan.daily-report.v1"
+    assert payload["source"] == "jiuyan"
+    assert payload["posts"][0]["text"] == "完整韭研正文"
+    assert payload["comments"] == []
+
+
+def test_jiuyan_report_rejects_bad_date(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    assert client.get("/api/jiuyan/report/2026-7-2").status_code == 400
+    assert client.get("/api/llm/jiuyan/report/2026-7-2").status_code == 400
+
+
 def test_guba_llm_report_returns_toon_with_post_bodies_and_comments(
     tmp_path: Path,
 ) -> None:
@@ -483,6 +551,13 @@ def test_tgb_llm_report_rejects_bad_date(tmp_path: Path) -> None:
 def test_tgb_report_page_serves_html(tmp_path: Path) -> None:
     client = _build_client(tmp_path, FakeReader())
     response = client.get("/report/tgb/2026-07-22")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+
+
+def test_jiuyan_report_page_serves_html(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    response = client.get("/report/jiuyan/2026-07-22")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
 

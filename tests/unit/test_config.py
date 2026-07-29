@@ -23,8 +23,9 @@ def test_load_settings_example() -> None:
     assert settings.crawl.agent_pool.enabled is False
     assert settings.crawl.agent_pool.db_path.name == "agent-pool.db"
     assert settings.crawl.agent_pool.db_path.is_absolute()
-    assert settings.crawl.agent_pool.sources == ["guba", "tgb"]
+    assert settings.crawl.agent_pool.sources == ["guba", "tgb", "jiuyan"]
     assert "www.tgb.cn" in settings.crawl.agent_pool.allowed_hosts
+    assert "app.jiuyangongshe.com" in settings.crawl.agent_pool.allowed_hosts
     assert settings.crawl.agent_pool.queue_wait_seconds == 10
     assert settings.crawl.agent_pool.lease_seconds == 180
     assert settings.crawl.agent_pool.job_wait_seconds == 120
@@ -69,6 +70,15 @@ def test_load_settings_example() -> None:
         "sh000688": "科创50",
         "sh000016": "上证50",
     }
+    assert settings.sources.jiuyan.fixed_targets == [
+        "上证指数",
+        "创业板指",
+        "科创50",
+        "上证50",
+    ]
+    assert settings.sources.jiuyan.hot_targets_limit == 10
+    assert settings.sources.jiuyan.max_search_pages == 3
+    assert settings.sources.jiuyan.fetch_comments is False
     assert settings.crawl.raw_store.enabled is False
     assert settings.crawl.raw_store.root_path.name == "raw"
     assert settings.crawl.raw_store.root_path.is_absolute()
@@ -78,7 +88,11 @@ def test_load_settings_example() -> None:
 def test_load_seed_catalog_example() -> None:
     settings = load_settings(Path("settings.example.toml"))
     catalog = SeedCatalogLoader(settings.sources.xueqiu.seed_catalog_path).load()
-    assert [item.name for item in catalog.logical_sets] == ["cn-core", "tgb-daily"]
+    assert [item.name for item in catalog.logical_sets] == [
+        "cn-core",
+        "tgb-daily",
+        "jiuyan-daily",
+    ]
     assert catalog.logical_sets[0].generators == ["cn-core-manual", "guba-hot"]
     manual = catalog.generator_map()["cn-core-manual"]
     assert manual.bilibili_video_targets == ["BV1xx411c7mu"]
@@ -90,6 +104,9 @@ def test_load_seed_catalog_example() -> None:
     assert tgb_hot.type == "tgb_hot_boards"
     assert tgb_hot.include_featured and tgb_hot.include_general
     assert tgb_hot.include_fixed_boards
+    jiuyan_hot = catalog.generator_map()["jiuyan-hot"]
+    assert jiuyan_hot.type == "jiuyan_hot_targets"
+    assert jiuyan_hot.include_fixed_targets
 
 
 def test_load_settings_with_proxy_enabled(tmp_path: Path) -> None:

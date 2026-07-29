@@ -69,3 +69,26 @@ def test_pending_tasks_use_parameterized_rqlite_statements() -> None:
     assert delete_queued is False
     assert "DELETE FROM pending_tasks" in delete_statements[0][0]
     assert delete_statements[0][1] == task.dedupe_key
+
+
+def test_jiuyan_ranking_uses_parameterized_statements() -> None:
+    client = FakeRqliteClient()
+    state = RqliteStateStore(RqliteSettings(), client=client)
+    state.replace_jiuyan_ranking(
+        "2026-07-29",
+        [
+            {
+                "section": "hot",
+                "rank": 1,
+                "code": "机器人",
+                "name": "机器人",
+                "url": "https://www.jiuyangongshe.com/search/new?k=robot",
+                "members": None,
+            }
+        ],
+    )
+    statements, queued = client.executed[0]
+    assert queued is False
+    assert "DELETE FROM jiuyan_daily_ranking" in statements[0][0]
+    assert "INSERT INTO jiuyan_daily_ranking" in statements[1][0]
+    assert statements[1][4] == "机器人"

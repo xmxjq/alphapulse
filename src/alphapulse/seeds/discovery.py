@@ -7,12 +7,19 @@ from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from alphapulse.pipeline.contracts import SeedDefinition
-from alphapulse.runtime.config import CrawlSettings, GubaSettings, TgbSettings, XueqiuSettings
+from alphapulse.runtime.config import (
+    CrawlSettings,
+    GubaSettings,
+    JiuyanSettings,
+    TgbSettings,
+    XueqiuSettings,
+)
 from alphapulse.runtime.state import StateStore
 from alphapulse.seeds.catalog import (
     GeneratedSeedItem,
     GeneratorDefinition,
     GubaHotBoardsGeneratorDefinition,
+    JiuyanHotTargetsGeneratorDefinition,
     LonghubangGeneratorDefinition,
     LonghubangRecord,
     ManualGeneratorDefinition,
@@ -33,6 +40,9 @@ from alphapulse.sources.guba.rankings import (
     HotRankings,
     fetch_hot_rankings,
 )
+from alphapulse.sources.jiuyan.api import JiuyanClient
+from alphapulse.sources.jiuyan.rankings import fetch_hot_targets
+from alphapulse.sources.jiuyan.urls import search_url as jiuyan_search_url
 from alphapulse.sources.tgb.api import TgbClient
 from alphapulse.sources.tgb.rankings import fetch_hot_stocks
 from alphapulse.sources.tgb.urls import featured_list_url, general_list_url, stock_list_url
@@ -41,6 +51,8 @@ from alphapulse.sources.tgb.urls import featured_list_url, general_list_url, sto
 # tgb daily-report section keys (shared with web.queries TGB_REPORT_SECTIONS).
 TGB_SECTION_FEATURED = "featured"
 TGB_SECTION_GENERAL = "general"
+JIUYAN_SECTION_FIXED = "fixed"
+JIUYAN_SECTION_HOT = "hot"
 
 
 class SeedGenerator(Protocol):
@@ -93,6 +105,10 @@ class ManualSeedGenerator:
         items.extend(
             GeneratedSeedItem(kind="tgb_board_code", value=value)
             for value in definition.tgb_board_codes
+        )
+        items.extend(
+            GeneratedSeedItem(kind="jiuyan_target_code", value=value)
+            for value in definition.jiuyan_target_codes
         )
         items.extend(GeneratedSeedItem(kind="stock_id", value=value) for value in definition.stock_ids)
         items.extend(GeneratedSeedItem(kind="topic_id", value=value) for value in definition.topic_ids)
@@ -407,6 +423,28 @@ def _order_guba_codes_by_ranking(
     return ordered
 
 
+def _order_jiuyan_codes_by_ranking(
+    codes: list[str], ranking_rows: list[dict[str, object]]
+) -> list[str]:
+    available = set(codes)
+    section_order = {JIUYAN_SECTION_FIXED: 0, JIUYAN_SECTION_HOT: 1}
+    ordered_rows = sorted(
+        ranking_rows,
+        key=lambda row: (
+            section_order.get(str(row["section"]), 99),
+            int(row["rank"]),
+        ),
+    )
+    ordered = [
+        str(row["code"])
+        for row in ordered_rows
+        if str(row["code"]) in available
+    ]
+    seen = set(ordered)
+    ordered.extend(code for code in codes if code not in seen)
+    return ordered
+
+
 class TgbHotBoardsSeedGenerator:
     """Seed the tgb 精华/社区总版 feeds plus self-discovered 热门研股 stock boards.
 
@@ -522,6 +560,92 @@ class TgbHotBoardsSeedGenerator:
         return [GeneratedSeedItem(kind="tgb_board_code", value=code) for code in codes]
 
 
+class JiuyanHotTargetsSeedGenerator:
+    def __init__(
+        self,
+        settings: JiuyanSettings | None,
+        crawl_settings: CrawlSettings | None,
+        state: StateStore | None,
+        client: JiuyanClient | None = None,
+    ) -> None:
+        self.settings = settings
+        self.crawl_settings = crawl_settings
+        self.state = state
+        self._client = client
+
+    def _get_client(self) -> JiuyanClient:
+        if self._client is not None:
+            return self._client
+        if self.settings is None or self.crawl_settings is None:
+            raise RuntimeError(
+                "jiuyan_hot_targets generator requires jiuyan/crawl settings"
+            )
+        self._client = JiuyanClient(self.settings, self.crawl_settings)
+        return self._client
+
+    def generate(
+        self, definition: GeneratorDefinition, generated_at: datetime
+    ) -> list[GeneratedSeedItem]:
+        assert isinstance(definition, JiuyanHotTargetsGeneratorDefinition)
+        if self.settings is None:
+            raise RuntimeError(
+                "jiuyan_hot_targets generator requires jiuyan settings"
+            )
+        limit = definition.hot_targets_limit or self.settings.hot_targets_limit
+        hot_targets = fetch_hot_targets(self._get_client(), self.settings)[:limit]
+        base = str(self.settings.base_url)
+        rows: list[dict[str, object]] = []
+        codes: list[str] = []
+        seen: set[str] = set()
+
+        if definition.include_fixed_targets:
+            for rank, keyword in enumerate(self.settings.fixed_targets, start=1):
+                if keyword in seen:
+                    continue
+                seen.add(keyword)
+                codes.append(keyword)
+                rows.append(
+                    {
+                        "section": JIUYAN_SECTION_FIXED,
+                        "rank": rank,
+                        "code": keyword,
+                        "name": keyword,
+                        "url": jiuyan_search_url(base, keyword),
+                        "members": None,
+                    }
+                )
+
+        hot_rank = 0
+        for target in hot_targets:
+            if target.keyword in seen:
+                continue
+            seen.add(target.keyword)
+            hot_rank += 1
+            codes.append(target.keyword)
+            rows.append(
+                {
+                    "section": JIUYAN_SECTION_HOT,
+                    "rank": hot_rank,
+                    "code": target.keyword,
+                    "name": target.keyword,
+                    "url": jiuyan_search_url(base, target.keyword),
+                    "members": None,
+                }
+            )
+
+        if self.state is not None:
+            day = (
+                generated_at.astimezone(ZoneInfo(self.settings.ranking_timezone))
+                .date()
+                .isoformat()
+            )
+            self.state.replace_jiuyan_ranking(day, rows)
+        return [
+            GeneratedSeedItem(kind="jiuyan_target_code", value=code)
+            for code in codes
+        ]
+
+
 class SeedCompiler:
     def compile(self, seed_name: str, items: list[GeneratedSeedItem]) -> SeedDefinition:
         buckets: dict[str, set[str]] = {
@@ -530,12 +654,15 @@ class SeedCompiler:
             "bilibili_space_url": set(),
             "guba_board_code": set(),
             "tgb_board_code": set(),
+            "jiuyan_target_code": set(),
             "stock_id": set(),
             "topic_id": set(),
             "user_id": set(),
         }
         ordered_guba_codes: list[str] = []
         seen_guba_codes: set[str] = set()
+        ordered_jiuyan_codes: list[str] = []
+        seen_jiuyan_codes: set[str] = set()
         discover_homepage = False
 
         for item in items:
@@ -547,6 +674,11 @@ class SeedCompiler:
                     seen_guba_codes.add(item.value)
                     ordered_guba_codes.append(item.value)
                 continue
+            if item.kind == "jiuyan_target_code":
+                if item.value not in seen_jiuyan_codes:
+                    seen_jiuyan_codes.add(item.value)
+                    ordered_jiuyan_codes.append(item.value)
+                continue
             buckets[item.kind].add(item.value)
 
         return SeedDefinition(
@@ -557,6 +689,7 @@ class SeedCompiler:
             bilibili_space_urls=sorted(buckets["bilibili_space_url"]),
             guba_board_codes=ordered_guba_codes,
             tgb_board_codes=sorted(buckets["tgb_board_code"]),
+            jiuyan_target_codes=ordered_jiuyan_codes,
             stock_ids=sorted(buckets["stock_id"]),
             topic_ids=sorted(buckets["topic_id"]),
             user_ids=sorted(buckets["user_id"]),
@@ -588,10 +721,12 @@ class SeedDiscoveryManager:
         compiler: SeedCompiler | None = None,
         guba_settings: GubaSettings | None = None,
         tgb_settings: TgbSettings | None = None,
+        jiuyan_settings: JiuyanSettings | None = None,
         crawl_settings: CrawlSettings | None = None,
     ) -> None:
         self.settings = settings
         self.guba_settings = guba_settings
+        self.jiuyan_settings = jiuyan_settings
         self.state = state
         self.loader = loader or SeedCatalogLoader(settings.seed_catalog_path)
         self.compiler = compiler or SeedCompiler()
@@ -604,6 +739,9 @@ class SeedDiscoveryManager:
             ),
             "tgb_hot_boards": TgbHotBoardsSeedGenerator(
                 tgb_settings, crawl_settings, state
+            ),
+            "jiuyan_hot_targets": JiuyanHotTargetsSeedGenerator(
+                jiuyan_settings, crawl_settings, state
             ),
         }
 
@@ -683,6 +821,22 @@ class SeedDiscoveryManager:
                         "guba_board_codes": _order_guba_codes_by_ranking(
                             compiled.guba_board_codes,
                             self.state.get_guba_ranking(ranking_day),
+                        )
+                    }
+                )
+            if self.jiuyan_settings is not None and compiled.jiuyan_target_codes:
+                ranking_day = (
+                    generated_at.astimezone(
+                        ZoneInfo(self.jiuyan_settings.ranking_timezone)
+                    )
+                    .date()
+                    .isoformat()
+                )
+                compiled = compiled.model_copy(
+                    update={
+                        "jiuyan_target_codes": _order_jiuyan_codes_by_ranking(
+                            compiled.jiuyan_target_codes,
+                            self.state.get_jiuyan_ranking(ranking_day),
                         )
                     }
                 )

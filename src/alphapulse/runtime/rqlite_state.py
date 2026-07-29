@@ -150,6 +150,79 @@ class RqliteStateStore:
         ]
         self.client.execute(statements, queued=False)
 
+    def _replace_ranking(
+        self, table: str, day: str, rows: list[dict[str, object]]
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        statements: list[str | list[Any]] = [
+            [f"DELETE FROM {table} WHERE day = ?", day]
+        ]
+        statements.extend(
+            [
+                f"""
+                INSERT INTO {table}
+                    (day, section, rank, code, name, url, members, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                day,
+                str(row["section"]),
+                int(row["rank"]),  # type: ignore[arg-type]
+                str(row["code"]),
+                row.get("name"),
+                row.get("url"),
+                json.dumps(row["members"], ensure_ascii=True)
+                if row.get("members")
+                else None,
+                now,
+            ]
+            for row in rows
+        )
+        self.client.execute(statements, queued=False)
+
+    def _get_ranking(self, table: str, day: str) -> list[dict[str, object]]:
+        response = self.client.query_params(
+            [
+                [
+                    f"""
+                    SELECT section, rank, code, name, url, members
+                    FROM {table}
+                    WHERE day = ?
+                    ORDER BY section, rank
+                    """,
+                    day,
+                ]
+            ]
+        )
+        return [
+            {
+                "section": row[0],
+                "rank": row[1],
+                "code": row[2],
+                "name": row[3],
+                "url": row[4],
+                "members": json.loads(row[5]) if row[5] else [],
+            }
+            for row in _values(response)
+        ]
+
+    def replace_guba_ranking(self, day: str, rows: list[dict[str, object]]) -> None:
+        self._replace_ranking("guba_daily_ranking", day, rows)
+
+    def get_guba_ranking(self, day: str) -> list[dict[str, object]]:
+        return self._get_ranking("guba_daily_ranking", day)
+
+    def replace_tgb_ranking(self, day: str, rows: list[dict[str, object]]) -> None:
+        self._replace_ranking("tgb_daily_ranking", day, rows)
+
+    def get_tgb_ranking(self, day: str) -> list[dict[str, object]]:
+        return self._get_ranking("tgb_daily_ranking", day)
+
+    def replace_jiuyan_ranking(self, day: str, rows: list[dict[str, object]]) -> None:
+        self._replace_ranking("jiuyan_daily_ranking", day, rows)
+
+    def get_jiuyan_ranking(self, day: str) -> list[dict[str, object]]:
+        return self._get_ranking("jiuyan_daily_ranking", day)
+
     def load_pending_tasks(self, seed_name: str | None = None) -> list[CrawlTask]:
         if seed_name is None:
             statement: list[Any] = [

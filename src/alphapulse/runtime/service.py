@@ -17,6 +17,7 @@ from alphapulse.runtime.state_factory import build_state_store
 from alphapulse.seeds.discovery import SeedDiscoveryManager
 from alphapulse.sources.bilibili.adapter import BilibiliAdapter
 from alphapulse.sources.guba.adapter import GubaAdapter
+from alphapulse.sources.jiuyan.adapter import JiuyanAdapter
 from alphapulse.sources.tgb.adapter import TgbAdapter
 from alphapulse.sources.xueqiu.adapter import XueqiuAdapter
 from alphapulse.storage.base import StorageStore
@@ -132,6 +133,7 @@ class AlphaPulseService:
                 self.state,
                 guba_settings=self.settings.sources.guba,
                 tgb_settings=self.settings.sources.tgb,
+                jiuyan_settings=self.settings.sources.jiuyan,
                 crawl_settings=self.settings.crawl,
             )
 
@@ -802,6 +804,10 @@ class AlphaPulseService:
                 return timedelta(minutes=self.settings.sources.guba.list_recrawl_minutes)
             if task.source == "tgb":
                 return timedelta(minutes=self.settings.sources.tgb.list_recrawl_minutes)
+            if task.source == "jiuyan":
+                return timedelta(
+                    minutes=self.settings.sources.jiuyan.list_recrawl_minutes
+                )
             return timedelta(minutes=self.settings.crawl.comment_refresh_minutes)
         if task.kind == "refresh_comments":
             return timedelta(minutes=self.settings.crawl.comment_refresh_minutes)
@@ -838,6 +844,12 @@ class AlphaPulseService:
         if self.settings.sources.tgb.enabled:
             sources["tgb"] = TgbAdapter(
                 self.settings.sources.tgb,
+                self.settings.crawl,
+                raw_store=build_raw_store(self.settings),
+            )
+        if self.settings.sources.jiuyan.enabled:
+            sources["jiuyan"] = JiuyanAdapter(
+                self.settings.sources.jiuyan,
                 self.settings.crawl,
                 raw_store=build_raw_store(self.settings),
             )

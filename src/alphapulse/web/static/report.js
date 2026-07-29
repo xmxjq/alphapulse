@@ -1,6 +1,6 @@
 // Per-day forum "newspaper" report. Fetches /api/{source}/report/{date} and renders
 // ranking sections → boards → the day's posts, with lazily-loaded comment threads.
-// `source` is guba (股吧) or tgb (淘股吧), read from the /report/{source}/{date} path.
+// `source` is guba, tgb, or jiuyan, read from the /report/{source}/{date} path.
 
 const REPORT_TZ = "Asia/Shanghai";
 
@@ -11,6 +11,7 @@ const SOURCE_META = {
     title: "股 吧 日 报",
     subtitle: "Guba Daily · 热门个股吧 · 热门概念吧 · 热门主题吧",
     colophon: "Generated from crawled guba posts. Rankings are a snapshot of the day's hot boards.",
+    comments: true,
   },
   tgb: {
     label: "淘股吧",
@@ -18,6 +19,15 @@ const SOURCE_META = {
     title: "淘 股 吧 日 报",
     subtitle: "TaoGuBa Daily · 精华 · 热门个股 · 综合",
     colophon: "Generated from crawled tgb.cn posts. Featured (精华) and general boards, snapshotted daily.",
+    comments: true,
+  },
+  jiuyan: {
+    label: "韭研公社",
+    edition: "韭研公社 · Jiuyan Gongshe",
+    title: "韭研公社日报",
+    subtitle: "Jiuyan Daily · 固定指数 · 公社热门搜索",
+    colophon: "Generated from Jiuyan Gongshe search targets. Fixed indices and hot searches are snapshotted daily.",
+    comments: false,
   },
 };
 const DEFAULT_SOURCE = "guba";
@@ -98,7 +108,8 @@ function postItem(post) {
     children.push(el("div", { class: "post-preview" }, post.content_preview));
   }
 
-  if ((post.comment_count || 0) > 0) {
+  const sourceMeta = SOURCE_META[state.source] || SOURCE_META[DEFAULT_SOURCE];
+  if (sourceMeta.comments && (post.comment_count || 0) > 0) {
     const commentsBox = el("div", { class: "post-comments", hidden: "hidden" });
     const toggle = el("button", {
       class: "comments-toggle",

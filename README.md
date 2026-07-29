@@ -165,6 +165,9 @@ AlphaPulse is a Python-first crawling platform for finance data collection. The 
 - `xueqiu.com` is behind WAF protection. The default config runs in guest mode, but the config already supports cookie injection and fetch-mode selection.
 - Bilibili video comments use public JSON APIs in guest mode by default. Optional cookies can be supplied under `[sources.bilibili.cookies]` when rate limits or access restrictions appear.
 - Guba requires no cookies or JS; request pacing is randomized with adaptive backoff, and blocked responses are classified into the fetch log. See `docs/guba-crawl.md` for mechanics and the live smoke test.
+- Jiuyan Gongshe uses the public signed JSON endpoints behind the Nuxt site. It
+  crawls four fixed index searches plus the daily hot-search ranking and exposes
+  HTML, JSON, and TOON daily reports. See `docs/jiuyan-crawl.md`.
 - Proxy support is provider-based: the `proxy_pool` sidecar (free public proxies, unstable but zero-setup) or `static_list` (fixed upstreams such as self-hosted xray tunnels, see `docs/xray-proxy.md`). `crawl.proxy.sources` scopes proxying per source.
 - The proxy abstraction is intentionally generic so stronger external pools, including paid residential or mobile providers, can be added later without rewriting the adapters.
 - Self-hosted agents are transport executors rather than open proxies. The

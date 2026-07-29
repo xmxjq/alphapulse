@@ -129,6 +129,18 @@ class StateStore:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (day, section, rank)
                 );
+
+                CREATE TABLE IF NOT EXISTS jiuyan_daily_ranking (
+                    day TEXT NOT NULL,
+                    section TEXT NOT NULL,
+                    rank INTEGER NOT NULL,
+                    code TEXT NOT NULL,
+                    name TEXT,
+                    url TEXT,
+                    members TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (day, section, rank)
+                );
                 """
             )
 
@@ -197,6 +209,12 @@ class StateStore:
 
     def get_tgb_ranking(self, day: str) -> list[dict[str, object]]:
         return self._get_ranking("tgb_daily_ranking", day)
+
+    def replace_jiuyan_ranking(self, day: str, rows: list[dict[str, object]]) -> None:
+        self._replace_ranking("jiuyan_daily_ranking", day, rows)
+
+    def get_jiuyan_ranking(self, day: str) -> list[dict[str, object]]:
+        return self._get_ranking("jiuyan_daily_ranking", day)
 
     def try_claim_url(
         self,

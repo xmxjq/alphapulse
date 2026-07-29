@@ -1,0 +1,76 @@
+# Jiuyan Gongshe Crawl
+
+The `jiuyan` source crawls public content from [韭研公社](https://www.jiuyangongshe.com/)
+into the same normalized post storage and daily-report pipeline used by `guba` and
+`tgb`.
+
+## Targets
+
+Every daily seed refresh includes four fixed search targets:
+
+- 上证指数
+- 创业板指
+- 科创50
+- 上证50
+
+It also reads the public 公社热榜 and adds the top `hot_targets_limit` search
+keywords. Fixed targets are ranked before dynamic targets, and duplicates are removed.
+
+## Fetch strategy
+
+The PC site is Nuxt-rendered, but its public JSON API is more stable and smaller than
+scraping the DOM. Requests use the same timestamp and MD5 validation headers as the
+site's web client.
+
+- Ranking: `POST /api/v1/article/rank-board`
+- Search: `POST /api/v2/article/search`
+- Detail: `POST /api/v2/article/detail?articleId={id}`
+
+Search pages are requested newest-first. In `day_scoped` mode, only posts published on
+the current Beijing day are emitted, and pagination stops after the first page without
+today's posts or `max_search_pages`, whichever comes first.
+
+Comments are disabled by default because they require another request per post.
+
+## Enable
+
+```toml
+[sources.jiuyan]
+enabled = true
+fixed_targets = ["上证指数", "创业板指", "科创50", "上证50"]
+hot_targets_limit = 10
+max_search_pages = 3
+day_scoped = true
+fetch_comments = false
+```
+
+Add the source to rotating transports when desired:
+
+```toml
+[crawl.proxy]
+sources = ["guba", "tgb", "jiuyan"]
+
+[crawl.agent_pool]
+sources = ["guba", "tgb", "jiuyan"]
+allowed_hosts = [
+  "guba.eastmoney.com",
+  "emappdata.eastmoney.com",
+  "push2.eastmoney.com",
+  "www.tgb.cn",
+  "app.jiuyangongshe.com",
+]
+```
+
+The daily pages and LLM endpoint are:
+
+```text
+/report/jiuyan/{YYYY-MM-DD}
+/api/jiuyan/report/{YYYY-MM-DD}
+/api/llm/jiuyan/report/{YYYY-MM-DD}
+```
+
+Run a public API smoke test with:
+
+```bash
+uv run python scripts/jiuyan_live_check.py --pages 1
+```

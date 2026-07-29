@@ -16,6 +16,7 @@ SeedItemKind = Literal[
     "bilibili_space_url",
     "guba_board_code",
     "tgb_board_code",
+    "jiuyan_target_code",
     "stock_id",
     "topic_id",
     "user_id",
@@ -47,6 +48,7 @@ class ManualGeneratorDefinition(BaseModel):
     bilibili_space_urls: list[str] = Field(default_factory=list)
     guba_board_codes: list[str] = Field(default_factory=list)
     tgb_board_codes: list[str] = Field(default_factory=list)
+    jiuyan_target_codes: list[str] = Field(default_factory=list)
     stock_ids: list[str] = Field(default_factory=list)
     topic_ids: list[str] = Field(default_factory=list)
     user_ids: list[str] = Field(default_factory=list)
@@ -140,12 +142,22 @@ class TgbHotBoardsGeneratorDefinition(BaseModel):
     hot_stocks_limit: int | None = Field(default=None, gt=0)
 
 
+class JiuyanHotTargetsGeneratorDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: Literal["jiuyan_hot_targets"] = "jiuyan_hot_targets"
+    include_fixed_targets: bool = True
+    hot_targets_limit: int | None = Field(default=None, gt=0)
+
+
 GeneratorDefinition = Annotated[
     ManualGeneratorDefinition
     | StockUniverseGeneratorDefinition
     | LonghubangGeneratorDefinition
     | GubaHotBoardsGeneratorDefinition
-    | TgbHotBoardsGeneratorDefinition,
+    | TgbHotBoardsGeneratorDefinition
+    | JiuyanHotTargetsGeneratorDefinition,
     Field(discriminator="type"),
 ]
 

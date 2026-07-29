@@ -18,6 +18,7 @@ from alphapulse.seeds.discovery import (
     SeedCompiler,
     SeedDiscoveryManager,
     StockUniverseSeedGenerator,
+    _order_jiuyan_codes_by_ranking,
     _order_guba_codes_by_ranking,
 )
 from alphapulse.seeds.eastmoney import parse_eastmoney_longhubang_page
@@ -279,6 +280,22 @@ def test_guba_codes_are_interleaved_from_ranking_snapshot() -> None:
         "BK2",
         "theme2",
         "manual",
+    ]
+
+
+def test_jiuyan_codes_follow_fixed_then_hot_snapshot_order() -> None:
+    codes = ["机器人", "创业板指", "上证指数", "消费"]
+    rows = [
+        {"section": "hot", "rank": 2, "code": "消费"},
+        {"section": "fixed", "rank": 2, "code": "创业板指"},
+        {"section": "hot", "rank": 1, "code": "机器人"},
+        {"section": "fixed", "rank": 1, "code": "上证指数"},
+    ]
+    assert _order_jiuyan_codes_by_ranking(codes, rows) == [
+        "上证指数",
+        "创业板指",
+        "机器人",
+        "消费",
     ]
 
 
@@ -552,6 +569,71 @@ def test_seed_compiler_preserves_tgb_board_codes() -> None:
         ],
     )
     assert compiled.tgb_board_codes == ["jinghua", "sz000938"]
+
+
+def test_manual_and_compiler_preserve_jiuyan_targets() -> None:
+    items = ManualSeedGenerator().generate(
+        ManualGeneratorDefinition(
+            name="manual",
+            jiuyan_target_codes=["上证指数", "机器人"],
+        ),
+        datetime.now(UTC),
+    )
+    assert [(item.kind, item.value) for item in items] == [
+        ("jiuyan_target_code", "上证指数"),
+        ("jiuyan_target_code", "机器人"),
+    ]
+    compiled = SeedCompiler().compile("jiuyan-daily", items)
+    assert compiled.jiuyan_target_codes == ["上证指数", "机器人"]
+
+
+def test_jiuyan_hot_targets_generator_snapshots_fixed_and_hot(
+    tmp_path: Path,
+) -> None:
+    from alphapulse.runtime.config import JiuyanSettings
+    from alphapulse.seeds.catalog import JiuyanHotTargetsGeneratorDefinition
+    from alphapulse.seeds.discovery import JiuyanHotTargetsSeedGenerator
+    from alphapulse.sources.jiuyan.api import JiuyanHttpResult
+
+    class FakeClient:
+        def hot_rankings(self):
+            return JiuyanHttpResult(
+                url="https://example.test",
+                status_code=200,
+                text=(
+                    '{"errCode":"0","data":{"hot_search_list":['
+                    '{"keyword":"机器人"},{"keyword":"上证指数"},{"keyword":"消费"}]}}'
+                ),
+            )
+
+    settings = JiuyanSettings(
+        enabled=True,
+        fixed_targets=["上证指数", "创业板指", "科创50", "上证50"],
+        hot_targets_limit=3,
+    )
+    state = StateStore(tmp_path / "state.db")
+    generator = JiuyanHotTargetsSeedGenerator(
+        settings, None, state, client=FakeClient()
+    )
+    items = generator.generate(
+        JiuyanHotTargetsGeneratorDefinition(name="jiuyan-hot"),
+        datetime(2026, 7, 29, 3, 0, tzinfo=UTC),
+    )
+
+    assert [item.value for item in items] == [
+        "上证指数",
+        "创业板指",
+        "科创50",
+        "上证50",
+        "机器人",
+        "消费",
+    ]
+    snapshot = state.get_jiuyan_ranking("2026-07-29")
+    assert [row["section"] for row in snapshot[:4]] == ["fixed"] * 4
+    assert [row["code"] for row in snapshot if row["section"] == "hot"] == [
+        "机器人",
+        "消费",
+    ]
 
 
 def test_tgb_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> None:

@@ -84,3 +84,21 @@ def test_pending_tasks_round_trip_in_priority_order(tmp_path) -> None:
         newer.dedupe_key,
         lower_priority.dedupe_key,
     }
+
+
+def test_jiuyan_ranking_round_trip(tmp_path) -> None:
+    state = StateStore(tmp_path / "state.db")
+    state.replace_jiuyan_ranking(
+        "2026-07-29",
+        [
+            {
+                "section": "fixed",
+                "rank": 1,
+                "code": "上证指数",
+                "name": "上证指数",
+                "url": "https://www.jiuyangongshe.com/search/new?k=index",
+                "members": None,
+            }
+        ],
+    )
+    assert state.get_jiuyan_ranking("2026-07-29")[0]["code"] == "上证指数"

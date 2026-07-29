@@ -7,10 +7,17 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable, Protocol
 from zoneinfo import ZoneInfo
 
-from alphapulse.runtime.config import CrawlSettings, GubaSettings, Settings, TgbSettings
+from alphapulse.runtime.config import (
+    CrawlSettings,
+    GubaSettings,
+    JiuyanSettings,
+    Settings,
+    TgbSettings,
+)
 from alphapulse.runtime.proxy_metrics import ProxyMetricsStore
 from alphapulse.runtime.state import StateStore
 from alphapulse.sources.guba.urls import normalize_board_code as normalize_guba_board_code
+from alphapulse.sources.jiuyan.urls import search_url as jiuyan_search_url
 from alphapulse.sources.tgb.urls import featured_list_url, general_list_url, stock_list_url
 from alphapulse.web.models import (
     Comment,
@@ -42,10 +49,14 @@ TGB_REPORT_SECTIONS = [
     ("featured", "精华"),
     ("general", "热门个股 / 综合"),
 ]
+JIUYAN_REPORT_SECTIONS = [
+    ("fixed", "固定指数"),
+    ("hot", "公社热门搜索"),
+]
 
 
 RECENT_URL_WINDOW = timedelta(hours=1)
-ALLOWED_SOURCES = {"bilibili", "xueqiu", "guba", "tgb"}
+ALLOWED_SOURCES = {"bilibili", "xueqiu", "guba", "tgb", "jiuyan"}
 CONTENT_PREVIEW_CHARS = 280
 # Page-1 board list URLs only; deeper pages (list,{code}_{N}.html) are
 # re-discovered from page 1, so page 1 is what drives the next crawl.
@@ -989,6 +1000,38 @@ class WebQueries:
             "tgb",
             report,
             schema="alphapulse.tgb.daily-report.v1",
+            include_comments=include_comments,
+            max_comments_per_post=max_comments_per_post,
+        )
+
+    def jiuyan_daily_report(
+        self, day: str, *, limit: int = 20_000
+    ) -> ReportResponse:
+        jiuyan = self.settings.sources.jiuyan if self.settings else JiuyanSettings()
+        base = str(jiuyan.base_url)
+        return self._daily_report(
+            "jiuyan",
+            day,
+            JIUYAN_REPORT_SECTIONS,
+            self.state.get_jiuyan_ranking,
+            jiuyan.ranking_timezone,
+            lambda code: jiuyan_search_url(base, code),
+            limit,
+        )
+
+    def jiuyan_llm_report(
+        self,
+        day: str,
+        *,
+        limit: int = 500,
+        include_comments: bool = False,
+        max_comments_per_post: int = 100,
+    ) -> dict[str, Any]:
+        report = self.jiuyan_daily_report(day, limit=limit)
+        return self._llm_daily_report(
+            "jiuyan",
+            report,
+            schema="alphapulse.jiuyan.daily-report.v1",
             include_comments=include_comments,
             max_comments_per_post=max_comments_per_post,
         )

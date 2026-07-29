@@ -92,11 +92,13 @@ The UI is backed by these read-only endpoints:
 - `GET /api/llm/guba/report/{date}` (`text/toon`)
 - `GET /api/tgb/report/{date}`
 - `GET /api/llm/tgb/report/{date}` (`text/toon`)
+- `GET /api/jiuyan/report/{date}`
+- `GET /api/llm/jiuyan/report/{date}` (`text/toon`)
 
 The LLM report endpoints return the day's full post bodies and the comments
 already stored for each post in [TOON](https://github.com/toon-format/toon)
 format. Empty ranking boards are omitted to reduce tokens. Each source has its
-own schema identifier, while both payloads use four flat tables so TOON can
+own schema identifier, while all payloads use four flat tables so TOON can
 apply tabular encoding:
 
 - `sections`: report section metadata
@@ -118,9 +120,12 @@ curl -H "Accept: text/toon" \
 
 curl -H "Accept: text/toon" \
   "http://127.0.0.1:8000/api/llm/tgb/report/2026-07-24?limit=200"
+
+curl -H "Accept: text/toon" \
+  "http://127.0.0.1:8000/api/llm/jiuyan/report/2026-07-24?limit=200"
 ```
 
-Allowed `source` values are `bilibili`, `xueqiu`, `guba`, and `tgb`.
+Allowed `source` values are `bilibili`, `xueqiu`, `guba`, `tgb`, and `jiuyan`.
 
 ## Troubleshooting
 

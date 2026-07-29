@@ -19,6 +19,7 @@ class SeedDefinition(BaseModel):
     bilibili_space_urls: list[str] = Field(default_factory=list)
     guba_board_codes: list[str] = Field(default_factory=list)
     tgb_board_codes: list[str] = Field(default_factory=list)
+    jiuyan_target_codes: list[str] = Field(default_factory=list)
     stock_ids: list[str] = Field(default_factory=list)
     topic_ids: list[str] = Field(default_factory=list)
     user_ids: list[str] = Field(default_factory=list)
