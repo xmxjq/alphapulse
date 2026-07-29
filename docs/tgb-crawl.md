@@ -95,6 +95,10 @@ ranking snapshot. Comments load lazily per post. A source switcher toggles betwe
 tgb and guba reports. The report models and query machinery are shared between sources
 (`WebQueries._daily_report`).
 
+For LLM integrations, `GET /api/llm/tgb/report/{date}` returns the same day's
+full stored post bodies and comments in compact TOON format. See
+[llm-report-api.md](llm-report-api.md).
+
 ## Live Smoke Test
 
 ```bash

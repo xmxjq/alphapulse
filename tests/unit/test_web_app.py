@@ -398,6 +398,88 @@ def test_guba_llm_report_rejects_bad_date(tmp_path: Path) -> None:
     assert client.get("/api/llm/guba/report/2026-7-2").status_code == 400
 
 
+def test_tgb_llm_report_returns_toon_with_post_bodies_and_comments(
+    tmp_path: Path,
+) -> None:
+    reader = FakeReader()
+    summary = PostSummary(
+        source="tgb",
+        source_entity_id="p1",
+        canonical_url="https://www.tgb.cn/a/p1",
+        author_entity_id="u1",
+        title="Today",
+        content_preview="preview",
+        published_at=datetime(2026, 7, 24, 1, tzinfo=UTC),
+        fetched_at=datetime(2026, 7, 24, 2, tzinfo=UTC),
+        like_count=3,
+        comment_count=1,
+        board_code="sz000938",
+    )
+    reader.range_posts = [summary]
+    reader.post_details[("tgb", "p1")] = PostDetail(
+        source="tgb",
+        source_entity_id="p1",
+        canonical_url=summary.canonical_url,
+        author_entity_id="u1",
+        title="Today",
+        content_text="full tgb post body",
+        language="zh",
+        published_at=summary.published_at,
+        fetched_at=summary.fetched_at,
+        like_count=3,
+        comment_count=1,
+        repost_count=0,
+        raw_topic_ids=["sz000938"],
+    )
+    reader.comments_by_post[("tgb", "p1")] = [
+        Comment(
+            source="tgb",
+            source_entity_id="c1",
+            post_entity_id="p1",
+            parent_comment_entity_id=None,
+            author_entity_id="u2",
+            content_text="tgb comment",
+            published_at=datetime(2026, 7, 24, 1, 5, tzinfo=UTC),
+            fetched_at=datetime(2026, 7, 24, 2, tzinfo=UTC),
+            like_count=2,
+        )
+    ]
+    client = _build_client(tmp_path, reader)
+    StateStore(tmp_path / "state.db").replace_tgb_ranking(
+        "2026-07-24",
+        [
+            {
+                "section": "general",
+                "rank": 1,
+                "code": "sz000938",
+                "name": "Tsinghua Unigroup",
+                "url": "https://www.tgb.cn/quotes/sz000938",
+                "members": None,
+            }
+        ],
+    )
+
+    response = client.get("/api/llm/tgb/report/2026-07-24")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/toon; charset=utf-8"
+    payload = decode(response.text)
+    assert payload["schema"] == "alphapulse.tgb.daily-report.v1"
+    assert payload["source"] == "tgb"
+    assert payload["post_count"] == 1
+    assert payload["included_post_count"] == 1
+    assert payload["included_comment_count"] == 1
+    assert payload["boards"][0]["section_key"] == "general"
+    assert payload["posts"][0]["text"] == "full tgb post body"
+    assert payload["comments"][0]["post_id"] == "p1"
+    assert payload["comments"][0]["text"] == "tgb comment"
+
+
+def test_tgb_llm_report_rejects_bad_date(tmp_path: Path) -> None:
+    client = _build_client(tmp_path, FakeReader())
+    assert client.get("/api/llm/tgb/report/2026-7-2").status_code == 400
+
+
 def test_tgb_report_page_serves_html(tmp_path: Path) -> None:
     client = _build_client(tmp_path, FakeReader())
     response = client.get("/report/tgb/2026-07-22")

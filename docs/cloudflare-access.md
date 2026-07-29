@@ -64,10 +64,11 @@ CF-Access-Client-Id: <client-id>
 CF-Access-Client-Secret: <client-secret>
 ```
 
-The primary compact endpoint is:
+The compact endpoints are:
 
 ```text
 GET /api/llm/guba/report/YYYY-MM-DD
+GET /api/llm/tgb/report/YYYY-MM-DD
 ```
 
 Revoke a compromised or retired client in Cloudflare Zero Trust without

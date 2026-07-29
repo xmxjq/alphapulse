@@ -834,6 +834,23 @@ class WebQueries:
         max_comments_per_post: int = 100,
     ) -> dict[str, Any]:
         report = self.guba_daily_report(day, limit=limit)
+        return self._llm_daily_report(
+            "guba",
+            report,
+            schema="alphapulse.guba.daily-report.v1",
+            include_comments=include_comments,
+            max_comments_per_post=max_comments_per_post,
+        )
+
+    def _llm_daily_report(
+        self,
+        source: str,
+        report: ReportResponse,
+        *,
+        schema: str,
+        include_comments: bool,
+        max_comments_per_post: int,
+    ) -> dict[str, Any]:
         sections: list[dict[str, Any]] = []
         boards: list[dict[str, Any]] = []
         posts: list[dict[str, Any]] = []
@@ -857,10 +874,10 @@ class WebQueries:
                     }
                 )
                 for summary in board.posts:
-                    detail = self.reader.get_post("guba", summary.source_entity_id)
+                    detail = self.reader.get_post(source, summary.source_entity_id)
                     comments = (
                         self.reader.list_comments_for_post(
-                            "guba", summary.source_entity_id
+                            source, summary.source_entity_id
                         )[:max_comments_per_post]
                         if include_comments and max_comments_per_post > 0
                         else []
@@ -922,8 +939,8 @@ class WebQueries:
                 )
 
         return {
-            "schema": "alphapulse.guba.daily-report.v1",
-            "source": "guba",
+            "schema": schema,
+            "source": source,
             "day": report.day,
             "timezone": report.timezone,
             "generated_at": _iso_datetime(report.generated_at),
@@ -957,6 +974,23 @@ class WebQueries:
             tgb.ranking_timezone,
             board_url,
             limit,
+        )
+
+    def tgb_llm_report(
+        self,
+        day: str,
+        *,
+        limit: int = 500,
+        include_comments: bool = True,
+        max_comments_per_post: int = 100,
+    ) -> dict[str, Any]:
+        report = self.tgb_daily_report(day, limit=limit)
+        return self._llm_daily_report(
+            "tgb",
+            report,
+            schema="alphapulse.tgb.daily-report.v1",
+            include_comments=include_comments,
+            max_comments_per_post=max_comments_per_post,
         )
 
 

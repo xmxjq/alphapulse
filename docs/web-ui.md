@@ -90,11 +90,14 @@ The UI is backed by these read-only endpoints:
 - `GET /api/posts/{source}/{entity_id}`
 - `GET /api/guba/report/{date}`
 - `GET /api/llm/guba/report/{date}` (`text/toon`)
+- `GET /api/tgb/report/{date}`
+- `GET /api/llm/tgb/report/{date}` (`text/toon`)
 
-The LLM report endpoint returns the day's full guba post bodies and the comments
+The LLM report endpoints return the day's full post bodies and the comments
 already stored for each post in [TOON](https://github.com/toon-format/toon)
-format. Empty ranking boards are omitted to reduce tokens. The payload uses four
-flat tables so TOON can apply tabular encoding:
+format. Empty ranking boards are omitted to reduce tokens. Each source has its
+own schema identifier, while both payloads use four flat tables so TOON can
+apply tabular encoding:
 
 - `sections`: report section metadata
 - `boards`: boards keyed by `code` and linked through `section_key`
@@ -112,6 +115,9 @@ Example:
 ```bash
 curl -H "Accept: text/toon" \
   "http://127.0.0.1:8000/api/llm/guba/report/2026-07-24?limit=200"
+
+curl -H "Accept: text/toon" \
+  "http://127.0.0.1:8000/api/llm/tgb/report/2026-07-24?limit=200"
 ```
 
 Allowed `source` values are `bilibili`, `xueqiu`, `guba`, and `tgb`.
