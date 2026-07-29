@@ -94,6 +94,9 @@ def test_discover_builds_kind_specific_urls(tmp_path) -> None:
     assert by_code["sz000938"].metadata["board_kind"] == "stock"
     # Featured outranks stock outranks general so featured attribution wins on overlap.
     assert by_code["jinghua"].priority > by_code["sz000938"].priority > by_code["zongban"].priority
+    # Fresh list discovery runs before recovered detail tasks so today's posts
+    # can be identified and prioritized ahead of stale pending work.
+    assert min(task.priority for task in tasks) > 152
 
 
 def _discover_task(url: str, code: str, kind: str, page: int = 1) -> CrawlTask:
@@ -122,6 +125,7 @@ def test_list_page_day_scopes_and_paginates(tmp_path) -> None:
     # fetch_post carries the board code for report attribution.
     fp = next(t for t in outcome.discovered_tasks if t.kind == "fetch_post")
     assert fp.metadata["board_code"] == "zongban"
+    assert fp.metadata["pubdate_ts"] > 0
 
 
 def test_list_page_all_stale_stops(tmp_path) -> None:

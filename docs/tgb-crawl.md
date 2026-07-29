@@ -77,6 +77,8 @@ allowed_hosts = [
 TGB requests prefer an online self-hosted Agent and fall back to the configured
 paid proxy pool. A blocked detail page is isolated while another rotating exit
 remains available; a blocked list page still stops the source for that cycle.
+List discovery outranks recovered detail work, and discovered posts carry their
+publication timestamp so current-day posts sort ahead of stale pending details.
 
 ## 2. Add the seed set
 

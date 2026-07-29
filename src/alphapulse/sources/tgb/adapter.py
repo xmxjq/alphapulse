@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # Board-tier priorities so that a post appearing in several feeds keeps the most
 # specific attribution: featured > stock > general (the state claim gate keeps only
 # the first fetch of a given post URL within the recrawl window).
-_DISCOVER_PRIORITY = {KIND_FEATURED: 132, KIND_STOCK: 126, KIND_GENERAL: 120}
+_DISCOVER_PRIORITY = {KIND_FEATURED: 172, KIND_STOCK: 166, KIND_GENERAL: 160}
 _FETCH_PRIORITY = {KIND_FEATURED: 152, KIND_STOCK: 151, KIND_GENERAL: 150}
 
 _LIST_MARKER = "Nbbs-middle-list"
@@ -152,6 +152,11 @@ class TgbAdapter:
                 "board_code": code,
                 "board_kind": kind,
                 "canonical_url": detail_url,
+                "pubdate_ts": (
+                    int(entry.publish_time.timestamp())
+                    if entry.publish_time is not None
+                    else 0
+                ),
             },
         )
 
