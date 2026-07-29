@@ -27,7 +27,7 @@ Add this to `settings.toml`:
 [crawl.agent_pool]
 enabled = true
 db_path = ".runtime/agent-pool.db"
-sources = ["guba"]
+sources = ["guba", "tgb"]
 strategy = "agent_first"
 heartbeat_ttl_seconds = 90
 lease_seconds = 180
@@ -44,13 +44,14 @@ allowed_hosts = [
   "guba.eastmoney.com",
   "emappdata.eastmoney.com",
   "push2.eastmoney.com",
+  "www.tgb.cn",
 ]
 ```
 
 The crawler and WebUI containers must share the same `.runtime` directory. This
 is already true in the project Compose file.
 
-Set the guba transport concurrency:
+Guba can run paid and Agent slots concurrently:
 
 ```toml
 [sources.guba]
@@ -61,6 +62,8 @@ concurrent_agent_requests = 4
 These pools run together on different queued tasks. The effective number of
 Agent slots is capped by online nodes' reported `max-concurrency`; the paid
 slots continue working when all Agent nodes are offline or benched.
+Blocked cooldowns are tracked per Agent and source, so a node benched for TGB
+can continue serving guba, and vice versa.
 
 Restart `web` after enabling the pool so the Agent API is available. Restart
 `crawler` to enable agent-first request routing.

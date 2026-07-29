@@ -467,7 +467,7 @@ class GubaAdapter:
         agent_pool = getattr(self.client, "agent_pool", None)
         if agent_pool is None:
             return 0
-        return agent_pool.store.available_capacity("http")
+        return agent_pool.store.available_capacity("http", source="guba")
 
     @staticmethod
     def _entry_ts(entry: GubaListEntry) -> int:

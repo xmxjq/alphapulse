@@ -90,7 +90,7 @@ failure_threshold = 3
 #   uv run alphapulse --config settings.toml agent-token create --agent-id home-arm
 enabled = false
 db_path = ".runtime/agent-pool.db"
-sources = ["guba"]
+sources = ["guba", "tgb"]
 strategy = "agent_first"
 heartbeat_ttl_seconds = 90
 lease_seconds = 180
@@ -110,6 +110,7 @@ allowed_hosts = [
   "guba.eastmoney.com",
   "emappdata.eastmoney.com",
   "push2.eastmoney.com",
+  "www.tgb.cn",
 ]
 
 [crawl.raw_store]

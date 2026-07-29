@@ -4,8 +4,14 @@ import logging
 import random
 import time
 from dataclasses import dataclass
+from typing import Literal
 from urllib import error, request
 
+from alphapulse.runtime.agent_pool import (
+    AgentJobFailed,
+    AgentPoolClient,
+    AgentPoolUnavailable,
+)
 from alphapulse.runtime.config import CrawlSettings, TgbSettings
 from alphapulse.sources.fetching import ProxyLease, _build_proxy_provider
 
@@ -20,6 +26,7 @@ DEFAULT_USER_AGENT = (
 )
 
 BLOCKED_KINDS = {"http_403", "http_429", "captcha", "login_redirect", "soft_block"}
+TgbTransport = Literal["auto", "agent", "existing"]
 
 
 def classify_block(status_code: int, text: str, final_url: str) -> str | None:
@@ -60,35 +67,106 @@ class TgbClient:
         self.settings = settings
         self.crawl_settings = crawl_settings
         self.proxy_provider = _build_proxy_provider(crawl_settings, source="tgb")
+        self.agent_pool = (
+            AgentPoolClient(crawl_settings.agent_pool)
+            if crawl_settings.agent_pool.enabled
+            and (
+                not crawl_settings.agent_pool.sources
+                or "tgb" in crawl_settings.agent_pool.sources
+            )
+            else None
+        )
         self._backoff_multiplier = 1.0
 
-    def get(self, url: str, *, expect_marker: str | None = None) -> TgbHttpResult:
+    def get(
+        self,
+        url: str,
+        *,
+        expect_marker: str | None = None,
+        transport: TgbTransport = "auto",
+    ) -> TgbHttpResult:
         attempts = max(1, self.settings.max_retries)
         last_result: TgbHttpResult | None = None
 
         for attempt in range(attempts):
             lease: ProxyLease | None = None
             proxy_url: str | None = None
+            acquire_error: str | None = None
+            agent_job_id: str | None = None
             was_rate_limited = attempt > 0
+            self._adaptive_sleep(was_rate_limited=was_rate_limited)
 
-            if self.proxy_provider is not None:
+            remote_response = None
+            remote_error: str | None = None
+            if self.agent_pool is not None and transport != "existing":
                 try:
-                    lease = self.proxy_provider.acquire()
-                except Exception as exc:
-                    if not self.crawl_settings.proxy.fail_open:
-                        return TgbHttpResult(
-                            url=url,
-                            status_code=0,
-                            text="",
-                            error_message=f"Failed to acquire proxy: {exc}",
-                        )
-                if lease is not None:
-                    proxy_url = lease.proxy_url
+                    remote_response = self.agent_pool.fetch(
+                        source="tgb",
+                        method="GET",
+                        url=url,
+                        headers=self._headers(include_cookies=False),
+                        body=None,
+                        timeout_seconds=self.crawl_settings.request_timeout_seconds,
+                        priority=100,
+                    )
+                    agent_job_id = remote_response.job_id
+                except (AgentPoolUnavailable, AgentJobFailed, ValueError) as exc:
+                    remote_error = str(exc)
+                    logger.info(
+                        "Tgb remote agent unavailable; using existing transport",
+                        extra={
+                            "event": "tgb_agent_fallback",
+                            "extra_data": {
+                                "url": url,
+                                "reason": remote_error,
+                                "attempt": attempt + 1,
+                            },
+                        },
+                    )
+
+            if remote_response is None:
+                if (
+                    self.agent_pool is not None
+                    and transport != "existing"
+                    and not self.crawl_settings.agent_pool.fallback_to_existing_transport
+                ):
+                    return TgbHttpResult(
+                        url=url,
+                        status_code=0,
+                        text="",
+                        error_message=remote_error or "No remote agent available",
+                    )
+                if self.proxy_provider is not None:
+                    try:
+                        lease = self.proxy_provider.acquire()
+                    except Exception as exc:
+                        if not self.crawl_settings.proxy.fail_open:
+                            acquire_error = f"Failed to acquire proxy: {exc}"
+                    else:
+                        if lease is not None:
+                            proxy_url = lease.proxy_url
+                        elif not self.crawl_settings.proxy.fail_open:
+                            acquire_error = "No proxy available from proxy provider"
+
+            if acquire_error is not None:
+                last_result = TgbHttpResult(
+                    url=url,
+                    status_code=0,
+                    text="",
+                    error_message=acquire_error,
+                )
+                if attempt + 1 < attempts:
+                    continue
+                return last_result
 
             started = time.monotonic()
             try:
-                self._adaptive_sleep(was_rate_limited=was_rate_limited)
-                status_code, text, final_url = self._dispatch(url, proxy_url)
+                if remote_response is not None:
+                    status_code = remote_response.status_code
+                    text = remote_response.text
+                    final_url = remote_response.final_url
+                else:
+                    status_code, text, final_url = self._dispatch(url, proxy_url)
             except error.HTTPError as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
                 body = exc.read().decode("utf-8", errors="ignore")
@@ -144,6 +222,8 @@ class TgbClient:
                 return last_result
 
             duration_ms = int((time.monotonic() - started) * 1000)
+            if remote_response is not None and remote_response.duration_ms is not None:
+                duration_ms = remote_response.duration_ms
             block_kind = classify_block(status_code, text, final_url)
             if (
                 block_kind is None
@@ -179,9 +259,19 @@ class TgbClient:
                 )
                 if lease is not None:
                     self._report_bad_proxy(lease, f"blocked: {block_kind}")
+                if agent_job_id is not None:
+                    self.agent_pool.store.record_outcome(
+                        agent_job_id,
+                        "blocked",
+                        f"blocked: {block_kind}",
+                    )
                 last_result = result
                 if attempt + 1 < attempts:
                     continue
+            elif lease is not None:
+                self._report_success_proxy(lease)
+            elif agent_job_id is not None:
+                self.agent_pool.store.record_outcome(agent_job_id, "success")
             return result
 
         return last_result or TgbHttpResult(url=url, status_code=0, text="", error_message="Request failed")
@@ -211,13 +301,13 @@ class TgbClient:
         except UnicodeDecodeError:
             return raw.decode("gb18030", errors="replace")
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, *, include_cookies: bool = True) -> dict[str, str]:
         headers = {
             "User-Agent": self.settings.user_agent or DEFAULT_USER_AGENT,
             "Referer": f"{str(self.settings.base_url).rstrip('/')}/",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
-        if self.settings.cookies:
+        if include_cookies and self.settings.cookies:
             headers["Cookie"] = "; ".join(
                 f"{name}={value}" for name, value in self.settings.cookies.items()
             )
@@ -239,5 +329,11 @@ class TgbClient:
             return
         try:
             self.proxy_provider.report_bad(lease, reason)
+        except Exception:
+            return
+
+    def _report_success_proxy(self, lease: ProxyLease) -> None:
+        try:
+            self.proxy_provider.report_success(lease)
         except Exception:
             return

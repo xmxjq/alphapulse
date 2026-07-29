@@ -23,7 +23,8 @@ def test_load_settings_example() -> None:
     assert settings.crawl.agent_pool.enabled is False
     assert settings.crawl.agent_pool.db_path.name == "agent-pool.db"
     assert settings.crawl.agent_pool.db_path.is_absolute()
-    assert settings.crawl.agent_pool.sources == ["guba"]
+    assert settings.crawl.agent_pool.sources == ["guba", "tgb"]
+    assert "www.tgb.cn" in settings.crawl.agent_pool.allowed_hosts
     assert settings.crawl.agent_pool.queue_wait_seconds == 10
     assert settings.crawl.agent_pool.lease_seconds == 180
     assert settings.crawl.agent_pool.job_wait_seconds == 120

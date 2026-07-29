@@ -10,10 +10,17 @@ import (
 )
 
 func TestValidateTarget(t *testing.T) {
-	allowed := map[string]struct{}{"guba.eastmoney.com": {}}
+	allowed := map[string]struct{}{
+		"guba.eastmoney.com": {},
+		"www.tgb.cn":          {},
+	}
 	good, _ := url.Parse("https://guba.eastmoney.com/list,600519.html")
 	if err := validateTarget(good, allowed); err != nil {
 		t.Fatalf("expected allowed URL: %v", err)
+	}
+	tgb, _ := url.Parse("https://www.tgb.cn/zongban/1/1")
+	if err := validateTarget(tgb, allowed); err != nil {
+		t.Fatalf("expected allowed TGB URL: %v", err)
 	}
 	bad, _ := url.Parse("http://127.0.0.1/private")
 	if err := validateTarget(bad, allowed); err == nil {

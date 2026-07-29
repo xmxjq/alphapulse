@@ -13,7 +13,7 @@ def _store(tmp_path) -> AgentPoolStore:
         AgentPoolSettings(
             enabled=True,
             db_path=tmp_path / "agent-pool.db",
-            allowed_hosts=["guba.eastmoney.com"],
+            allowed_hosts=["guba.eastmoney.com", "www.tgb.cn"],
             heartbeat_ttl_seconds=90,
             lease_seconds=10,
             blocked_cooldown_seconds=60,
@@ -140,10 +140,54 @@ def test_blocked_outcome_benches_agent(tmp_path) -> None:
 
     store.record_outcome(job_id, "blocked", "HTTP 403")
 
-    assert not store.has_eligible_agent("http")
+    assert not store.has_eligible_agent("http", source="guba")
+    assert store.has_eligible_agent("http", source="tgb")
     snapshot = store.snapshot()
-    assert snapshot["benched_nodes"] == 1
+    assert snapshot["benched_nodes"] == 0
     assert snapshot["nodes"][0]["blocked_count"] == 1
+    assert snapshot["nodes"][0]["source_health"][0]["source"] == "guba"
+    assert snapshot["nodes"][0]["source_health"][0]["blocked_count"] == 1
+
+
+def test_source_bench_does_not_block_other_source_jobs(tmp_path) -> None:
+    store = _store(tmp_path)
+    _heartbeat(store)
+    guba_job = store.submit_job(
+        source="guba",
+        capability="http",
+        method="GET",
+        url="https://guba.eastmoney.com/news,600519,1.html",
+        headers={},
+        body=None,
+        timeout_seconds=30,
+    )
+    lease = store.lease_job(agent_id="home-arm", capabilities=["http"])
+    assert lease is not None
+    assert store.complete_job(
+        agent_id="home-arm",
+        job_id=guba_job,
+        lease_id=lease["lease_id"],
+        status_code=200,
+        final_url="https://guba.eastmoney.com/news,600519,1.html",
+        headers={},
+        body=b"blocked",
+        duration_ms=5,
+    )
+    store.record_outcome(guba_job, "blocked", "soft block")
+    tgb_job = store.submit_job(
+        source="tgb",
+        capability="http",
+        method="GET",
+        url="https://www.tgb.cn/a/post-1",
+        headers={},
+        body=None,
+        timeout_seconds=30,
+    )
+
+    tgb_lease = store.lease_job(agent_id="home-arm", capabilities=["http"])
+
+    assert tgb_lease is not None
+    assert tgb_lease["job_id"] == tgb_job
 
 
 def test_expired_lease_is_requeued(tmp_path) -> None:

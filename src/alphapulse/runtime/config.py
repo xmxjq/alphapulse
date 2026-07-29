@@ -100,7 +100,7 @@ class CrawlProxySettings(BaseModel):
     provider: ProxyProviderType | None = None
     max_attempts: int = Field(default=2, ge=1)
     fail_open: bool = False
-    # Source names ("guba", "xueqiu", "bilibili") that should use the proxy.
+    # Source names ("guba", "tgb", "xueqiu", "bilibili") that should use the proxy.
     # Empty means all sources. Scoping matters when a source carries an
     # authenticated cookie: routing it through rotating exits looks like
     # account sharing to the site.
@@ -157,7 +157,7 @@ class AgentPoolSettings(BaseModel):
 
     enabled: bool = False
     db_path: Path = Path(".runtime/agent-pool.db")
-    sources: list[str] = Field(default_factory=lambda: ["guba"])
+    sources: list[str] = Field(default_factory=lambda: ["guba", "tgb"])
     strategy: AgentPoolStrategy = "agent_first"
     heartbeat_ttl_seconds: int = Field(default=90, ge=10, le=3600)
     lease_seconds: int = Field(default=180, ge=10, le=3600)
@@ -175,6 +175,7 @@ class AgentPoolSettings(BaseModel):
             "guba.eastmoney.com",
             "emappdata.eastmoney.com",
             "push2.eastmoney.com",
+            "www.tgb.cn",
         ]
     )
 

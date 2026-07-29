@@ -58,6 +58,26 @@ through a proxy — configure `[crawl.proxy]` / `[crawl.static_proxies]` (see
 [xray-proxy.md](xray-proxy.md)). The daily report also requires the **mongo** storage
 backend.
 
+For the production worker, include `tgb` in both rotating transport scopes:
+
+```toml
+[crawl.proxy]
+sources = ["guba", "tgb"]
+
+[crawl.agent_pool]
+sources = ["guba", "tgb"]
+allowed_hosts = [
+  "guba.eastmoney.com",
+  "emappdata.eastmoney.com",
+  "push2.eastmoney.com",
+  "www.tgb.cn",
+]
+```
+
+TGB requests prefer an online self-hosted Agent and fall back to the configured
+paid proxy pool. A blocked detail page is isolated while another rotating exit
+remains available; a blocked list page still stops the source for that cycle.
+
 ## 2. Add the seed set
 
 `seed_catalog.example.toml` ships a `tgb-daily` logical set:

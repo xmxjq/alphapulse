@@ -119,6 +119,21 @@ class AgentPoolStore:
                     last_failure_reason TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS agent_source_health (
+                    agent_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    benched_until TEXT,
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    blocked_count INTEGER NOT NULL DEFAULT 0,
+                    last_success_at TEXT,
+                    last_failure_at TEXT,
+                    last_failure_reason TEXT,
+                    PRIMARY KEY (agent_id, source)
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_source_health_bench
+                    ON agent_source_health (source, benched_until);
+
                 CREATE TABLE IF NOT EXISTS agent_jobs (
                     job_id TEXT PRIMARY KEY,
                     source TEXT NOT NULL,
@@ -166,6 +181,30 @@ class AgentPoolStore:
                     ON agent_events (occurred_at);
                 """
             )
+            # Before source-specific cooldowns, the pool only served guba and
+            # stored a single node-wide bench. Preserve that state as guba
+            # health, then stop applying it globally.
+            conn.execute(
+                """
+                INSERT INTO agent_source_health (
+                    agent_id, source, benched_until, blocked_count,
+                    last_failure_at, last_failure_reason
+                )
+                SELECT
+                    agent_id, 'guba', benched_until, blocked_count,
+                    last_failure_at, last_failure_reason
+                FROM agent_nodes
+                WHERE benched_until IS NOT NULL
+                ON CONFLICT(agent_id, source) DO UPDATE SET
+                    benched_until = CASE
+                        WHEN agent_source_health.benched_until IS NULL
+                          OR excluded.benched_until > agent_source_health.benched_until
+                        THEN excluded.benched_until
+                        ELSE agent_source_health.benched_until
+                    END
+                """
+            )
+            conn.execute("UPDATE agent_nodes SET benched_until = NULL")
 
     def issue_token(self, agent_id: str) -> str:
         token = secrets.token_urlsafe(32)
@@ -260,10 +299,10 @@ class AgentPoolStore:
                 ),
             )
 
-    def has_eligible_agent(self, capability: str) -> bool:
-        return self.available_capacity(capability) > 0
+    def has_eligible_agent(self, capability: str, *, source: str | None = None) -> bool:
+        return self.available_capacity(capability, source=source) > 0
 
-    def available_capacity(self, capability: str) -> int:
+    def available_capacity(self, capability: str, *, source: str | None = None) -> int:
         now = _utcnow()
         threshold = (now - timedelta(seconds=self.settings.heartbeat_ttl_seconds)).isoformat()
         with self.connection() as conn:
@@ -279,14 +318,29 @@ class AgentPoolStore:
                   ON job.leased_by = node.agent_id
                  AND job.status = 'leased'
                  AND job.lease_expires_at > ?
+                LEFT JOIN agent_source_health AS health
+                  ON health.agent_id = node.agent_id
+                 AND health.source = ?
                 WHERE node.last_seen_at >= ?
                   AND (node.benched_until IS NULL OR node.benched_until <= ?)
+                  AND (
+                    ? IS NULL
+                    OR health.benched_until IS NULL
+                    OR health.benched_until <= ?
+                  )
                 GROUP BY
                     node.agent_id,
                     node.capabilities_json,
                     node.max_concurrency
                 """,
-                (now.isoformat(), threshold, now.isoformat()),
+                (
+                    now.isoformat(),
+                    source,
+                    threshold,
+                    now.isoformat(),
+                    source,
+                    now.isoformat(),
+                ),
             ).fetchall()
         return sum(
             max(0, int(row["max_concurrency"]) - int(row["active_jobs"]))
@@ -369,9 +423,27 @@ class AgentPoolStore:
                 """,
                 (now_iso,),
             ).fetchall()
+            benched_sources = {
+                str(row["source"])
+                for row in conn.execute(
+                    """
+                    SELECT source
+                    FROM agent_source_health
+                    WHERE agent_id = ?
+                      AND benched_until IS NOT NULL
+                      AND benched_until > ?
+                    """,
+                    (agent_id, now_iso),
+                ).fetchall()
+            }
             capability_set = set(capabilities)
             row = next(
-                (candidate for candidate in rows if candidate["capability"] in capability_set),
+                (
+                    candidate
+                    for candidate in rows
+                    if candidate["capability"] in capability_set
+                    and candidate["source"] not in benched_sources
+                ),
                 None,
             )
             if row is None:
@@ -580,12 +652,13 @@ class AgentPoolStore:
         now = _utcnow()
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT leased_by FROM agent_jobs WHERE job_id = ?",
+                "SELECT leased_by, source FROM agent_jobs WHERE job_id = ?",
                 (job_id,),
             ).fetchone()
             if row is None or row["leased_by"] is None:
                 return
             agent_id = str(row["leased_by"])
+            source = str(row["source"])
             conn.execute(
                 "UPDATE agent_jobs SET outcome = ? WHERE job_id = ?",
                 (outcome, job_id),
@@ -599,6 +672,17 @@ class AgentPoolStore:
                     """,
                     (now.isoformat(), agent_id),
                 )
+                conn.execute(
+                    """
+                    INSERT INTO agent_source_health (
+                        agent_id, source, success_count, last_success_at
+                    ) VALUES (?, ?, 1, ?)
+                    ON CONFLICT(agent_id, source) DO UPDATE SET
+                        success_count = success_count + 1,
+                        last_success_at = excluded.last_success_at
+                    """,
+                    (agent_id, source, now.isoformat()),
+                )
             else:
                 bench = (
                     now + timedelta(seconds=self.settings.blocked_cooldown_seconds)
@@ -609,17 +693,41 @@ class AgentPoolStore:
                     SET failure_count = failure_count + 1,
                         blocked_count = blocked_count + ?,
                         last_failure_at = ?,
-                        last_failure_reason = ?,
-                        benched_until = CASE WHEN ? IS NULL THEN benched_until ELSE ? END
+                        last_failure_reason = ?
                     WHERE agent_id = ?
                     """,
                     (
                         1 if outcome == "blocked" else 0,
                         now.isoformat(),
                         _safe_detail(reason),
-                        bench,
-                        bench,
                         agent_id,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_source_health (
+                        agent_id, source, benched_until,
+                        failure_count, blocked_count,
+                        last_failure_at, last_failure_reason
+                    ) VALUES (?, ?, ?, 1, ?, ?, ?)
+                    ON CONFLICT(agent_id, source) DO UPDATE SET
+                        benched_until = CASE
+                            WHEN excluded.benched_until IS NULL
+                            THEN agent_source_health.benched_until
+                            ELSE excluded.benched_until
+                        END,
+                        failure_count = failure_count + 1,
+                        blocked_count = blocked_count + excluded.blocked_count,
+                        last_failure_at = excluded.last_failure_at,
+                        last_failure_reason = excluded.last_failure_reason
+                    """,
+                    (
+                        agent_id,
+                        source,
+                        bench,
+                        1 if outcome == "blocked" else 0,
+                        now.isoformat(),
+                        _safe_detail(reason),
                     ),
                 )
             self._event(
@@ -641,6 +749,13 @@ class AgentPoolStore:
             node_rows = conn.execute(
                 "SELECT * FROM agent_nodes ORDER BY last_seen_at DESC"
             ).fetchall()
+            source_health_rows = conn.execute(
+                """
+                SELECT *
+                FROM agent_source_health
+                ORDER BY agent_id, source
+                """
+            ).fetchall()
             status_rows = conn.execute(
                 """
                 SELECT status, COUNT(*) AS count
@@ -659,6 +774,9 @@ class AgentPoolStore:
                 """,
                 (recent_limit,),
             ).fetchall()
+        source_health_by_agent: dict[str, list[dict[str, Any]]] = {}
+        for row in source_health_rows:
+            source_health_by_agent.setdefault(str(row["agent_id"]), []).append(dict(row))
         nodes = []
         for row in node_rows:
             online = row["last_seen_at"] >= online_threshold
@@ -668,6 +786,7 @@ class AgentPoolStore:
                 {
                     **dict(row),
                     "capabilities": json.loads(row["capabilities_json"]),
+                    "source_health": source_health_by_agent.get(str(row["agent_id"]), []),
                     "status": "benched" if benched else ("online" if online else "offline"),
                     "success_rate": (
                         int(row["success_count"]) / attempts if attempts else None
@@ -799,7 +918,7 @@ class AgentPoolClient:
             raise AgentPoolUnavailable("Agent pool is disabled")
         if self.settings.sources and source not in self.settings.sources:
             raise AgentPoolUnavailable(f"Agent pool is not enabled for source {source}")
-        if not self.store.has_eligible_agent("http"):
+        if not self.store.has_eligible_agent("http", source=source):
             raise AgentPoolUnavailable("No online HTTP agent is available")
         job_id = self.store.submit_job(
             source=source,

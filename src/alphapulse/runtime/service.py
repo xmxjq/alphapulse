@@ -431,19 +431,38 @@ class AlphaPulseService:
             outcome = adapter.fetch_item(task)
             self._apply_outcome(task, outcome, queue, stats)
             if outcome.blocked:
-                source_blocked = True
                 self.state.release_url_claim(str(task.url))
-                logger.warning(
-                    "Source stopped for the rest of the cycle after blocked response",
-                    extra={
-                        "event": "source_circuit_open",
-                        "extra_data": {
-                            "source": task.source,
-                            "kind": task.kind,
-                            "url": str(task.url),
+                continue_after_block = getattr(
+                    adapter,
+                    "continue_after_blocked_task",
+                    lambda _task: False,
+                )(task)
+                if continue_after_block:
+                    self.state.upsert_pending_tasks([task])
+                    logger.warning(
+                        "Blocked task isolated; rotating transports remain eligible",
+                        extra={
+                            "event": "task_blocked_isolated",
+                            "extra_data": {
+                                "source": task.source,
+                                "kind": task.kind,
+                                "url": str(task.url),
+                            },
                         },
-                    },
-                )
+                    )
+                else:
+                    source_blocked = True
+                    logger.warning(
+                        "Source stopped for the rest of the cycle after blocked response",
+                        extra={
+                            "event": "source_circuit_open",
+                            "extra_data": {
+                                "source": task.source,
+                                "kind": task.kind,
+                                "url": str(task.url),
+                            },
+                        },
+                    )
             elif outcome.status_code is None:
                 self.state.release_url_claim(str(task.url))
             else:

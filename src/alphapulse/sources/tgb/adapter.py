@@ -291,6 +291,12 @@ class TgbAdapter:
             },
         )
 
+    def continue_after_blocked_task(self, task: CrawlTask) -> bool:
+        return task.kind == "fetch_post" and (
+            getattr(self.client, "agent_pool", None) is not None
+            or getattr(self.client, "proxy_provider", None) is not None
+        )
+
     def _save_raw(
         self,
         response: TgbHttpResult,

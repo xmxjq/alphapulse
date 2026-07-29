@@ -236,6 +236,7 @@ class AgentPoolNode(BaseModel):
     last_failure_reason: str | None
     status: str
     success_rate: float | None
+    source_health: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentPoolJob(BaseModel):

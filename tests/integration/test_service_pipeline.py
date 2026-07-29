@@ -224,6 +224,69 @@ def test_guba_without_online_agents_keeps_conservative_block_stop(tmp_path: Path
     assert [route for route, _ in adapter.calls] == ["auto"]
 
 
+class RotatingTgbAdapter:
+    source_name = "tgb"
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.client = type(
+            "RotatingClient",
+            (),
+            {"agent_pool": object(), "proxy_provider": object()},
+        )()
+
+    def discover(self, seed):
+        return [
+            CrawlTask(
+                source="tgb",
+                kind="fetch_post",
+                url=f"https://www.tgb.cn/a/{post_id}",
+                seed_name=seed.name,
+                priority=150,
+                metadata={"post_id": post_id},
+            )
+            for post_id in ("2", "1")
+        ]
+
+    def fetch_item(self, task):
+        self.calls.append(str(task.url))
+        if str(task.url).endswith("/2"):
+            return FetchOutcome(status_code=200, blocked=True, errors=["blocked"])
+        return FetchOutcome(status_code=200)
+
+    def continue_after_blocked_task(self, task) -> bool:
+        return task.kind == "fetch_post"
+
+    def refresh_comments(self, item_ref):
+        raise AssertionError("not used")
+
+    def comment_task_for_post(self, post, seed_name):
+        raise AssertionError("not used")
+
+
+def test_tgb_rotating_transport_isolates_blocked_detail(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    adapter = RotatingTgbAdapter()
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={"tgb": adapter},  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    stats = service.run_cycle()
+    pending = service.state.load_pending_tasks("parallel-test")
+
+    assert stats.pages_fetched == 2
+    assert stats.blocked_responses == 1
+    assert adapter.calls == [
+        "https://www.tgb.cn/a/2",
+        "https://www.tgb.cn/a/1",
+    ]
+    assert [task.metadata["post_id"] for task in pending] == ["2"]
+
+
 class RecoverableSeedDiscovery:
     def ensure_compiled_seed_sets(self, seed_set_name=None):
         return [SeedDefinition(name=seed_set_name or "recovery-test")]
