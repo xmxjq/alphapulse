@@ -578,8 +578,9 @@ def test_tgb_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> N
 
     assert all(item.kind == "tgb_board_code" for item in items)
     codes = [item.value for item in items]
-    # Always-on featured + general feeds, then discovered hot-stock boards.
+    # Always-on feeds, fixed index boards, then discovered hot-stock boards.
     assert codes[:2] == ["jinghua", "zongban"]
+    assert codes[2:6] == ["sh000001", "sz399006", "sh000688", "sh000016"]
     assert "sz000938" in codes
 
     snapshot = state.get_tgb_ranking("2026-07-22")
@@ -588,7 +589,48 @@ def test_tgb_hot_boards_generator_emits_codes_and_snapshots(tmp_path: Path) -> N
         by_section.setdefault(row["section"], []).append(row["code"])
     assert by_section["featured"] == ["jinghua"]
     assert by_section["general"][0] == "zongban"
+    assert by_section["general"][1:5] == [
+        "sh000001",
+        "sz399006",
+        "sh000688",
+        "sh000016",
+    ]
     assert "sz000938" in by_section["general"]
+
+
+def test_tgb_hot_boards_generator_deduplicates_fixed_and_hot_boards(tmp_path: Path) -> None:
+    from alphapulse.runtime.config import TgbSettings
+    from alphapulse.sources.tgb.api import TgbHttpResult
+    from alphapulse.seeds.catalog import TgbHotBoardsGeneratorDefinition
+    from alphapulse.seeds.discovery import TgbHotBoardsSeedGenerator
+
+    fixtures = Path(__file__).parent.parent / "fixtures" / "tgb"
+
+    class FakeClient:
+        def get(self, url, *, expect_marker=None):
+            return TgbHttpResult(
+                url=url,
+                status_code=200,
+                text=(fixtures / "home_rankings.html").read_text(encoding="utf-8"),
+            )
+
+    settings = TgbSettings(
+        enabled=True,
+        fixed_boards={"sz000938": "紫光股份", "sh000001": "上证指数"},
+    )
+    state = StateStore(tmp_path / "state.db")
+    generator = TgbHotBoardsSeedGenerator(settings, None, state, client=FakeClient())
+    definition = TgbHotBoardsGeneratorDefinition(name="tgb-hot", hot_stocks_limit=3)
+
+    items = generator.generate(
+        definition,
+        datetime(2026, 7, 22, 3, 0, 0, tzinfo=UTC),
+    )
+
+    codes = [item.value for item in items]
+    assert codes.count("sz000938") == 1
+    snapshot_codes = [row["code"] for row in state.get_tgb_ranking("2026-07-22")]
+    assert snapshot_codes.count("sz000938") == 1
 
 
 def test_guba_hot_boards_generator_respects_section_filter(tmp_path: Path) -> None:

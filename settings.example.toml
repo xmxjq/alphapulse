@@ -236,6 +236,8 @@ general_slug = "zongban"
 max_list_pages = 3
 # Per-stock discussion boards render one server-side page of the mention feed.
 max_stock_pages = 1
+# Index boards always crawled alongside the dynamic hot-stock ranking.
+fixed_boards = { sh000001 = "上证指数", sz399006 = "创业板指", sh000688 = "科创50", sh000016 = "上证50" }
 # Top-N 热门研股 (hot research stocks) seeded as "general" boards each day.
 hot_stocks_limit = 12
 list_recrawl_minutes = 30

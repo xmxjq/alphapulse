@@ -134,6 +134,8 @@ class TgbHotBoardsGeneratorDefinition(BaseModel):
     # boards under "general" are self-discovered from the 热门研股 homepage widget.
     include_featured: bool = True
     include_general: bool = True
+    # Include sources.tgb.fixed_boards before the dynamic hot-stock ranking.
+    include_fixed_boards: bool = True
     # Overrides sources.tgb.hot_stocks_limit when set (top-N hot stocks to seed).
     hot_stocks_limit: int | None = Field(default=None, gt=0)
 

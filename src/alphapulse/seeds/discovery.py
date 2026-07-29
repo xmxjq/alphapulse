@@ -448,8 +448,10 @@ class TgbHotBoardsSeedGenerator:
 
         rows: list[dict[str, object]] = []
         codes: list[str] = []
+        seen_codes: set[str] = set()
         if definition.include_featured:
             codes.append(self.settings.featured_slug)
+            seen_codes.add(self.settings.featured_slug)
             rows.append(
                 {
                     "section": TGB_SECTION_FEATURED,
@@ -464,6 +466,7 @@ class TgbHotBoardsSeedGenerator:
         if definition.include_general:
             general_rank += 1
             codes.append(self.settings.general_slug)
+            seen_codes.add(self.settings.general_slug)
             rows.append(
                 {
                     "section": TGB_SECTION_GENERAL,
@@ -474,7 +477,27 @@ class TgbHotBoardsSeedGenerator:
                     "members": None,
                 }
             )
+        if definition.include_fixed_boards:
+            for code, name in self.settings.fixed_boards.items():
+                if code in seen_codes:
+                    continue
+                seen_codes.add(code)
+                general_rank += 1
+                codes.append(code)
+                rows.append(
+                    {
+                        "section": TGB_SECTION_GENERAL,
+                        "rank": general_rank,
+                        "code": code,
+                        "name": name,
+                        "url": stock_list_url(base, code),
+                        "members": None,
+                    }
+                )
         for stock in hot_stocks:
+            if stock.code in seen_codes:
+                continue
+            seen_codes.add(stock.code)
             general_rank += 1
             codes.append(stock.code)
             rows.append(
@@ -496,9 +519,7 @@ class TgbHotBoardsSeedGenerator:
             )
             self.state.replace_tgb_ranking(day, rows)
 
-        seen: set[str] = set()
-        deduped = [c for c in codes if not (c in seen or seen.add(c))]
-        return [GeneratedSeedItem(kind="tgb_board_code", value=code) for code in deduped]
+        return [GeneratedSeedItem(kind="tgb_board_code", value=code) for code in codes]
 
 
 class SeedCompiler:

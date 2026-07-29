@@ -322,6 +322,16 @@ class TgbSettings(BaseModel):
     # Hot-stock discussion boards (/quotes/{code}) render a single server-side page
     # of the mention feed; we crawl page 1 only by default.
     max_stock_pages: int = Field(default=1, ge=1)
+    # Index boards crawled every day in addition to the dynamic hot-stock ranking.
+    # Keys are tgb /quotes/{code} identifiers and values are report display names.
+    fixed_boards: dict[str, str] = Field(
+        default_factory=lambda: {
+            "sh000001": "上证指数",
+            "sz399006": "创业板指",
+            "sh000688": "科创50",
+            "sh000016": "上证50",
+        }
+    )
     # How many top 热门研股 (hot research stocks) to seed as "general" boards each day.
     hot_stocks_limit: int = Field(default=12, ge=1, le=100)
     list_recrawl_minutes: int = Field(default=30, ge=1)

@@ -10,6 +10,8 @@ report, mirroring the [Guba crawl](guba-crawl.md). It is a second `SourceAdapter
 - **Self-discovered hot-stock boards**: the homepage 热门研股 (hot research stocks)
   ranking is parsed for the top-N stock codes, and each stock's `/quotes/{code}`
   discussion feed is crawled.
+- **Fixed index boards**: 上证指数、创业板指、科创50、上证50 are crawled every
+  day even when they are absent from the dynamic hot-stock ranking.
 - **First-page comments** for each post (the reply list is server-rendered inline).
 - A **daily report** at `/report/tgb/{date}` splitting the day into **Featured** vs
   **General** (hot-stock boards + general feed), grouped by board.
@@ -21,10 +23,10 @@ tgb.cn is server-rendered HTML (unlike guba's SPA), so parsing is DOM-based
 `src/alphapulse/sources/tgb/` (`urls`, `api`, `parser`, `rankings`, `adapter`).
 
 - **Discovery.** The `tgb_hot_boards` seed generator emits the featured slug
-  (`jinghua`), the general slug (`zongban`), and the top-N 热门研股 stock codes as
-  `tgb_board_code` seed items, and snapshots that day's ordered membership into the
-  `tgb_daily_ranking` state table (section `featured` for jinghua, `general` for
-  zongban + the stock boards).
+  (`jinghua`), the general slug (`zongban`), configured fixed index boards, and the
+  top-N 热门研股 stock codes as `tgb_board_code` seed items. It snapshots that day's
+  ordered membership into the `tgb_daily_ranking` state table (section `featured`
+  for jinghua, `general` for zongban + fixed and hot-stock boards).
 - **List crawl.** `/zongban/{page}/{flag}` and `/jinghua/{page}-{flag}` (note the
   differing separators) are fetched with `flag=1` (post-date-descending sort) so the
   crawler can day-scope: it emits `fetch_post` tasks only for posts published today
@@ -48,6 +50,7 @@ base_url = "https://www.tgb.cn"
 featured_slug = "jinghua"
 general_slug = "zongban"
 max_list_pages = 3
+fixed_boards = { sh000001 = "上证指数", sz399006 = "创业板指", sh000688 = "科创50", sh000016 = "上证50" }
 hot_stocks_limit = 12
 day_scoped = true
 ranking_timezone = "Asia/Shanghai"
@@ -94,6 +97,7 @@ name = "tgb-hot"
 type = "tgb_hot_boards"
 # include_featured = true
 # include_general = true
+# include_fixed_boards = true
 # hot_stocks_limit = 12
 ```
 

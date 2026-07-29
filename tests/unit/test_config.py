@@ -63,6 +63,12 @@ def test_load_settings_example() -> None:
     assert settings.sources.guba.browser.request_interval_min_seconds == 30.0
     assert settings.sources.guba.browser.request_interval_max_seconds == 90.0
     assert settings.sources.guba.browser.max_posts_per_cycle == 40
+    assert settings.sources.tgb.fixed_boards == {
+        "sh000001": "上证指数",
+        "sz399006": "创业板指",
+        "sh000688": "科创50",
+        "sh000016": "上证50",
+    }
     assert settings.crawl.raw_store.enabled is False
     assert settings.crawl.raw_store.root_path.name == "raw"
     assert settings.crawl.raw_store.root_path.is_absolute()
@@ -83,6 +89,7 @@ def test_load_seed_catalog_example() -> None:
     tgb_hot = catalog.generator_map()["tgb-hot"]
     assert tgb_hot.type == "tgb_hot_boards"
     assert tgb_hot.include_featured and tgb_hot.include_general
+    assert tgb_hot.include_fixed_boards
 
 
 def test_load_settings_with_proxy_enabled(tmp_path: Path) -> None:
