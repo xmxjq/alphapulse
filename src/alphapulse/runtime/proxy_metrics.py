@@ -82,7 +82,11 @@ class ProxyMetricsStore:
                 for row in conn.execute("PRAGMA table_info(proxy_events)").fetchall()
             }
             if "source" not in event_columns:
-                conn.execute("ALTER TABLE proxy_events ADD COLUMN source TEXT")
+                try:
+                    conn.execute("ALTER TABLE proxy_events ADD COLUMN source TEXT")
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_proxy_events_provider_source_time

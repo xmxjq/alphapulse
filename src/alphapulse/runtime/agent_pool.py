@@ -186,9 +186,13 @@ class AgentPoolStore:
                 for row in conn.execute("PRAGMA table_info(agent_nodes)").fetchall()
             }
             if "last_ip_address" not in node_columns:
-                conn.execute(
-                    "ALTER TABLE agent_nodes ADD COLUMN last_ip_address TEXT"
-                )
+                try:
+                    conn.execute(
+                        "ALTER TABLE agent_nodes ADD COLUMN last_ip_address TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             # Before source-specific cooldowns, the pool only served guba and
             # stored a single node-wide bench. Preserve that state as guba
             # health, then stop applying it globally.
