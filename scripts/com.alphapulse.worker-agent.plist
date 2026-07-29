@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Conservative fetch agent for the mac-mini-tv worker host.
+
+  Install after placing the binary and credentials under
+  .runtime/worker-agent:
+
+    cp scripts/com.alphapulse.worker-agent.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) \
+      ~/Library/LaunchAgents/com.alphapulse.worker-agent.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alphapulse.worker-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/xmxjq/workspace/alphapulse/.runtime/worker-agent/alphapulse-agent</string>
+    <string>--server</string>
+    <string>https://alphapulse-api.sanae.edu.kg</string>
+    <string>--id</string>
+    <string>mac-mini-tv-worker</string>
+    <string>--token-file</string>
+    <string>/Users/xmxjq/workspace/alphapulse/.runtime/worker-agent/agent.token</string>
+    <string>--cloudflare-authorization-file</string>
+    <string>/Users/xmxjq/workspace/alphapulse/.runtime/worker-agent/cloudflare-authorization.token</string>
+    <string>--max-concurrency</string>
+    <string>1</string>
+    <string>--request-interval-min</string>
+    <string>180s</string>
+    <string>--request-interval-max</string>
+    <string>300s</string>
+    <string>--active-timezone</string>
+    <string>Asia/Shanghai</string>
+    <string>--active-window</string>
+    <string>10:00-11:00</string>
+    <string>--active-window</string>
+    <string>15:00-16:00</string>
+    <string>--active-window</string>
+    <string>21:00-22:00</string>
+    <string>--active-window-jitter</string>
+    <string>10m</string>
+    <string>--poll-wait</string>
+    <string>20</string>
+    <string>--heartbeat-interval</string>
+    <string>30</string>
+    <string>--allow-host</string>
+    <string>guba.eastmoney.com</string>
+    <string>--allow-host</string>
+    <string>emappdata.eastmoney.com</string>
+    <string>--allow-host</string>
+    <string>push2.eastmoney.com</string>
+    <string>--allow-host</string>
+    <string>www.tgb.cn</string>
+    <string>--allow-host</string>
+    <string>app.jiuyangongshe.com</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/xmxjq/Library/Logs/alphapulse-worker-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/xmxjq/Library/Logs/alphapulse-worker-agent.log</string>
+</dict>
+</plist>

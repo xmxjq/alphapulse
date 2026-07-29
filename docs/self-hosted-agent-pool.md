@@ -155,6 +155,18 @@ The interval is enforced inside the Agent across its worker loop, independently
 of crawler threads and processes. When interval pacing is enabled, the Agent
 rejects `max-concurrency` values other than `1`.
 
+The `mac-mini-tv` worker runs an especially conservative local Agent because
+its direct exit is also reserved for browser-based exploration. Its checked-in
+launchd configuration is:
+
+```text
+scripts/com.alphapulse.worker-agent.plist
+```
+
+That node uses one worker, a shared three-to-five-minute request interval, and
+three one-hour daily windows with inward jitter. It is intended as low-volume
+fallback capacity rather than a backlog worker.
+
 Home and residential exits should not advertise fetch capacity around the
 clock. Configure one or more daily local-time windows:
 
