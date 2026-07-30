@@ -374,6 +374,14 @@ class JiuyanSettings(BaseModel):
     fixed_targets: list[str] = Field(
         default_factory=lambda: ["上证指数", "创业板指", "科创50", "上证50"]
     )
+    fixed_target_aliases: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "上证指数": ["沪指", "上证综指"],
+            "创业板指": ["创指", "创业板综指", "创业板ETF"],
+            "科创50": ["科创50ETF"],
+            "上证50": ["上证50ETF"],
+        }
+    )
     hot_targets_limit: int = Field(default=10, ge=1, le=100)
     max_search_pages: int = Field(default=3, ge=1, le=100)
     list_recrawl_minutes: int = Field(default=30, ge=1)

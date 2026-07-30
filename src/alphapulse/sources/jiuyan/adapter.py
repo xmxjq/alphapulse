@@ -15,7 +15,11 @@ from alphapulse.pipeline.contracts import (
 )
 from alphapulse.runtime.config import CrawlSettings, JiuyanSettings
 from alphapulse.sources.jiuyan.api import JiuyanClient, JiuyanHttpResult
-from alphapulse.sources.jiuyan.parser import parse_post_detail, parse_search_page
+from alphapulse.sources.jiuyan.parser import (
+    infer_fixed_targets,
+    parse_post_detail,
+    parse_search_page,
+)
 from alphapulse.sources.jiuyan.urls import (
     community_feed_url,
     post_detail_url,
@@ -73,20 +77,32 @@ class JiuyanAdapter:
         fixed = set(self.settings.fixed_targets)
         for rank, code in enumerate(seed.jiuyan_target_codes, start=1):
             is_fixed = code in fixed
-            tasks.append(
-                CrawlTask(
-                    source=self.source_name,
-                    kind="discover",
-                    url=search_url(base_url, code),
-                    seed_name=seed.name,
-                    priority=(170 if is_fixed else 165) - min(rank, 20),
-                    metadata={
-                        "target_code": code,
-                        "target_kind": "fixed" if is_fixed else "hot",
-                        "page": 1,
-                    },
+            keywords = [
+                code,
+                *(
+                    self.settings.fixed_target_aliases.get(code, [])
+                    if is_fixed
+                    else []
+                ),
+            ]
+            for alias_rank, keyword in enumerate(dict.fromkeys(keywords)):
+                tasks.append(
+                    CrawlTask(
+                        source=self.source_name,
+                        kind="discover",
+                        url=search_url(base_url, keyword),
+                        seed_name=seed.name,
+                        priority=(170 if is_fixed else 165)
+                        - min(rank, 20)
+                        - min(alias_rank, 5),
+                        metadata={
+                            "target_code": code,
+                            "query_keyword": keyword,
+                            "target_kind": "fixed" if is_fixed else "hot",
+                            "page": 1,
+                        },
+                    )
                 )
-            )
         return tasks
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
@@ -100,7 +116,11 @@ class JiuyanAdapter:
                     page_size=self.settings.community_page_size,
                 )
                 return self._handle_community(task, response)
-            keyword = str(task.metadata.get("target_code") or "")
+            keyword = str(
+                task.metadata.get("query_keyword")
+                or task.metadata.get("target_code")
+                or ""
+            )
             page = int(task.metadata.get("page") or 1)
             response = self.client.search_articles(keyword, page)
             return self._handle_search(task, response)
@@ -117,12 +137,17 @@ class JiuyanAdapter:
         payload = response.json()
         page = parse_search_page(payload or {})
         target_code = str(task.metadata.get("target_code") or "")
+        query_keyword = str(task.metadata.get("query_keyword") or target_code)
         page_no = int(task.metadata.get("page") or 1)
         self._save_raw(
             response,
             task.kind,
             requested_url=str(task.url),
-            meta={"target_code": target_code, "page": page_no},
+            meta={
+                "target_code": target_code,
+                "query_keyword": query_keyword,
+                "page": page_no,
+            },
         )
         outcome = FetchOutcome(status_code=response.status_code)
         if page is None:
@@ -177,7 +202,7 @@ class JiuyanAdapter:
                     source=self.source_name,
                     kind="discover",
                     url=search_url(
-                        str(self.settings.base_url), target_code, page_no + 1
+                        str(self.settings.base_url), query_keyword, page_no + 1
                     ),
                     seed_name=task.seed_name,
                     priority=task.priority - 1,
@@ -291,6 +316,14 @@ class JiuyanAdapter:
         if post is None:
             outcome.errors.append(f"Could not parse Jiuyan post payload from {task.url}")
             return outcome
+        fixed_targets = infer_fixed_targets(
+            post.title,
+            post.content_text,
+            self.settings.fixed_targets,
+            self.settings.fixed_target_aliases,
+        )
+        topic_ids = list(dict.fromkeys([*fixed_targets, *post.raw_topic_ids]))
+        post = post.model_copy(update={"raw_topic_ids": topic_ids})
         outcome.posts.append(post)
         if author is not None:
             outcome.authors.append(author)

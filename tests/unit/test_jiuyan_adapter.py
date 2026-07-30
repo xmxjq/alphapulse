@@ -75,7 +75,13 @@ def test_discover_prioritizes_fixed_targets() -> None:
         "live",
     ]
     assert search_tasks[0].metadata["target_kind"] == "fixed"
-    assert search_tasks[1].metadata["target_kind"] == "hot"
+    assert search_tasks[0].metadata["query_keyword"] == "上证指数"
+    assert {
+        task.metadata["query_keyword"]
+        for task in search_tasks
+        if task.metadata["target_code"] == "上证指数"
+    } == {"上证指数", "沪指", "上证综指"}
+    assert search_tasks[-1].metadata["target_kind"] == "hot"
     assert community_tasks[0].priority > search_tasks[0].priority
     assert search_tasks[0].priority > search_tasks[1].priority
 
@@ -109,9 +115,13 @@ def test_search_day_scopes_and_paginates_with_unique_url() -> None:
         CrawlSettings(),
         client=client,  # type: ignore[arg-type]
     )
-    task = adapter.discover(
-        SeedDefinition(name="jiuyan", jiuyan_target_codes=["上证指数"])
-    )[-1]
+    task = next(
+        task
+        for task in adapter.discover(
+            SeedDefinition(name="jiuyan", jiuyan_target_codes=["上证指数"])
+        )
+        if task.metadata.get("query_keyword") == "上证指数"
+    )
 
     outcome = adapter.fetch_item(task)
 
@@ -223,6 +233,46 @@ def test_detail_sets_target_attribution() -> None:
     assert outcome.posts[0].content_text == "完整正文"
 
 
+def test_detail_infers_multiple_fixed_targets_from_full_body() -> None:
+    client = FakeJiuyanClient()
+    client.detail_responses["multi"] = _ok(
+        {
+            "errCode": "0",
+            "data": {
+                "article_id": "multi",
+                "title": "午间市场复盘",
+                "content": "<p>沪指震荡，创业板ETF走强，科创50ETF放量。</p>",
+                "create_time": _today(),
+            },
+        }
+    )
+    adapter = JiuyanAdapter(
+        JiuyanSettings(enabled=True),
+        CrawlSettings(),
+        client=client,  # type: ignore[arg-type]
+    )
+    task = CrawlTask(
+        source="jiuyan",
+        kind="fetch_post",
+        url=f"{BASE}/a/multi",
+        seed_name="jiuyan",
+        metadata={
+            "article_id": "multi",
+            "target_code": "公社广场",
+            "target_kind": "community",
+        },
+    )
+
+    outcome = adapter.fetch_item(task)
+
+    assert outcome.posts[0].raw_topic_ids == [
+        "上证指数",
+        "创业板指",
+        "科创50",
+        "公社广场",
+    ]
+
+
 def test_api_error_is_reported() -> None:
     client = FakeJiuyanClient()
     client.search_responses[("上证指数", 1)] = _ok(
@@ -233,8 +283,12 @@ def test_api_error_is_reported() -> None:
         CrawlSettings(),
         client=client,  # type: ignore[arg-type]
     )
-    task = adapter.discover(
-        SeedDefinition(name="jiuyan", jiuyan_target_codes=["上证指数"])
-    )[-1]
+    task = next(
+        task
+        for task in adapter.discover(
+            SeedDefinition(name="jiuyan", jiuyan_target_codes=["上证指数"])
+        )
+        if task.metadata.get("query_keyword") == "上证指数"
+    )
     outcome = adapter.fetch_item(task)
     assert outcome.errors == ["Jiuyan API error 9: 请求异常"]

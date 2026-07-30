@@ -23,6 +23,11 @@ The crawl also includes four fixed search targets:
 - 科创50
 - 上证50
 
+Each fixed target can define low-ambiguity search aliases. Alias results are
+normalized back to the canonical target, and fetched post bodies are checked for
+all fixed names and aliases. A market roundup that discusses several indices can
+therefore appear under several fixed report boards without being fetched twice.
+
 It also reads the public 公社热榜 and adds the top `hot_targets_limit` search
 keywords. Fixed targets are ranked before dynamic targets, and duplicates are removed.
 
@@ -49,6 +54,7 @@ Comments are disabled by default because they require another request per post.
 [sources.jiuyan]
 enabled = true
 fixed_targets = ["上证指数", "创业板指", "科创50", "上证50"]
+fixed_target_aliases = { "上证指数" = ["沪指", "上证综指"], "创业板指" = ["创指", "创业板综指", "创业板ETF"], "科创50" = ["科创50ETF"], "上证50" = ["上证50ETF"] }
 community_feeds = ["study", "square", "live"]
 community_page_size = 30
 max_community_pages = 12

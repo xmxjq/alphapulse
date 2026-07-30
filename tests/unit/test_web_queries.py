@@ -339,6 +339,50 @@ def test_tgb_daily_report_falls_back_without_snapshot(tmp_path: Path) -> None:
     assert report.sections[0].entries[0].code == "sz1"
 
 
+def test_jiuyan_daily_report_groups_posts_into_multiple_fixed_targets(
+    tmp_path: Path,
+) -> None:
+    day = "2026-07-22"
+    state = StateStore(tmp_path / "state.db")
+    state.replace_jiuyan_ranking(
+        day,
+        [
+            {
+                "section": "fixed",
+                "rank": 1,
+                "code": "上证指数",
+                "name": "上证指数",
+                "url": "https://www.jiuyangongshe.com/search/new?k=index",
+                "members": None,
+            },
+            {
+                "section": "fixed",
+                "rank": 2,
+                "code": "科创50",
+                "name": "科创50",
+                "url": "https://www.jiuyangongshe.com/search/new?k=star50",
+                "members": None,
+            },
+        ],
+    )
+    reader = StubReader()
+    post = _post_summary("jiuyan", "p1", "上证指数", 0)
+    reader.range_posts = [
+        post.model_copy(
+            update={"board_codes": ["上证指数", "科创50", "公社广场"]}
+        )
+    ]
+    queries = WebQueries(reader=reader, state=state)
+
+    report = queries.jiuyan_daily_report(day)
+
+    fixed = report.sections[0]
+    assert [entry.post_count for entry in fixed.entries] == [1, 1]
+    assert report.sections[1].key == "other"
+    assert report.sections[1].entries[0].code == "公社广场"
+    assert report.total_posts == 1
+
+
 def test_daily_report_keeps_posts_from_unranked_boards(tmp_path: Path) -> None:
     day = "2026-07-22"
     state = StateStore(tmp_path / "state.db")

@@ -325,6 +325,7 @@ class PostSummary(BaseModel):
     like_count: int | None
     comment_count: int | None
     board_code: str | None = None
+    board_codes: list[str] = Field(default_factory=list)
 
 
 class PostDetail(BaseModel):

@@ -529,7 +529,10 @@ class MongoReader:
             summary = _post_summary_from_row(doc)
             topic_ids = doc.get("raw_topic_ids") or []
             if topic_ids:
-                summary = summary.model_copy(update={"board_code": str(topic_ids[0])})
+                codes = [str(topic_id) for topic_id in topic_ids]
+                summary = summary.model_copy(
+                    update={"board_code": codes[0], "board_codes": codes}
+                )
             posts.append(summary)
         return posts
 
@@ -740,6 +743,7 @@ class WebQueries:
         board_url_fn,
         limit: int,
         board_code_normalizer: Callable[[str], str | None] | None = None,
+        multi_board: bool = False,
     ) -> ReportResponse:
         """Assemble a per-day newspaper: the ranking snapshot joined with the day's posts.
 
@@ -758,8 +762,14 @@ class WebQueries:
         posts = self.reader.list_source_posts_in_range(source, start, end, limit)
         by_board: dict[str, list[PostSummary]] = {}
         for post in posts:
-            code = normalize_board_code(post.board_code or "") or ""
-            by_board.setdefault(code, []).append(post)
+            raw_codes = (
+                post.board_codes
+                if multi_board and post.board_codes
+                else [post.board_code or ""]
+            )
+            for raw_code in dict.fromkeys(raw_codes):
+                code = normalize_board_code(raw_code) or ""
+                by_board.setdefault(code, []).append(post)
         total_posts = len(posts)
         total_comments = sum(post.comment_count or 0 for post in posts)
 
@@ -873,7 +883,7 @@ class WebQueries:
     ) -> dict[str, Any]:
         sections: list[dict[str, Any]] = []
         boards: list[dict[str, Any]] = []
-        posts: list[dict[str, Any]] = []
+        posts_by_id: dict[str, dict[str, Any]] = {}
         comments_payload: list[dict[str, Any]] = []
         included_comment_count = 0
 
@@ -894,6 +904,11 @@ class WebQueries:
                     }
                 )
                 for summary in board.posts:
+                    existing = posts_by_id.get(summary.source_entity_id)
+                    if existing is not None:
+                        if board.code not in existing["board_codes"]:
+                            existing["board_codes"].append(board.code)
+                        continue
                     detail = self.reader.get_post(source, summary.source_entity_id)
                     comments = (
                         self.reader.list_comments_for_post(
@@ -903,41 +918,38 @@ class WebQueries:
                         else []
                     )
                     included_comment_count += len(comments)
-                    posts.append(
-                        {
-                            "id": summary.source_entity_id,
-                            "board_code": board.code,
-                            "url": summary.canonical_url,
-                            "author_id": (
-                                detail.author_entity_id
-                                if detail is not None
-                                else summary.author_entity_id
-                            ),
-                            "title": (
-                                detail.title if detail is not None else summary.title
-                            ),
-                            "published_at": _iso_datetime(
-                                detail.published_at
-                                if detail is not None
-                                else summary.published_at
-                            ),
-                            "like_count": (
-                                detail.like_count
-                                if detail is not None
-                                else summary.like_count
-                            ),
-                            "reported_comment_count": (
-                                detail.comment_count
-                                if detail is not None
-                                else summary.comment_count
-                            ),
-                            "text": (
-                                detail.content_text
-                                if detail is not None
-                                else summary.content_preview
-                            ),
-                        }
-                    )
+                    posts_by_id[summary.source_entity_id] = {
+                        "id": summary.source_entity_id,
+                        "board_code": board.code,
+                        "board_codes": [board.code],
+                        "url": summary.canonical_url,
+                        "author_id": (
+                            detail.author_entity_id
+                            if detail is not None
+                            else summary.author_entity_id
+                        ),
+                        "title": detail.title if detail is not None else summary.title,
+                        "published_at": _iso_datetime(
+                            detail.published_at
+                            if detail is not None
+                            else summary.published_at
+                        ),
+                        "like_count": (
+                            detail.like_count
+                            if detail is not None
+                            else summary.like_count
+                        ),
+                        "reported_comment_count": (
+                            detail.comment_count
+                            if detail is not None
+                            else summary.comment_count
+                        ),
+                        "text": (
+                            detail.content_text
+                            if detail is not None
+                            else summary.content_preview
+                        ),
+                    }
                     comments_payload.extend(
                         {
                             "id": comment.source_entity_id,
@@ -967,11 +979,11 @@ class WebQueries:
             "has_ranking_snapshot": report.has_snapshot,
             "post_count": report.total_posts,
             "reported_comment_count": report.total_comments,
-            "included_post_count": len(posts),
+            "included_post_count": len(posts_by_id),
             "included_comment_count": included_comment_count,
             "sections": sections,
             "boards": boards,
-            "posts": posts,
+            "posts": list(posts_by_id.values()),
             "comments": comments_payload,
         }
 
@@ -1026,6 +1038,7 @@ class WebQueries:
             jiuyan.ranking_timezone,
             lambda code: jiuyan_search_url(base, code),
             limit,
+            multi_board=True,
         )
 
     def jiuyan_llm_report(

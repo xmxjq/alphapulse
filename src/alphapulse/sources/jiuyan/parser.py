@@ -56,6 +56,21 @@ class JiuyanSearchPage:
     entries: list[JiuyanSearchEntry]
 
 
+def infer_fixed_targets(
+    title: str | None,
+    content_text: str,
+    fixed_targets: list[str],
+    aliases: dict[str, list[str]],
+) -> list[str]:
+    haystack = f"{title or ''}\n{content_text}".casefold()
+    matches: list[str] = []
+    for target in fixed_targets:
+        terms = [target, *aliases.get(target, [])]
+        if any(term and term.casefold() in haystack for term in terms):
+            matches.append(target)
+    return matches
+
+
 def parse_search_page(payload: dict[str, Any]) -> JiuyanSearchPage | None:
     data = payload.get("data")
     if not isinstance(data, dict):
