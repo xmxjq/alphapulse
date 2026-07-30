@@ -85,6 +85,10 @@ failure_threshold = 3
 # Reuse one extracted IP across Guba, TGB, and Jiuyan while keeping failure
 # streaks and benches isolated per source.
 share_across_sources = false
+# Ask GetDPS to append each proxy's remaining lifetime (`f_et=1`) and use that
+# value instead of the fixed lease_ttl_seconds fallback.
+use_api_expiry = false
+expiry_safety_seconds = 30
 
 [crawl.agent_pool]
 # Self-hosted outbound fetch agents. Agents make outbound HTTPS connections to

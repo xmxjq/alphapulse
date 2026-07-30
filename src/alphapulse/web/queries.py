@@ -16,28 +16,33 @@ from alphapulse.runtime.config import (
 )
 from alphapulse.runtime.proxy_metrics import ProxyMetricsStore
 from alphapulse.runtime.state import StateStore
-from alphapulse.sources.guba.urls import normalize_board_code as normalize_guba_board_code
+from alphapulse.sources.guba.urls import (
+    normalize_board_code as normalize_guba_board_code,
+)
 from alphapulse.sources.jiuyan.urls import search_url as jiuyan_search_url
-from alphapulse.sources.tgb.urls import featured_list_url, general_list_url, stock_list_url
+from alphapulse.sources.tgb.urls import (
+    featured_list_url,
+    general_list_url,
+    stock_list_url,
+)
 from alphapulse.web.models import (
     Comment,
     CrawlError,
     CrawlRun,
     GubaBoardSummary,
     GubaNextCrawlResponse,
-    ReportBoard,
-    ReportResponse,
-    ReportSection,
     NextCrawlBoard,
     PostDetail,
     PostDetailResponse,
     PostSummary,
     ProxyPoolResponse,
+    ReportBoard,
+    ReportResponse,
+    ReportSection,
     SeedSetSummary,
     StatusResponse,
     TaskKindForecast,
 )
-
 
 # Ordered (section-key, display title) pairs for each source's daily report.
 GUBA_REPORT_SECTIONS = [
@@ -619,6 +624,10 @@ class WebQueries:
                 "batch_size": settings.crawl.kuaidaili.batch_size,
                 "low_watermark": settings.crawl.kuaidaili.low_watermark,
                 "lease_ttl_seconds": settings.crawl.kuaidaili.lease_ttl_seconds,
+                "use_api_expiry": settings.crawl.kuaidaili.use_api_expiry,
+                "expiry_safety_seconds": (
+                    settings.crawl.kuaidaili.expiry_safety_seconds
+                ),
             }
         )
 

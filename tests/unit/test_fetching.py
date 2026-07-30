@@ -1,4 +1,5 @@
 import sys
+import time
 from datetime import UTC, datetime
 from types import ModuleType
 
@@ -213,6 +214,138 @@ def test_kuaidaili_provider_extracts_and_rotates_text_proxies(
     assert second.proxy_url == "http://2.3.4.5:8081"
     assert len(requested) == 1
     assert "num=2" in requested[0]
+
+
+def test_kuaidaili_provider_uses_reported_api_expiry(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(
+            tmp_path,
+            batch_size=1,
+            use_api_expiry=True,
+            expiry_safety_seconds=30,
+        ).kuaidaili,
+        source="guba",
+    )
+    requested: list[str] = []
+
+    def fake_urlopen(url: str, timeout: int):
+        requested.append(url)
+        return DummyUrlopenResponse(
+            '{"code":0,"data":{"proxy_list":["1.2.3.4:8080,600"]}}'
+        )
+
+    monkeypatch.setattr("alphapulse.sources.fetching.request.urlopen", fake_urlopen)
+
+    lease = provider.acquire()
+    remaining = provider.pool._expires_at[lease.proxy_url] - time.monotonic()
+
+    assert "f_et=1" in requested[0]
+    assert 569 <= remaining <= 570
+    snapshot = provider.metrics.snapshot(
+        provider="kuaidaili",
+        since=datetime(2026, 1, 1, tzinfo=UTC),
+        now=datetime.now(UTC),
+    )
+    batch = next(
+        event for event in snapshot["events"] if event["event_type"] == "batch_fetched"
+    )
+    assert batch["detail"]["ttl_mode"] == "api"
+    assert batch["detail"]["reported_ttl_min"] == 600
+    assert batch["detail"]["effective_ttl_max"] == 570
+    assert batch["detail"]["expiry_safety_seconds"] == 30
+
+
+def test_kuaidaili_bench_lasts_until_dynamic_expiry(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _kuaidaili_settings(
+        tmp_path,
+        batch_size=1,
+        cooldown_seconds=60,
+        failure_threshold=1,
+        use_api_expiry=True,
+        expiry_safety_seconds=30,
+    ).kuaidaili
+    pool = KuaidailiProxyPool(settings)
+    guba = pool.provider("guba")
+    tgb = pool.provider("tgb")
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: DummyUrlopenResponse(
+            '{"code":0,"data":{"proxy_list":["1.2.3.4:8080,600"]}}'
+        ),
+    )
+
+    lease = guba.acquire()
+    guba.report_bad(lease, "blocked: soft_block")
+
+    assert pool._benched_until[(lease.proxy_url, "guba")] >= pool._expires_at[
+        lease.proxy_url
+    ]
+    assert tgb.acquire().proxy_url == lease.proxy_url
+
+
+def test_kuaidaili_provider_falls_back_when_api_omits_expiry(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(
+            tmp_path,
+            batch_size=1,
+            lease_ttl_seconds=240,
+            use_api_expiry=True,
+        ).kuaidaili,
+        source="tgb",
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: DummyUrlopenResponse("1.2.3.4:8080"),
+    )
+
+    lease = provider.acquire()
+    remaining = provider.pool._expires_at[lease.proxy_url] - time.monotonic()
+
+    assert 239 <= remaining <= 240
+    snapshot = provider.metrics.snapshot(
+        provider="kuaidaili",
+        since=datetime(2026, 1, 1, tzinfo=UTC),
+        now=datetime.now(UTC),
+    )
+    batch = next(
+        event for event in snapshot["events"] if event["event_type"] == "batch_fetched"
+    )
+    assert batch["detail"]["ttl_mode"] == "fallback"
+    assert batch["detail"]["effective_ttl_min"] == 240
+
+
+def test_kuaidaili_provider_records_api_error_for_source(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(tmp_path, batch_size=1).kuaidaili,
+        source="jiuyan",
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: (_ for _ in ()).throw(RuntimeError("api down")),
+    )
+
+    with pytest.raises(RuntimeError, match="api down"):
+        provider.acquire()
+
+    snapshot = provider.metrics.snapshot(
+        provider="kuaidaili",
+        since=datetime(2026, 1, 1, tzinfo=UTC),
+        now=datetime.now(UTC),
+    )
+    assert snapshot["api_errors"] == 1
+    assert snapshot["sources"][0]["source"] == "jiuyan"
 
 
 def test_kuaidaili_provider_benches_bad_proxy(

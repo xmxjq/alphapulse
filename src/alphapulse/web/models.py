@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
 
@@ -175,6 +173,8 @@ class ProxyPoolResponse(BaseModel):
     batch_size: int
     low_watermark: int
     lease_ttl_seconds: int
+    use_api_expiry: bool
+    expiry_safety_seconds: int
     active_nodes: int
     benched_nodes: int
     expired_nodes: int

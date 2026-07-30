@@ -145,6 +145,8 @@ class CrawlKuaidailiSettings(BaseModel):
     acquire_timeout_seconds: int = Field(default=20, ge=1)
     failure_threshold: int = Field(default=3, ge=1, le=10)
     share_across_sources: bool = False
+    use_api_expiry: bool = False
+    expiry_safety_seconds: int = Field(default=30, ge=0, le=300)
 
     @model_validator(mode="after")
     def validate_low_watermark(self) -> "CrawlKuaidailiSettings":

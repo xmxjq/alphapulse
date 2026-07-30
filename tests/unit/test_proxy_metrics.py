@@ -76,3 +76,35 @@ def test_proxy_metrics_tracks_failure_without_benching(tmp_path) -> None:
     assert snapshot["benched_nodes"] == 0
     assert snapshot["events"][0]["event_type"] == "request_failure"
     assert snapshot["events"][0]["source"] == "unknown"
+
+
+def test_proxy_metrics_tracks_per_proxy_expiry_and_batch_detail(tmp_path) -> None:
+    store = ProxyMetricsStore(tmp_path / "proxy-metrics.db")
+    now = datetime.now(UTC)
+    first = "http://1.2.3.4:8080"
+    second = "http://2.3.4.5:8081"
+    store.record_batch(
+        "kuaidaili",
+        [first, second],
+        expires_at_by_proxy={
+            first: now + timedelta(seconds=270),
+            second: now + timedelta(seconds=570),
+        },
+        source="guba",
+        detail={"ttl_mode": "api", "effective_ttl_min": 270},
+    )
+
+    snapshot = store.snapshot(
+        provider="kuaidaili",
+        since=now - timedelta(hours=1),
+        now=now,
+    )
+
+    expiries = sorted(node["expires_at"] for node in snapshot["nodes"])
+    assert expiries == [
+        (now + timedelta(seconds=270)).isoformat(),
+        (now + timedelta(seconds=570)).isoformat(),
+    ]
+    batch = snapshot["events"][0]
+    assert batch["detail"]["ttl_mode"] == "api"
+    assert batch["detail"]["effective_ttl_min"] == 270

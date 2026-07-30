@@ -108,6 +108,12 @@ class ProxyLease:
     provider_name: str
 
 
+@dataclass(frozen=True)
+class ExtractedProxy:
+    address: str
+    ttl_seconds: int | None = None
+
+
 class ProxyProvider(Protocol):
     def acquire(self) -> ProxyLease | None: ...
 
@@ -221,7 +227,7 @@ class KuaidailiProxyPool:
             now = time.monotonic()
             self._prune_expired(now)
             if len(self._available(now, source)) <= self.settings.low_watermark:
-                self._refresh(now, source)
+                self._refresh(source)
             available = set(self._available(now, source))
             if not available:
                 self.metrics.record_pool_empty(
@@ -261,12 +267,19 @@ class KuaidailiProxyPool:
             )
             benched_until = None
             if should_bench:
-                self._benched_until[health_key] = (
-                    time.monotonic() + self.settings.cooldown_seconds
+                now = time.monotonic()
+                remaining_lifetime = max(
+                    0.0,
+                    self._expires_at.get(lease.proxy_url, now) - now,
                 )
+                bench_seconds = max(
+                    float(self.settings.cooldown_seconds),
+                    remaining_lifetime,
+                )
+                self._benched_until[health_key] = now + bench_seconds
                 self._failure_streaks.pop(health_key, None)
                 benched_until = datetime.now(UTC) + timedelta(
-                    seconds=self.settings.cooldown_seconds
+                    seconds=bench_seconds
                 )
             self.metrics.record_failure(
                 self.provider_name,
@@ -289,7 +302,7 @@ class KuaidailiProxyPool:
             source=source,
         )
 
-    def _refresh(self, now: float, source: str | None) -> None:
+    def _refresh(self, source: str | None) -> None:
         try:
             api_url = self.settings.api_url_file.read_text(encoding="utf-8").strip()
             if not api_url.startswith(("http://", "https://")):
@@ -302,6 +315,13 @@ class KuaidailiProxyPool:
             ]
             if not any(key == "num" for key, _ in query):
                 query.append(("num", str(self.settings.batch_size)))
+            if self.settings.use_api_expiry:
+                query = [
+                    (key, "1" if key == "f_et" else value)
+                    for key, value in query
+                ]
+                if not any(key == "f_et" for key, _ in query):
+                    query.append(("f_et", "1"))
             request_url = parse.urlunsplit(
                 (
                     parts.scheme,
@@ -316,29 +336,77 @@ class KuaidailiProxyPool:
                 timeout=self.settings.acquire_timeout_seconds,
             ) as response:
                 payload = response.read().decode("utf-8", errors="replace")
-            proxies = self._parse_proxies(payload)
-            if not proxies:
+            extracted = self._parse_extracted_proxies(payload)
+            if not extracted:
                 raise RuntimeError("Kuaidaili API returned no proxy addresses")
         except Exception as exc:
             self.metrics.record_api_error(
                 self.provider_name,
                 f"{type(exc).__name__}: {exc}",
-                source=self.source,
+                source=source,
             )
             raise
-        expires_at = now + self.settings.lease_ttl_seconds
-        expires_at_wall = datetime.now(UTC) + timedelta(
-            seconds=self.settings.lease_ttl_seconds
-        )
-        proxy_urls = [_proxy_url(proxy) for proxy in proxies]
+
+        refreshed_at = time.monotonic()
+        refreshed_at_wall = datetime.now(UTC)
+        expiry_by_url: dict[str, float] = {}
+        expiry_wall_by_url: dict[str, datetime] = {}
+        reported_ttls: list[int] = []
+        effective_ttls: list[int] = []
+        api_ttl_count = 0
+        fallback_ttl_count = 0
+        for item in extracted:
+            if self.settings.use_api_expiry and item.ttl_seconds is not None:
+                reported_ttls.append(item.ttl_seconds)
+                ttl_seconds = item.ttl_seconds - self.settings.expiry_safety_seconds
+                if ttl_seconds <= 0:
+                    continue
+                api_ttl_count += 1
+            else:
+                ttl_seconds = self.settings.lease_ttl_seconds
+                fallback_ttl_count += 1
+            url = _proxy_url(item.address)
+            effective_ttls.append(ttl_seconds)
+            expiry_by_url[url] = refreshed_at + ttl_seconds
+            expiry_wall_by_url[url] = refreshed_at_wall + timedelta(
+                seconds=ttl_seconds
+            )
+
+        if not expiry_by_url:
+            reason = "Kuaidaili API returned no proxy with usable lifetime"
+            self.metrics.record_api_error(
+                self.provider_name,
+                reason,
+                source=source,
+            )
+            raise RuntimeError(reason)
+
+        proxy_urls = list(expiry_by_url)
         self.metrics.record_batch(
             self.provider_name,
             proxy_urls,
-            expires_at=expires_at_wall,
+            expires_at_by_proxy=expiry_wall_by_url,
             source=source,
+            detail={
+                "ttl_mode": (
+                    "api"
+                    if api_ttl_count and not fallback_ttl_count
+                    else "mixed"
+                    if api_ttl_count
+                    else "fallback"
+                ),
+                "reported_ttl_min": min(reported_ttls) if reported_ttls else None,
+                "reported_ttl_max": max(reported_ttls) if reported_ttls else None,
+                "effective_ttl_min": min(effective_ttls),
+                "effective_ttl_max": max(effective_ttls),
+                "expiry_safety_seconds": (
+                    self.settings.expiry_safety_seconds
+                    if api_ttl_count
+                    else 0
+                ),
+            },
         )
-        for proxy in proxies:
-            url = _proxy_url(proxy)
+        for url, expires_at in expiry_by_url.items():
             if url not in self._urls:
                 self._urls.append(url)
             self._expires_at[url] = expires_at
@@ -376,11 +444,11 @@ class KuaidailiProxyPool:
             self._next_indexes.clear()
 
     @staticmethod
-    def _parse_proxies(payload: str) -> list[str]:
+    def _parse_extracted_proxies(payload: str) -> list[ExtractedProxy]:
         try:
             parsed = json.loads(payload)
         except json.JSONDecodeError:
-            candidates = re.split(r"[\s,;]+", payload)
+            candidates: list[Any] = [payload]
         else:
             if isinstance(parsed, dict) and parsed.get("code") not in (None, 0):
                 raise RuntimeError(
@@ -390,19 +458,49 @@ class KuaidailiProxyPool:
             entries = data.get("proxy_list") if isinstance(data, dict) else None
             candidates = list(entries or [])
 
-        proxies: list[str] = []
+        proxies: dict[str, int | None] = {}
+
+        def add_proxy(address: str, ttl_seconds: int | None) -> None:
+            current = proxies.get(address)
+            if current is None or (
+                ttl_seconds is not None and ttl_seconds > current
+            ):
+                proxies[address] = ttl_seconds
+
         for entry in candidates:
+            ttl_seconds: int | None = None
             if isinstance(entry, dict):
                 value = entry.get("proxy") or entry.get("server") or entry.get("ip_port")
                 if value is None and (entry.get("ip") or entry.get("host")) and entry.get("port"):
                     value = f"{entry.get('ip') or entry.get('host')}:{entry['port']}"
+                raw_ttl = (
+                    entry.get("ttl")
+                    or entry.get("ttl_seconds")
+                    or entry.get("valid_time")
+                    or entry.get("expire_seconds")
+                )
+                try:
+                    ttl_seconds = int(raw_ttl) if raw_ttl is not None else None
+                except (TypeError, ValueError):
+                    ttl_seconds = None
                 entry = value
             if entry is None:
                 continue
             rendered = str(entry).strip()
-            if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}", rendered):
-                proxies.append(rendered)
-        return list(dict.fromkeys(proxies))
+            for match in re.finditer(
+                r"(?P<proxy>(?:\d{1,3}\.){3}\d{1,3}:\d{1,5})"
+                r"(?:,(?P<ttl>\d+))?",
+                rendered,
+            ):
+                matched_ttl = match.group("ttl")
+                add_proxy(
+                    match.group("proxy"),
+                    int(matched_ttl) if matched_ttl is not None else ttl_seconds,
+                )
+        return [
+            ExtractedProxy(address=address, ttl_seconds=ttl_seconds)
+            for address, ttl_seconds in proxies.items()
+        ]
 
     def _lease(self, url: str) -> ProxyLease:
         return ProxyLease(

@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
 
-
 IP_ADDRESS_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
@@ -99,12 +98,23 @@ class ProxyMetricsStore:
         provider: str,
         proxy_urls: list[str],
         *,
-        expires_at: datetime,
+        expires_at: datetime | None = None,
+        expires_at_by_proxy: dict[str, datetime] | None = None,
         source: str | None = None,
+        detail: dict[str, Any] | None = None,
     ) -> None:
         now = datetime.now(UTC).isoformat()
-        expiry = expires_at.isoformat()
         identifiers = list(dict.fromkeys(proxy_id(url) for url in proxy_urls))
+        expiry_by_identifier = {
+            proxy_id(url): (
+                expires_at_by_proxy[url]
+                if expires_at_by_proxy is not None and url in expires_at_by_proxy
+                else expires_at
+            )
+            for url in proxy_urls
+        }
+        if any(value is None for value in expiry_by_identifier.values()):
+            raise ValueError("record_batch requires an expiry for every proxy")
         with self.connection() as conn:
             existing = {
                 row["proxy_id"]
@@ -114,6 +124,8 @@ class ProxyMetricsStore:
                 )
             }
             for identifier in identifiers:
+                expiry = expiry_by_identifier[identifier]
+                assert expiry is not None
                 conn.execute(
                     """
                     INSERT INTO proxy_nodes (
@@ -123,8 +135,13 @@ class ProxyMetricsStore:
                         last_seen_at = excluded.last_seen_at,
                         expires_at = excluded.expires_at
                     """,
-                    (provider, identifier, now, now, expiry),
+                    (provider, identifier, now, now, expiry.isoformat()),
                 )
+            event_detail = {
+                "returned": len(identifiers),
+                "new": sum(identifier not in existing for identifier in identifiers),
+            }
+            event_detail.update(detail or {})
             self._insert_event(
                 conn,
                 provider=provider,
@@ -132,10 +149,7 @@ class ProxyMetricsStore:
                 occurred_at=now,
                 count=len(identifiers),
                 source=source,
-                detail={
-                    "returned": len(identifiers),
-                    "new": sum(identifier not in existing for identifier in identifiers),
-                },
+                detail=event_detail,
             )
 
     def record_acquire(

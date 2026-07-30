@@ -485,7 +485,10 @@ function renderProxyEconomics(payload) {
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Requests / IP"), el("div", { class: "value" }, payload.requests_per_proxy === null ? "n/a" : payload.requests_per_proxy.toFixed(2))]),
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Batches"), el("div", { class: "value" }, String(payload.batches))]),
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Batch size"), el("div", { class: "value" }, String(payload.batch_size))]),
-    el("div", { class: "stat" }, [el("div", { class: "label" }, "Lease TTL"), el("div", { class: "value" }, `${payload.lease_ttl_seconds}s`)]),
+    el("div", { class: "stat" }, [
+      el("div", { class: "label" }, "Lease TTL"),
+      el("div", { class: "value" }, payload.use_api_expiry ? `API - ${payload.expiry_safety_seconds}s` : `${payload.lease_ttl_seconds}s`),
+    ]),
     el("div", { class: "stat" }, [el("div", { class: "label" }, "API / empty errors"), el("div", { class: "value" }, `${payload.api_errors} / ${payload.pool_empty_events}`)]),
   ]));
 }

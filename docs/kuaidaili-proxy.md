@@ -20,7 +20,7 @@ authentication is preferred because every guba request uses HTTPS CONNECT.
 [crawl.proxy]
 enabled = true
 provider = "kuaidaili"
-sources = ["guba", "tgb"]
+sources = ["guba", "tgb", "jiuyan"]
 max_attempts = 2
 fail_open = false
 
@@ -33,6 +33,8 @@ cooldown_seconds = 600
 acquire_timeout_seconds = 20
 failure_threshold = 3
 share_across_sources = true
+use_api_expiry = true
+expiry_safety_seconds = 30
 
 [sources.guba.browser]
 enabled = false
@@ -55,8 +57,8 @@ Guba and TGB requests with an acquired proxy use the browser-impersonating
 HTTP/1 response stream even when the upstream page is complete.
 
 The WebUI `Proxy pool` tab attributes leases, successes, failures, API errors,
-and empty-pool events to Guba or TGB. Events recorded before source attribution
-was introduced remain visible as `unknown`.
+and empty-pool events to Guba, TGB, or Jiuyan. Events recorded before source
+attribution was introduced remain visible as `unknown`.
 
 A failure to acquire a proxy at all (Kuaidaili GetDPS API error, or an empty
 pool) is retried within the same request up to `sources.guba.max_retries` /
@@ -73,6 +75,9 @@ low_watermark = 0
 lease_ttl_seconds = 240
 cooldown_seconds = 300
 failure_threshold = 3
+share_across_sources = true
+use_api_expiry = true
+expiry_safety_seconds = 30
 
 [sources.guba]
 request_interval_min_seconds = 4.0
@@ -89,12 +94,19 @@ Guba block benches that exit for Guba without wasting its remaining paid life
 on TGB or Jiuyan. This is most effective because source queues run in parallel
 and target unrelated domains.
 
-`cooldown_seconds >= lease_ttl_seconds` (as in both configs above) is
-intentional: it makes every bench terminal for that IP's remaining paid
-life — a benched IP is always pruned as expired before its cooldown would let
-it back into rotation — rather than a value to tune independently. That is
-the correct behavior for a hard block or a repeated (streak-triggered) soft
-block; it is not a stale/dead knob.
+For an IP-count-billed order, `use_api_expiry = true` adds `f_et=1` to GetDPS.
+Kuaidaili then appends the remaining lifetime in seconds to every extracted
+proxy. AlphaPulse subtracts `expiry_safety_seconds` and stores the resulting
+per-proxy expiry. `lease_ttl_seconds` remains the fallback when the API omits
+the lifetime. The separate GetDpsValidTime endpoint does not support
+IP-count-billed orders, so it is not used for this package.
+
+For Kuaidaili, every bench lasts until at least that proxy's recorded expiry,
+even when its API-reported lifetime is longer than `cooldown_seconds`. This
+makes a hard block or repeated soft block terminal for that source while the
+same shared IP remains available to other sources that have not blocked it.
+`cooldown_seconds` is still the minimum bench duration when it extends beyond
+the proxy lifetime.
 
 Because `soft_block` no longer benches instantly, a request that keeps
 hitting the same problematic proxy exit can now exhaust all of
