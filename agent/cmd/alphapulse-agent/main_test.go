@@ -53,9 +53,40 @@ func TestCopyAllowedHeaders(t *testing.T) {
 		"Accept":        "text/html",
 		"Cookie":        "secret",
 		"Authorization": "secret",
-	})
+		"Token":         "source-token",
+	}, "guba")
 	if headers.Get("User-Agent") != "test" || headers.Get("Accept") != "text/html" {
 		t.Fatal("expected safe headers to be copied")
+	}
+	if headers.Get("Cookie") != "" ||
+		headers.Get("Authorization") != "" ||
+		headers.Get("Token") != "" {
+		t.Fatal("sensitive headers must not be copied")
+	}
+}
+
+func TestCopyAllowedJiuyanHeaders(t *testing.T) {
+	headers := make(http.Header)
+	copyAllowedHeaders(headers, map[string]string{
+		"Origin":           "https://www.jiuyangongshe.com",
+		"Platform":         "3",
+		"Timestamp":        "123456",
+		"Token":            "request-signature",
+		"X-Requested-With": "XMLHttpRequest",
+		"Cookie":           "secret",
+		"Authorization":    "secret",
+	}, "jiuyan")
+
+	for _, key := range []string{
+		"Origin",
+		"Platform",
+		"Timestamp",
+		"Token",
+		"X-Requested-With",
+	} {
+		if headers.Get(key) == "" {
+			t.Fatalf("expected Jiuyan header %s", key)
+		}
 	}
 	if headers.Get("Cookie") != "" || headers.Get("Authorization") != "" {
 		t.Fatal("sensitive headers must not be copied")

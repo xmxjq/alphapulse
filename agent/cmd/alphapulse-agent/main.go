@@ -766,7 +766,7 @@ func executeJob(ctx context.Context, cfg config, job leasedJob) (fetchResult, er
 	if err != nil {
 		return fetchResult{}, fmt.Errorf("build target request: %w", err)
 	}
-	copyAllowedHeaders(req.Header, job.Headers)
+	copyAllowedHeaders(req.Header, job.Headers, job.Source)
 
 	transport := &http.Transport{
 		Proxy:                 nil,
@@ -788,7 +788,7 @@ func executeJob(ctx context.Context, cfg config, job leasedJob) (fetchResult, er
 			if err := validateTarget(next.URL, cfg.allowedHosts); err != nil {
 				return err
 			}
-			copyAllowedHeaders(next.Header, job.Headers)
+			copyAllowedHeaders(next.Header, job.Headers, job.Source)
 			return nil
 		},
 	}
@@ -978,7 +978,11 @@ func unsafeIP(ip net.IP) bool {
 		ip.IsMulticast()
 }
 
-func copyAllowedHeaders(target http.Header, source map[string]string) {
+func copyAllowedHeaders(
+	target http.Header,
+	source map[string]string,
+	jobSource string,
+) {
 	allowed := map[string]struct{}{
 		"accept":          {},
 		"accept-language": {},
@@ -986,6 +990,17 @@ func copyAllowedHeaders(target http.Header, source map[string]string) {
 		"content-type":    {},
 		"referer":         {},
 		"user-agent":      {},
+	}
+	if jobSource == "jiuyan" {
+		for _, key := range []string{
+			"origin",
+			"platform",
+			"timestamp",
+			"token",
+			"x-requested-with",
+		} {
+			allowed[key] = struct{}{}
+		}
 	}
 	keys := make([]string, 0, len(source))
 	for key := range source {
