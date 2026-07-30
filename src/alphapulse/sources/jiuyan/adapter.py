@@ -14,7 +14,11 @@ from alphapulse.pipeline.contracts import (
     SeedDefinition,
 )
 from alphapulse.runtime.config import CrawlSettings, JiuyanSettings
-from alphapulse.sources.jiuyan.api import JiuyanClient, JiuyanHttpResult
+from alphapulse.sources.jiuyan.api import (
+    JiuyanClient,
+    JiuyanHttpResult,
+    JiuyanTransport,
+)
 from alphapulse.sources.jiuyan.parser import (
     infer_fixed_targets,
     parse_post_detail,
@@ -106,6 +110,24 @@ class JiuyanAdapter:
         return tasks
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
+        return self._fetch_item(task, transport="auto")
+
+    def fetch_item_with_transport(
+        self,
+        task: CrawlTask,
+        transport: JiuyanTransport,
+    ) -> FetchOutcome:
+        return self._fetch_item(task, transport=transport)
+
+    def _fetch_item(
+        self,
+        task: CrawlTask,
+        *,
+        transport: JiuyanTransport,
+    ) -> FetchOutcome:
+        transport_kwargs = (
+            {} if transport == "auto" else {"transport": transport}
+        )
         if task.kind == "discover":
             if task.metadata.get("discovery_mode") == "community":
                 feed = str(task.metadata.get("feed") or "")
@@ -114,6 +136,7 @@ class JiuyanAdapter:
                     feed,
                     page,
                     page_size=self.settings.community_page_size,
+                    **transport_kwargs,
                 )
                 return self._handle_community(task, response)
             keyword = str(
@@ -122,10 +145,14 @@ class JiuyanAdapter:
                 or ""
             )
             page = int(task.metadata.get("page") or 1)
-            response = self.client.search_articles(keyword, page)
+            response = self.client.search_articles(
+                keyword,
+                page,
+                **transport_kwargs,
+            )
             return self._handle_search(task, response)
         article_id = str(task.metadata.get("article_id") or "")
-        response = self.client.article_detail(article_id)
+        response = self.client.article_detail(article_id, **transport_kwargs)
         return self._handle_detail(task, response)
 
     def _handle_search(
@@ -374,6 +401,12 @@ class JiuyanAdapter:
             getattr(self.client, "agent_pool", None) is not None
             or getattr(self.client, "proxy_provider", None) is not None
         )
+
+    def available_agent_capacity(self) -> int:
+        agent_pool = getattr(self.client, "agent_pool", None)
+        if agent_pool is None:
+            return 0
+        return agent_pool.store.available_capacity("http", source="jiuyan")
 
     def _save_raw(
         self,

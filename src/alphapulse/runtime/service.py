@@ -312,6 +312,8 @@ class AlphaPulseService:
     def _run_source_queue(self, source_name: str, queue: TaskQueue) -> RunStats:
         if source_name == "guba" and self._guba_hybrid_enabled():
             return self._run_guba_hybrid_queue(queue)
+        if source_name == "jiuyan" and self._jiuyan_hybrid_enabled():
+            return self._run_jiuyan_hybrid_queue(queue)
 
         assert self.state is not None
         assert self.store is not None
@@ -710,6 +712,128 @@ class AlphaPulseService:
 
     def _guba_hybrid_enabled(self) -> bool:
         adapter = self.sources.get("guba")
+        if adapter is None:
+            return False
+        client = getattr(adapter, "client", None)
+        return bool(
+            getattr(client, "agent_pool", None) is not None
+            and getattr(client, "proxy_provider", None) is not None
+        )
+
+    def _run_jiuyan_hybrid_queue(self, queue: TaskQueue) -> RunStats:
+        assert self.state is not None
+        assert self.store is not None
+        adapter = self._adapter_for_source("jiuyan")
+        stats = RunStats()
+        max_workers = (
+            self.settings.sources.jiuyan.concurrent_paid_requests
+            + self.settings.sources.jiuyan.concurrent_agent_requests
+        )
+        logger.info(
+            "Jiuyan hybrid source queue started",
+            extra={
+                "event": "source_queue_start",
+                "extra_data": {
+                    "source": "jiuyan",
+                    "tasks": len(queue),
+                    "routing": "hybrid_detail_only",
+                    "paid_slots": (
+                        self.settings.sources.jiuyan.concurrent_paid_requests
+                    ),
+                    "agent_slot_limit": (
+                        self.settings.sources.jiuyan.concurrent_agent_requests
+                    ),
+                },
+            },
+        )
+
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="alphapulse-jiuyan",
+        ) as executor:
+            while queue:
+                first = queue.peek()
+                routes = self._jiuyan_hybrid_routes(adapter, first)
+                batch_kind = first.kind
+                batch: list[tuple[CrawlTask, str]] = []
+
+                for route in routes:
+                    if not queue or queue.peek().kind != batch_kind:
+                        break
+                    task = queue.pop()
+                    self.state.upsert_pending_tasks([task])
+                    if not self.state.try_claim_url(
+                        url=str(task.url),
+                        source=task.source,
+                        kind=task.kind,
+                        seed_name=task.seed_name,
+                        min_age=self._min_age_for_task(task),
+                    ):
+                        stats.skipped_tasks += 1
+                        self.state.delete_pending_task(task.dedupe_key)
+                        continue
+                    batch.append((task, route))
+
+                if not batch:
+                    continue
+
+                futures = [
+                    (
+                        task,
+                        route,
+                        executor.submit(
+                            getattr(adapter, "fetch_item_with_transport"),
+                            task,
+                            route,
+                        ),
+                    )
+                    for task, route in batch
+                ]
+                for task, route, future in futures:
+                    outcome = future.result()
+                    self._apply_outcome(task, outcome, queue, stats)
+                    if outcome.blocked:
+                        self.state.release_url_claim(str(task.url))
+                        logger.warning(
+                            "Jiuyan transport blocked; other pool remains eligible",
+                            extra={
+                                "event": "jiuyan_transport_blocked",
+                                "extra_data": {
+                                    "source": task.source,
+                                    "kind": task.kind,
+                                    "url": str(task.url),
+                                    "transport": route,
+                                },
+                            },
+                        )
+                    elif outcome.status_code is None:
+                        self.state.release_url_claim(str(task.url))
+                    else:
+                        self.state.mark_url_fetched(
+                            str(task.url),
+                            outcome.status_code,
+                        )
+                        self.state.delete_pending_task(task.dedupe_key)
+
+        return stats
+
+    def _jiuyan_hybrid_routes(
+        self,
+        adapter: SourceAdapter,
+        task: CrawlTask,
+    ) -> list[str]:
+        paid_slots = self.settings.sources.jiuyan.concurrent_paid_requests
+        if task.kind != "fetch_post":
+            return ["existing"] * paid_slots
+        capacity = getattr(adapter, "available_agent_capacity")()
+        agent_slots = min(
+            self.settings.sources.jiuyan.concurrent_agent_requests,
+            capacity,
+        )
+        return ["existing"] * paid_slots + ["agent"] * agent_slots
+
+    def _jiuyan_hybrid_enabled(self) -> bool:
+        adapter = self.sources.get("jiuyan")
         if adapter is None:
             return False
         client = getattr(adapter, "client", None)

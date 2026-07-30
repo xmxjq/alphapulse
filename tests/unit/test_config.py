@@ -89,6 +89,8 @@ def test_load_settings_example() -> None:
     assert settings.sources.jiuyan.max_community_pages == 12
     assert settings.sources.jiuyan.hot_targets_limit == 10
     assert settings.sources.jiuyan.max_search_pages == 3
+    assert settings.sources.jiuyan.concurrent_paid_requests == 1
+    assert settings.sources.jiuyan.concurrent_agent_requests == 2
     assert settings.sources.jiuyan.fetch_comments is False
     assert settings.crawl.raw_store.enabled is False
     assert settings.crawl.raw_store.root_path.name == "raw"

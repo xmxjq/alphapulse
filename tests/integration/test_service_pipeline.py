@@ -247,6 +247,109 @@ def test_guba_without_online_agents_keeps_conservative_block_stop(tmp_path: Path
     assert [route for route, _ in adapter.calls] == ["auto"]
 
 
+class HybridJiuyanAdapter:
+    source_name = "jiuyan"
+
+    def __init__(self, *, agent_capacity: int = 1) -> None:
+        self.agent_capacity = agent_capacity
+        self.detail_barrier = threading.Barrier(2 if agent_capacity else 1)
+        self.calls: list[tuple[str, str, str]] = []
+        self.client = type(
+            "HybridClient",
+            (),
+            {"agent_pool": object(), "proxy_provider": object()},
+        )()
+
+    def discover(self, seed):
+        return [
+            CrawlTask(
+                source="jiuyan",
+                kind="discover",
+                url="https://www.jiuyangongshe.com/study_publish",
+                seed_name=seed.name,
+                priority=180,
+                metadata={"discovery_mode": "community", "feed": "study"},
+            )
+        ]
+
+    def available_agent_capacity(self) -> int:
+        return self.agent_capacity
+
+    def fetch_item_with_transport(self, task, transport):
+        self.calls.append((task.kind, transport, str(task.url)))
+        if task.kind == "discover":
+            assert transport == "existing"
+            return FetchOutcome(
+                status_code=200,
+                discovered_tasks=[
+                    CrawlTask(
+                        source="jiuyan",
+                        kind="fetch_post",
+                        url=f"https://www.jiuyangongshe.com/a/{post_id}",
+                        seed_name=task.seed_name,
+                        priority=149,
+                        metadata={"article_id": post_id},
+                    )
+                    for post_id in ("2", "1")
+                ],
+            )
+        self.detail_barrier.wait(timeout=2)
+        return FetchOutcome(status_code=200)
+
+    def fetch_item(self, task):
+        raise AssertionError("hybrid queue must select a transport")
+
+    def refresh_comments(self, item_ref):
+        raise AssertionError("not used")
+
+    def comment_task_for_post(self, post, seed_name):
+        raise AssertionError("not used")
+
+
+def test_jiuyan_hybrid_uses_agents_only_for_post_details(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.jiuyan.concurrent_paid_requests = 1
+    settings.sources.jiuyan.concurrent_agent_requests = 1
+    adapter = HybridJiuyanAdapter()
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={"jiuyan": adapter},  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    stats = service.run_cycle()
+
+    assert stats.pages_fetched == 3
+    assert adapter.calls[0][:2] == ("discover", "existing")
+    assert {route for kind, route, _ in adapter.calls if kind == "fetch_post"} == {
+        "existing",
+        "agent",
+    }
+
+
+def test_jiuyan_hybrid_without_agent_capacity_never_uses_agent_route(
+    tmp_path: Path,
+) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.jiuyan.concurrent_paid_requests = 1
+    settings.sources.jiuyan.concurrent_agent_requests = 2
+    adapter = HybridJiuyanAdapter(agent_capacity=0)
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={"jiuyan": adapter},  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    stats = service.run_cycle()
+
+    assert stats.pages_fetched == 3
+    assert {route for _, route, _ in adapter.calls} == {"existing"}
+
+
 class RotatingTgbAdapter:
     source_name = "tgb"
 

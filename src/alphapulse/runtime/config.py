@@ -389,6 +389,8 @@ class JiuyanSettings(BaseModel):
     ranking_timezone: str = "Asia/Shanghai"
     request_interval_min_seconds: float = Field(default=1.0, ge=0.0)
     request_interval_max_seconds: float = Field(default=3.0, ge=0.0)
+    concurrent_paid_requests: int = Field(default=1, ge=1, le=16)
+    concurrent_agent_requests: int = Field(default=2, ge=0, le=64)
     max_retries: int = Field(default=3, ge=1)
     fetch_comments: bool = False
     user_agent: str | None = None

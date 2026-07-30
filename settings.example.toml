@@ -285,6 +285,10 @@ day_scoped = true
 ranking_timezone = "Asia/Shanghai"
 request_interval_min_seconds = 1.0
 request_interval_max_seconds = 3.0
+# Discovery remains on the paid proxy. Post details use these paid and
+# currently-online self-hosted-agent slots together.
+concurrent_paid_requests = 1
+concurrent_agent_requests = 2
 max_retries = 3
 # Comments require an additional API call per post and are disabled by default.
 fetch_comments = false

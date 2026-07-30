@@ -6,7 +6,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib import error, request
 
 from curl_cffi import requests as curl_requests
@@ -27,6 +27,7 @@ DEFAULT_USER_AGENT = (
 )
 SIGNING_PREFIX = "Uu0KfOB8iUP69d3c:"
 BLOCKED_KINDS = {"http_403", "http_429", "captcha", "login"}
+JiuyanTransport = Literal["auto", "agent", "existing"]
 
 
 def classify_block(status_code: int, text: str) -> str | None:
@@ -87,10 +88,15 @@ class JiuyanClient:
         self._page_times: dict[str, str] = {}
 
     def hot_rankings(self) -> JiuyanHttpResult:
-        return self.post("/api/v1/article/rank-board", {})
+        return self.post("/api/v1/article/rank-board", {}, transport="existing")
 
     def search_articles(
-        self, keyword: str, page: int, *, page_size: int = 15
+        self,
+        keyword: str,
+        page: int,
+        *,
+        page_size: int = 15,
+        transport: JiuyanTransport = "auto",
     ) -> JiuyanHttpResult:
         return self.post(
             "/api/v2/article/search",
@@ -102,10 +108,16 @@ class JiuyanClient:
                 "start": page,
                 "type": "1",
             },
+            transport=transport,
         )
 
     def community_articles(
-        self, feed: str, page: int, *, page_size: int = 30
+        self,
+        feed: str,
+        page: int,
+        *,
+        page_size: int = 30,
+        transport: JiuyanTransport = "auto",
     ) -> JiuyanHttpResult:
         back_garden = {"study": 0, "square": 1, "live": 2}[feed]
         return self.post(
@@ -118,15 +130,28 @@ class JiuyanClient:
                 "type": 0,
                 "back_garden": back_garden,
             },
+            transport=transport,
         )
 
-    def article_detail(self, article_id: str) -> JiuyanHttpResult:
+    def article_detail(
+        self,
+        article_id: str,
+        *,
+        transport: JiuyanTransport = "auto",
+    ) -> JiuyanHttpResult:
         return self.post(
             f"/api/v2/article/detail?articleId={article_id}",
             {"article_id": article_id},
+            transport=transport,
         )
 
-    def post(self, path: str, payload: dict[str, Any]) -> JiuyanHttpResult:
+    def post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        transport: JiuyanTransport = "auto",
+    ) -> JiuyanHttpResult:
         attempts = max(1, self.settings.max_retries)
         last_result: JiuyanHttpResult | None = None
         for attempt in range(attempts):
@@ -140,13 +165,18 @@ class JiuyanClient:
             remote_response = None
             remote_error: str | None = None
 
-            if self.agent_pool is not None:
+            if self.agent_pool is not None and transport != "existing":
+                agent_headers = {
+                    name: value
+                    for name, value in headers.items()
+                    if name.lower() != "cookie"
+                }
                 try:
                     remote_response = self.agent_pool.fetch(
                         source="jiuyan",
                         method="POST",
                         url=url,
-                        headers=headers,
+                        headers=agent_headers,
                         body=body,
                         timeout_seconds=self.crawl_settings.request_timeout_seconds,
                         priority=100,
@@ -186,6 +216,7 @@ class JiuyanClient:
             if (
                 remote_response is None
                 and self.agent_pool is not None
+                and transport != "existing"
                 and not self.crawl_settings.agent_pool.fallback_to_existing_transport
             ):
                 return JiuyanHttpResult(

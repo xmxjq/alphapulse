@@ -48,6 +48,13 @@ today's posts or `max_search_pages`, whichever comes first.
 
 Comments are disabled by default because they require another request per post.
 
+When both Kuaidaili and the self-hosted agent pool are enabled for `jiuyan`,
+discovery and ranking requests stay on Kuaidaili. Independent post-detail
+requests run through `concurrent_paid_requests` paid slots plus up to
+`concurrent_agent_requests` slots, capped by current eligible agent capacity.
+With no eligible agent, no agent job is created and the paid slot continues
+without waiting.
+
 ## Enable
 
 ```toml
@@ -61,6 +68,8 @@ max_community_pages = 12
 hot_targets_limit = 10
 max_search_pages = 3
 day_scoped = true
+concurrent_paid_requests = 1
+concurrent_agent_requests = 2
 fetch_comments = false
 ```
 
