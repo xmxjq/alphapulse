@@ -11,8 +11,9 @@ import (
 
 func TestValidateTarget(t *testing.T) {
 	allowed := map[string]struct{}{
-		"guba.eastmoney.com": {},
-		"www.tgb.cn":          {},
+		"guba.eastmoney.com":       {},
+		"www.tgb.cn":                {},
+		"app.jiuyangongshe.com": {},
 	}
 	good, _ := url.Parse("https://guba.eastmoney.com/list,600519.html")
 	if err := validateTarget(good, allowed); err != nil {
@@ -21,6 +22,12 @@ func TestValidateTarget(t *testing.T) {
 	tgb, _ := url.Parse("https://www.tgb.cn/zongban/1/1")
 	if err := validateTarget(tgb, allowed); err != nil {
 		t.Fatalf("expected allowed TGB URL: %v", err)
+	}
+	jiuyan, _ := url.Parse(
+		"https://app.jiuyangongshe.com/jystock-app/api/v2/article/detail",
+	)
+	if err := validateTarget(jiuyan, allowed); err != nil {
+		t.Fatalf("expected allowed Jiuyan URL: %v", err)
 	}
 	bad, _ := url.Parse("http://127.0.0.1/private")
 	if err := validateTarget(bad, allowed); err == nil {

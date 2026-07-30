@@ -72,6 +72,11 @@ start_agent()
           --active-window-jitter 20m \
           --poll-wait 20 \
           --heartbeat-interval 30 \
+          --allow-host guba.eastmoney.com \
+          --allow-host emappdata.eastmoney.com \
+          --allow-host push2.eastmoney.com \
+          --allow-host www.tgb.cn \
+          --allow-host app.jiuyangongshe.com \
           >>'$LOG_FILE' 2>&1 &
         echo \$! >'$PID_FILE'
     "

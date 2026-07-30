@@ -326,6 +326,7 @@ func parseConfig() (config, error) {
 			"emappdata.eastmoney.com",
 			"push2.eastmoney.com",
 			"www.tgb.cn",
+			"app.jiuyangongshe.com",
 		}
 	}
 	allowed := make(map[string]struct{}, len(allowedHosts))

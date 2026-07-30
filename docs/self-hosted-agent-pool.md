@@ -45,6 +45,7 @@ allowed_hosts = [
   "emappdata.eastmoney.com",
   "push2.eastmoney.com",
   "www.tgb.cn",
+  "app.jiuyangongshe.com",
 ]
 ```
 
@@ -64,6 +65,16 @@ Agent slots is capped by online nodes' reported `max-concurrency`; the paid
 slots continue working when all Agent nodes are offline or benched.
 Blocked cooldowns are tracked per Agent and source, so a node benched for TGB
 can continue serving guba, and vice versa.
+
+Jiuyan keeps ranking, community-feed, and search discovery on paid proxies,
+then distributes independent post-detail requests across paid and currently
+online Agent slots:
+
+```toml
+[sources.jiuyan]
+concurrent_paid_requests = 1
+concurrent_agent_requests = 2
+```
 
 Restart `web` after enabling the pool so the Agent API is available. Restart
 `crawler` to enable agent-first request routing.
