@@ -11,8 +11,8 @@ import (
 
 func TestValidateTarget(t *testing.T) {
 	allowed := map[string]struct{}{
-		"guba.eastmoney.com":       {},
-		"www.tgb.cn":                {},
+		"guba.eastmoney.com":    {},
+		"www.tgb.cn":            {},
 		"app.jiuyangongshe.com": {},
 	}
 	good, _ := url.Parse("https://guba.eastmoney.com/list,600519.html")
