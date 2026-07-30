@@ -52,23 +52,24 @@ class JiuyanAdapter:
     def discover(self, seed: SeedDefinition) -> list[CrawlTask]:
         tasks: list[CrawlTask] = []
         base_url = str(self.settings.base_url)
-        for rank, feed in enumerate(self.settings.community_feeds):
-            tasks.append(
-                CrawlTask(
-                    source=self.source_name,
-                    kind="discover",
-                    url=community_feed_url(base_url, feed),
-                    seed_name=seed.name,
-                    priority=180 - rank,
-                    metadata={
-                        "discovery_mode": "community",
-                        "feed": feed,
-                        "target_code": COMMUNITY_FEED_LABELS[feed],
-                        "target_kind": "community",
-                        "page": 1,
-                    },
+        if seed.jiuyan_target_codes:
+            for rank, feed in enumerate(self.settings.community_feeds):
+                tasks.append(
+                    CrawlTask(
+                        source=self.source_name,
+                        kind="discover",
+                        url=community_feed_url(base_url, feed),
+                        seed_name=seed.name,
+                        priority=180 - rank,
+                        metadata={
+                            "discovery_mode": "community",
+                            "feed": feed,
+                            "target_code": COMMUNITY_FEED_LABELS[feed],
+                            "target_kind": "community",
+                            "page": 1,
+                        },
+                    )
                 )
-            )
         fixed = set(self.settings.fixed_targets)
         for rank, code in enumerate(seed.jiuyan_target_codes, start=1):
             is_fixed = code in fixed

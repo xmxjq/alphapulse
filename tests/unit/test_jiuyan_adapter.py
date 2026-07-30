@@ -161,7 +161,9 @@ def test_community_feed_day_scopes_and_paginates() -> None:
         CrawlSettings(),
         client=client,  # type: ignore[arg-type]
     )
-    task = adapter.discover(SeedDefinition(name="jiuyan"))[0]
+    task = adapter.discover(
+        SeedDefinition(name="jiuyan", jiuyan_target_codes=["上证指数"])
+    )[0]
 
     outcome = adapter.fetch_item(task)
 
@@ -176,6 +178,16 @@ def test_community_feed_day_scopes_and_paginates() -> None:
     assert next_task.metadata["page"] == 2
     assert str(next_task.url).endswith("?page=2")
     assert client.community_calls == [("square", 1, 30)]
+
+
+def test_unrelated_seed_does_not_expand_community_feeds() -> None:
+    adapter = JiuyanAdapter(
+        JiuyanSettings(enabled=True),
+        CrawlSettings(),
+        client=FakeJiuyanClient(),  # type: ignore[arg-type]
+    )
+
+    assert adapter.discover(SeedDefinition(name="bili-core")) == []
 
 
 def test_detail_sets_target_attribution() -> None:
