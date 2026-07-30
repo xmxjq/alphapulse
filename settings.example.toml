@@ -268,6 +268,11 @@ max_retries = 3
 enabled = false
 base_url = "https://www.jiuyangongshe.com"
 api_base_url = "https://app.jiuyangongshe.com/jystock-app"
+# Public latest-publish feeds. These catch posts that do not match a configured
+# fixed or hot search keyword.
+community_feeds = ["study", "square", "live"]
+community_page_size = 30
+max_community_pages = 12
 fixed_targets = ["上证指数", "创业板指", "科创50", "上证50"]
 hot_targets_limit = 10
 # Search results are sorted newest-first and paginated until today's boundary.

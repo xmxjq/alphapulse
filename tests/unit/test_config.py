@@ -79,6 +79,9 @@ def test_load_settings_example() -> None:
         "科创50",
         "上证50",
     ]
+    assert settings.sources.jiuyan.community_feeds == ["study", "square", "live"]
+    assert settings.sources.jiuyan.community_page_size == 30
+    assert settings.sources.jiuyan.max_community_pages == 12
     assert settings.sources.jiuyan.hot_targets_limit == 10
     assert settings.sources.jiuyan.max_search_pages == 3
     assert settings.sources.jiuyan.fetch_comments is False

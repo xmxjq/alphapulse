@@ -16,11 +16,21 @@ from alphapulse.pipeline.contracts import (
 from alphapulse.runtime.config import CrawlSettings, JiuyanSettings
 from alphapulse.sources.jiuyan.api import JiuyanClient, JiuyanHttpResult
 from alphapulse.sources.jiuyan.parser import parse_post_detail, parse_search_page
-from alphapulse.sources.jiuyan.urls import post_detail_url, search_url
+from alphapulse.sources.jiuyan.urls import (
+    community_feed_url,
+    post_detail_url,
+    search_url,
+)
 from alphapulse.storage.rawstore import FetchRecord, RawResponseStore
 
 
 logger = logging.getLogger(__name__)
+
+COMMUNITY_FEED_LABELS = {
+    "study": "研究优选",
+    "square": "公社广场",
+    "live": "生活区",
+}
 
 
 class JiuyanAdapter:
@@ -41,6 +51,24 @@ class JiuyanAdapter:
 
     def discover(self, seed: SeedDefinition) -> list[CrawlTask]:
         tasks: list[CrawlTask] = []
+        base_url = str(self.settings.base_url)
+        for rank, feed in enumerate(self.settings.community_feeds):
+            tasks.append(
+                CrawlTask(
+                    source=self.source_name,
+                    kind="discover",
+                    url=community_feed_url(base_url, feed),
+                    seed_name=seed.name,
+                    priority=180 - rank,
+                    metadata={
+                        "discovery_mode": "community",
+                        "feed": feed,
+                        "target_code": COMMUNITY_FEED_LABELS[feed],
+                        "target_kind": "community",
+                        "page": 1,
+                    },
+                )
+            )
         fixed = set(self.settings.fixed_targets)
         for rank, code in enumerate(seed.jiuyan_target_codes, start=1):
             is_fixed = code in fixed
@@ -48,7 +76,7 @@ class JiuyanAdapter:
                 CrawlTask(
                     source=self.source_name,
                     kind="discover",
-                    url=search_url(str(self.settings.base_url), code),
+                    url=search_url(base_url, code),
                     seed_name=seed.name,
                     priority=(170 if is_fixed else 165) - min(rank, 20),
                     metadata={
@@ -62,6 +90,15 @@ class JiuyanAdapter:
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
         if task.kind == "discover":
+            if task.metadata.get("discovery_mode") == "community":
+                feed = str(task.metadata.get("feed") or "")
+                page = int(task.metadata.get("page") or 1)
+                response = self.client.community_articles(
+                    feed,
+                    page,
+                    page_size=self.settings.community_page_size,
+                )
+                return self._handle_community(task, response)
             keyword = str(task.metadata.get("target_code") or "")
             page = int(task.metadata.get("page") or 1)
             response = self.client.search_articles(keyword, page)
@@ -140,6 +177,86 @@ class JiuyanAdapter:
                     kind="discover",
                     url=search_url(
                         str(self.settings.base_url), target_code, page_no + 1
+                    ),
+                    seed_name=task.seed_name,
+                    priority=task.priority - 1,
+                    metadata={**task.metadata, "page": page_no + 1},
+                )
+            )
+        return outcome
+
+    def _handle_community(
+        self, task: CrawlTask, response: JiuyanHttpResult
+    ) -> FetchOutcome:
+        outcome = self._base_outcome(task, response)
+        if outcome is not None:
+            return outcome
+        payload = response.json()
+        page = parse_search_page(payload or {})
+        feed = str(task.metadata.get("feed") or "")
+        target_code = str(task.metadata.get("target_code") or "")
+        page_no = int(task.metadata.get("page") or 1)
+        self._save_raw(
+            response,
+            task.kind,
+            requested_url=str(task.url),
+            meta={"discovery_mode": "community", "feed": feed, "page": page_no},
+        )
+        outcome = FetchOutcome(status_code=response.status_code)
+        if page is None:
+            outcome.errors.append(
+                f"Could not parse Jiuyan community payload from {task.url}"
+            )
+            return outcome
+
+        day_start = self._day_start()
+        for entry in page.entries:
+            if day_start is not None and not (
+                entry.published_at is not None and entry.published_at >= day_start
+            ):
+                continue
+            outcome.discovered_tasks.append(
+                CrawlTask(
+                    source=self.source_name,
+                    kind="fetch_post",
+                    url=post_detail_url(
+                        str(self.settings.base_url), entry.article_id
+                    ),
+                    seed_name=task.seed_name,
+                    priority=149,
+                    metadata={
+                        "article_id": entry.article_id,
+                        "target_code": target_code,
+                        "target_kind": "community",
+                        "feed": feed,
+                        "pubdate_ts": (
+                            int(entry.published_at.timestamp())
+                            if entry.published_at is not None
+                            else 0
+                        ),
+                    },
+                )
+            )
+
+        if day_start is not None:
+            page_has_today = any(
+                entry.published_at is not None and entry.published_at >= day_start
+                for entry in page.entries
+            )
+            should_paginate = (
+                page_no < self.settings.max_community_pages and page_has_today
+            )
+        else:
+            should_paginate = (
+                page_no < self.settings.max_community_pages and bool(page.entries)
+            )
+        if should_paginate:
+            outcome.discovered_tasks.append(
+                CrawlTask(
+                    source=self.source_name,
+                    kind="discover",
+                    url=community_feed_url(
+                        str(self.settings.base_url), feed, page_no + 1
                     ),
                     seed_name=task.seed_name,
                     priority=task.priority - 1,

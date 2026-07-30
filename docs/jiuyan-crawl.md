@@ -4,9 +4,19 @@ The `jiuyan` source crawls public content from [韭研公社](https://www.jiuyan
 into the same normalized post storage and daily-report pipeline used by `guba` and
 `tgb`.
 
-## Targets
+## Discovery
 
-Every daily seed refresh includes four fixed search targets:
+Every crawl starts with the three public latest-publish feeds:
+
+- 研究优选 (`study`)
+- 公社广场 (`square`)
+- 生活区 (`live`)
+
+These feeds are the completeness path: they discover current-day posts even when a
+post does not match a configured keyword. Each feed is paginated until a page no
+longer contains a post from the current Beijing day.
+
+The crawl also includes four fixed search targets:
 
 - 上证指数
 - 创业板指
@@ -23,6 +33,7 @@ scraping the DOM. Requests use the same timestamp and MD5 validation headers as 
 site's web client.
 
 - Ranking: `POST /api/v1/article/rank-board`
+- Latest-publish feeds: `POST /api/v2/article/community`
 - Search: `POST /api/v2/article/search`
 - Detail: `POST /api/v2/article/detail?articleId={id}`
 
@@ -38,6 +49,9 @@ Comments are disabled by default because they require another request per post.
 [sources.jiuyan]
 enabled = true
 fixed_targets = ["上证指数", "创业板指", "科创50", "上证50"]
+community_feeds = ["study", "square", "live"]
+community_page_size = 30
+max_community_pages = 12
 hot_targets_limit = 10
 max_search_pages = 3
 day_scoped = true

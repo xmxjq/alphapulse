@@ -104,6 +104,22 @@ class JiuyanClient:
             },
         )
 
+    def community_articles(
+        self, feed: str, page: int, *, page_size: int = 30
+    ) -> JiuyanHttpResult:
+        back_garden = {"study": 0, "square": 1, "live": 2}[feed]
+        return self.post(
+            "/api/v2/article/community",
+            {
+                "category_id": "",
+                "limit": page_size,
+                "order": 0,
+                "start": page,
+                "type": 0,
+                "back_garden": back_garden,
+            },
+        )
+
     def article_detail(self, article_id: str) -> JiuyanHttpResult:
         return self.post(
             f"/api/v2/article/detail?articleId={article_id}",

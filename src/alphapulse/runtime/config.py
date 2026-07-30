@@ -366,6 +366,11 @@ class JiuyanSettings(BaseModel):
     enabled: bool = False
     base_url: HttpUrl = "https://www.jiuyangongshe.com"
     api_base_url: HttpUrl = "https://app.jiuyangongshe.com/jystock-app"
+    community_feeds: list[Literal["study", "square", "live"]] = Field(
+        default_factory=lambda: ["study", "square", "live"]
+    )
+    community_page_size: int = Field(default=30, ge=1, le=100)
+    max_community_pages: int = Field(default=12, ge=1, le=100)
     fixed_targets: list[str] = Field(
         default_factory=lambda: ["上证指数", "创业板指", "科创50", "上证50"]
     )
