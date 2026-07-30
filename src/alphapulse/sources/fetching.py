@@ -11,10 +11,10 @@ from urllib import parse, request
 from urllib.parse import urlparse
 
 from alphapulse.runtime.config import (
-    CrawlSettings,
-    CrawlProxyPoolSettings,
-    CrawlStaticProxySettings,
     CrawlKuaidailiSettings,
+    CrawlProxyPoolSettings,
+    CrawlSettings,
+    CrawlStaticProxySettings,
     FetchMode,
     XueqiuSettings,
 )
@@ -198,65 +198,73 @@ class StaticListProxyProvider:
         )
 
 
-class KuaidailiProxyProvider:
-    """Caches short-lived private proxies extracted from Kuaidaili GetDPS."""
+class KuaidailiProxyPool:
+    """Shares paid proxy extraction while isolating health by source."""
 
     provider_name = "kuaidaili"
 
-    def __init__(
-        self, settings: CrawlKuaidailiSettings, *, source: str | None = None
-    ) -> None:
+    def __init__(self, settings: CrawlKuaidailiSettings) -> None:
         self.settings = settings
-        self.source = source
         self.metrics = ProxyMetricsStore(settings.metrics_path)
         self._urls: list[str] = []
         self._expires_at: dict[str, float] = {}
-        self._benched_until: dict[str, float] = {}
-        self._failure_streaks: dict[str, int] = {}
-        self._next_index = 0
+        self._benched_until: dict[tuple[str, str | None], float] = {}
+        self._failure_streaks: dict[tuple[str, str | None], int] = {}
+        self._next_indexes: dict[str | None, int] = {}
         self._lock = threading.Lock()
 
-    def acquire(self) -> ProxyLease | None:
+    def provider(self, source: str | None = None) -> KuaidailiProxyProvider:
+        return KuaidailiProxyProvider(self.settings, source=source, pool=self)
+
+    def acquire(self, source: str | None = None) -> ProxyLease | None:
         with self._lock:
             now = time.monotonic()
             self._prune_expired(now)
-            if len(self._available(now)) <= self.settings.low_watermark:
-                self._refresh(now)
-            available = set(self._available(now))
+            if len(self._available(now, source)) <= self.settings.low_watermark:
+                self._refresh(now, source)
+            available = set(self._available(now, source))
             if not available:
                 self.metrics.record_pool_empty(
-                    self.provider_name, source=self.source
+                    self.provider_name, source=source
                 )
                 return None
+            next_index = self._next_indexes.get(source, 0)
             for _ in range(len(self._urls)):
-                url = self._urls[self._next_index % len(self._urls)]
-                self._next_index += 1
+                url = self._urls[next_index % len(self._urls)]
+                next_index += 1
                 if url in available:
+                    self._next_indexes[source] = next_index
                     lease = self._lease(url)
                     self.metrics.record_acquire(
                         self.provider_name,
                         lease.proxy_url,
-                        source=self.source,
+                        source=source,
                     )
                     return lease
             self.metrics.record_pool_empty(
-                self.provider_name, source=self.source
+                self.provider_name, source=source
             )
             return None
 
-    def report_bad(self, lease: ProxyLease, reason: str) -> None:
+    def report_bad(
+        self,
+        lease: ProxyLease,
+        reason: str,
+        source: str | None = None,
+    ) -> None:
         with self._lock:
-            streak = self._failure_streaks.get(lease.proxy_url, 0) + 1
-            self._failure_streaks[lease.proxy_url] = streak
+            health_key = (lease.proxy_url, source)
+            streak = self._failure_streaks.get(health_key, 0) + 1
+            self._failure_streaks[health_key] = streak
             should_bench = self._is_hard_failure(reason) or (
                 streak >= self.settings.failure_threshold
             )
             benched_until = None
             if should_bench:
-                self._benched_until[lease.proxy_url] = (
+                self._benched_until[health_key] = (
                     time.monotonic() + self.settings.cooldown_seconds
                 )
-                self._failure_streaks.pop(lease.proxy_url, None)
+                self._failure_streaks.pop(health_key, None)
                 benched_until = datetime.now(UTC) + timedelta(
                     seconds=self.settings.cooldown_seconds
                 )
@@ -265,19 +273,23 @@ class KuaidailiProxyProvider:
                 lease.proxy_url,
                 reason=reason,
                 benched_until=benched_until,
-                source=self.source,
+                source=source,
             )
 
-    def report_success(self, lease: ProxyLease) -> None:
+    def report_success(
+        self,
+        lease: ProxyLease,
+        source: str | None = None,
+    ) -> None:
         with self._lock:
-            self._failure_streaks.pop(lease.proxy_url, None)
+            self._failure_streaks.pop((lease.proxy_url, source), None)
         self.metrics.record_success(
             self.provider_name,
             lease.proxy_url,
-            source=self.source,
+            source=source,
         )
 
-    def _refresh(self, now: float) -> None:
+    def _refresh(self, now: float, source: str | None) -> None:
         try:
             api_url = self.settings.api_url_file.read_text(encoding="utf-8").strip()
             if not api_url.startswith(("http://", "https://")):
@@ -323,7 +335,7 @@ class KuaidailiProxyProvider:
             self.provider_name,
             proxy_urls,
             expires_at=expires_at_wall,
-            source=self.source,
+            source=source,
         )
         for proxy in proxies:
             url = _proxy_url(proxy)
@@ -331,12 +343,12 @@ class KuaidailiProxyProvider:
                 self._urls.append(url)
             self._expires_at[url] = expires_at
 
-    def _available(self, now: float) -> list[str]:
+    def _available(self, now: float, source: str | None) -> list[str]:
         return [
             url
             for url in self._urls
             if self._expires_at.get(url, 0.0) > now
-            and self._benched_until.get(url, 0.0) <= now
+            and self._benched_until.get((url, source), 0.0) <= now
         ]
 
     def _prune_expired(self, now: float) -> None:
@@ -348,15 +360,20 @@ class KuaidailiProxyProvider:
             url: expires_at for url, expires_at in self._expires_at.items() if url in live
         }
         self._benched_until = {
-            url: until for url, until in self._benched_until.items() if url in live
+            key: until for key, until in self._benched_until.items() if key[0] in live
         }
         self._failure_streaks = {
-            url: streak for url, streak in self._failure_streaks.items() if url in live
+            key: streak
+            for key, streak in self._failure_streaks.items()
+            if key[0] in live
         }
         if self._urls:
-            self._next_index %= len(self._urls)
+            self._next_indexes = {
+                source: index % len(self._urls)
+                for source, index in self._next_indexes.items()
+            }
         else:
-            self._next_index = 0
+            self._next_indexes.clear()
 
     @staticmethod
     def _parse_proxies(payload: str) -> list[str]:
@@ -402,6 +419,33 @@ class KuaidailiProxyProvider:
             or bool(re.search(r"\bhttp (?:403|407|418|429)\b", lowered))
             or "proxy setup failed" in lowered
         )
+
+
+class KuaidailiProxyProvider:
+    """Source-scoped view over a short-lived Kuaidaili proxy pool."""
+
+    provider_name = "kuaidaili"
+
+    def __init__(
+        self,
+        settings: CrawlKuaidailiSettings,
+        *,
+        source: str | None = None,
+        pool: KuaidailiProxyPool | None = None,
+    ) -> None:
+        self.settings = settings
+        self.source = source
+        self.pool = pool or KuaidailiProxyPool(settings)
+        self.metrics = self.pool.metrics
+
+    def acquire(self) -> ProxyLease | None:
+        return self.pool.acquire(self.source)
+
+    def report_bad(self, lease: ProxyLease, reason: str) -> None:
+        self.pool.report_bad(lease, reason, self.source)
+
+    def report_success(self, lease: ProxyLease) -> None:
+        self.pool.report_success(lease, self.source)
 
 
 class ScraplingClient:

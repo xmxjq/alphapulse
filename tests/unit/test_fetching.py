@@ -6,6 +6,7 @@ import pytest
 
 from alphapulse.runtime.config import CrawlSettings, XueqiuSettings
 from alphapulse.sources.fetching import (
+    KuaidailiProxyPool,
     KuaidailiProxyProvider,
     ProxyLease,
     ProxyPoolProvider,
@@ -371,6 +372,72 @@ def test_kuaidaili_provider_records_success(
         now=datetime.now(UTC),
     )
     assert snapshot["successes"] == 1
+
+
+def test_kuaidaili_pool_shares_one_extraction_across_sources(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _kuaidaili_settings(
+        tmp_path,
+        batch_size=1,
+        low_watermark=0,
+    ).kuaidaili
+    pool = KuaidailiProxyPool(settings)
+    guba = pool.provider("guba")
+    tgb = pool.provider("tgb")
+    requested: list[str] = []
+
+    def fake_urlopen(url: str, timeout: int):
+        requested.append(url)
+        return DummyUrlopenResponse("1.2.3.4:8080")
+
+    monkeypatch.setattr("alphapulse.sources.fetching.request.urlopen", fake_urlopen)
+
+    assert guba.acquire().proxy_url == "http://1.2.3.4:8080"
+    assert tgb.acquire().proxy_url == "http://1.2.3.4:8080"
+    assert len(requested) == 1
+
+    snapshot = pool.metrics.snapshot(
+        provider="kuaidaili",
+        since=datetime(2026, 1, 1, tzinfo=UTC),
+        now=datetime.now(UTC),
+    )
+    assert {source["source"]: source["leases"] for source in snapshot["sources"]} == {
+        "guba": 1,
+        "tgb": 1,
+    }
+
+
+def test_kuaidaili_pool_isolates_benches_by_source(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _kuaidaili_settings(
+        tmp_path,
+        batch_size=1,
+        low_watermark=0,
+        failure_threshold=1,
+    ).kuaidaili
+    pool = KuaidailiProxyPool(settings)
+    guba = pool.provider("guba")
+    tgb = pool.provider("tgb")
+    responses = iter(
+        [
+            DummyUrlopenResponse("1.2.3.4:8080"),
+            DummyUrlopenResponse("2.3.4.5:8081"),
+        ]
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: next(responses),
+    )
+
+    first = guba.acquire()
+    guba.report_bad(first, "blocked: soft_block")
+
+    assert tgb.acquire().proxy_url == first.proxy_url
+    assert guba.acquire().proxy_url == "http://2.3.4.5:8081"
 
 
 @pytest.mark.parametrize(

@@ -32,6 +32,7 @@ lease_ttl_seconds = 600
 cooldown_seconds = 600
 acquire_timeout_seconds = 20
 failure_threshold = 3
+share_across_sources = true
 
 [sources.guba.browser]
 enabled = false
@@ -81,6 +82,12 @@ request_interval_max_seconds = 8.0
 `fail_open = false` is required for guba. If extraction fails or every cached
 proxy is unavailable after retries, the request fails without falling back to
 the worker's direct public IP.
+
+`share_across_sources = true` makes the crawler's Guba, TGB, and Jiuyan
+clients share one extracted-IP cache. Proxy health remains source-scoped: a
+Guba block benches that exit for Guba without wasting its remaining paid life
+on TGB or Jiuyan. This is most effective because source queues run in parallel
+and target unrelated domains.
 
 `cooldown_seconds >= lease_ttl_seconds` (as in both configs above) is
 intentional: it makes every bench terminal for that IP's remaining paid

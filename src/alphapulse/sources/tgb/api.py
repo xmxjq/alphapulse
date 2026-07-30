@@ -15,8 +15,7 @@ from alphapulse.runtime.agent_pool import (
     AgentPoolUnavailable,
 )
 from alphapulse.runtime.config import CrawlSettings, TgbSettings
-from alphapulse.sources.fetching import ProxyLease, _build_proxy_provider
-
+from alphapulse.sources.fetching import ProxyLease, ProxyProvider, _build_proxy_provider
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +72,18 @@ class TgbClient:
     guba uses.
     """
 
-    def __init__(self, settings: TgbSettings, crawl_settings: CrawlSettings) -> None:
+    def __init__(
+        self,
+        settings: TgbSettings,
+        crawl_settings: CrawlSettings,
+        *,
+        proxy_provider: ProxyProvider | None = None,
+    ) -> None:
         self.settings = settings
         self.crawl_settings = crawl_settings
-        self.proxy_provider = _build_proxy_provider(crawl_settings, source="tgb")
+        self.proxy_provider = proxy_provider or _build_proxy_provider(
+            crawl_settings, source="tgb"
+        )
         self.agent_pool = (
             AgentPoolClient(crawl_settings.agent_pool)
             if crawl_settings.agent_pool.enabled

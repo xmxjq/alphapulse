@@ -9,21 +9,30 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, ItemReference, SeedDefinition, SourceAdapter
+from alphapulse.pipeline.contracts import (
+    CrawlTask,
+    FetchOutcome,
+    ItemReference,
+    SeedDefinition,
+    SourceAdapter,
+)
 from alphapulse.runtime.config import Settings
 from alphapulse.runtime.rqlite_state import RqliteStateStore
 from alphapulse.runtime.state import StateStore
 from alphapulse.runtime.state_factory import build_state_store
 from alphapulse.seeds.discovery import SeedDiscoveryManager
 from alphapulse.sources.bilibili.adapter import BilibiliAdapter
+from alphapulse.sources.fetching import KuaidailiProxyPool
 from alphapulse.sources.guba.adapter import GubaAdapter
+from alphapulse.sources.guba.api import GubaClient
 from alphapulse.sources.jiuyan.adapter import JiuyanAdapter
+from alphapulse.sources.jiuyan.api import JiuyanClient
 from alphapulse.sources.tgb.adapter import TgbAdapter
+from alphapulse.sources.tgb.api import TgbClient
 from alphapulse.sources.xueqiu.adapter import XueqiuAdapter
 from alphapulse.storage.base import StorageStore
 from alphapulse.storage.factory import build_store
 from alphapulse.storage.rawstore import build_raw_store
-
 
 logger = logging.getLogger(__name__)
 
@@ -831,29 +840,78 @@ class AlphaPulseService:
 
     def _build_sources(self) -> dict[str, SourceAdapter]:
         sources: dict[str, SourceAdapter] = {}
+        shared_kuaidaili = self._shared_kuaidaili_pool()
         if self.settings.sources.xueqiu.enabled:
             sources["xueqiu"] = XueqiuAdapter(self.settings.sources.xueqiu, self.settings.crawl)
         if self.settings.sources.bilibili.enabled:
             sources["bilibili"] = BilibiliAdapter(self.settings.sources.bilibili, self.settings.crawl)
         if self.settings.sources.guba.enabled:
+            guba_client = (
+                GubaClient(
+                    self.settings.sources.guba,
+                    self.settings.crawl,
+                    proxy_provider=shared_kuaidaili.provider("guba"),
+                )
+                if shared_kuaidaili is not None
+                and self._proxy_enabled_for_source("guba")
+                else None
+            )
             sources["guba"] = GubaAdapter(
                 self.settings.sources.guba,
                 self.settings.crawl,
+                client=guba_client,
                 raw_store=build_raw_store(self.settings),
             )
         if self.settings.sources.tgb.enabled:
+            tgb_client = (
+                TgbClient(
+                    self.settings.sources.tgb,
+                    self.settings.crawl,
+                    proxy_provider=shared_kuaidaili.provider("tgb"),
+                )
+                if shared_kuaidaili is not None
+                and self._proxy_enabled_for_source("tgb")
+                else None
+            )
             sources["tgb"] = TgbAdapter(
                 self.settings.sources.tgb,
                 self.settings.crawl,
+                client=tgb_client,
                 raw_store=build_raw_store(self.settings),
             )
         if self.settings.sources.jiuyan.enabled:
+            jiuyan_client = (
+                JiuyanClient(
+                    self.settings.sources.jiuyan,
+                    self.settings.crawl,
+                    proxy_provider=shared_kuaidaili.provider("jiuyan"),
+                )
+                if shared_kuaidaili is not None
+                and self._proxy_enabled_for_source("jiuyan")
+                else None
+            )
             sources["jiuyan"] = JiuyanAdapter(
                 self.settings.sources.jiuyan,
                 self.settings.crawl,
+                client=jiuyan_client,
                 raw_store=build_raw_store(self.settings),
             )
         return sources
+
+    def _shared_kuaidaili_pool(self) -> KuaidailiProxyPool | None:
+        proxy = self.settings.crawl.proxy
+        kuaidaili = self.settings.crawl.kuaidaili
+        if not (
+            proxy.enabled
+            and proxy.provider == "kuaidaili"
+            and kuaidaili.share_across_sources
+        ):
+            return None
+        return KuaidailiProxyPool(kuaidaili)
+
+    def _proxy_enabled_for_source(self, source: str) -> bool:
+        sources = self.settings.crawl.proxy.sources
+        return not sources or source in sources
 
     def _adapter_for_task(self, task: CrawlTask) -> SourceAdapter:
         return self._adapter_for_source(task.source)

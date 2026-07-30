@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import http.client
+import json
 import logging
 import random
 import time
@@ -17,10 +17,9 @@ from alphapulse.runtime.agent_pool import (
     AgentPoolUnavailable,
 )
 from alphapulse.runtime.config import CrawlSettings, GubaSettings
-from alphapulse.sources.fetching import ProxyLease, _build_proxy_provider
+from alphapulse.sources.fetching import ProxyLease, ProxyProvider, _build_proxy_provider
 from alphapulse.sources.guba.parser import extract_embedded_json
 from alphapulse.sources.guba.urls import getdata_url
-
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +72,18 @@ class GubaHttpResult:
 
 
 class GubaClient:
-    def __init__(self, settings: GubaSettings, crawl_settings: CrawlSettings) -> None:
+    def __init__(
+        self,
+        settings: GubaSettings,
+        crawl_settings: CrawlSettings,
+        *,
+        proxy_provider: ProxyProvider | None = None,
+    ) -> None:
         self.settings = settings
         self.crawl_settings = crawl_settings
-        self.proxy_provider = _build_proxy_provider(crawl_settings, source="guba")
+        self.proxy_provider = proxy_provider or _build_proxy_provider(
+            crawl_settings, source="guba"
+        )
         self.agent_pool = (
             AgentPoolClient(crawl_settings.agent_pool)
             if crawl_settings.agent_pool.enabled

@@ -82,6 +82,9 @@ acquire_timeout_seconds = 20
 # Transient transport failures keep using the same paid IP until this many
 # consecutive failures. Explicit blocks and proxy setup failures bench it now.
 failure_threshold = 3
+# Reuse one extracted IP across Guba, TGB, and Jiuyan while keeping failure
+# streaks and benches isolated per source.
+share_across_sources = false
 
 [crawl.agent_pool]
 # Self-hosted outbound fetch agents. Agents make outbound HTTPS connections to

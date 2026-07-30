@@ -5,7 +5,7 @@ from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, SeedDefinitio
 from alphapulse.runtime.config import Settings, load_settings
 from alphapulse.runtime.service import AlphaPulseService
 from alphapulse.sources.bilibili.api import BilibiliApiResult
-from alphapulse.sources.fetching import FetchResult
+from alphapulse.sources.fetching import FetchResult, KuaidailiProxyProvider
 
 
 class FakeStore:
@@ -99,6 +99,29 @@ def test_service_processes_source_queues_in_parallel(tmp_path: Path) -> None:
     stats = service.run_cycle()
 
     assert stats.pages_fetched == 2
+
+
+def test_service_shares_kuaidaili_pool_across_sources(tmp_path: Path) -> None:
+    settings = load_settings(Path("settings.example.toml"))
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.crawl.proxy.enabled = True
+    settings.crawl.proxy.provider = "kuaidaili"
+    settings.crawl.proxy.sources = ["guba", "tgb", "jiuyan"]
+    settings.crawl.kuaidaili.api_url_file = tmp_path / "kuaidaili-api-url.txt"
+    settings.crawl.kuaidaili.metrics_path = tmp_path / "proxy-metrics.db"
+    settings.crawl.kuaidaili.share_across_sources = True
+    settings.sources.guba.enabled = True
+    settings.sources.tgb.enabled = True
+    settings.sources.jiuyan.enabled = True
+
+    service = AlphaPulseService(settings, store=FakeStore())
+    providers = [
+        service.sources[source].client.proxy_provider
+        for source in ("guba", "tgb", "jiuyan")
+    ]
+
+    assert all(isinstance(provider, KuaidailiProxyProvider) for provider in providers)
+    assert providers[0].pool is providers[1].pool is providers[2].pool
 
 
 class HybridGubaAdapter:

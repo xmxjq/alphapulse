@@ -144,6 +144,7 @@ class CrawlKuaidailiSettings(BaseModel):
     cooldown_seconds: int = Field(default=600, ge=0)
     acquire_timeout_seconds: int = Field(default=20, ge=1)
     failure_threshold: int = Field(default=3, ge=1, le=10)
+    share_across_sources: bool = False
 
     @model_validator(mode="after")
     def validate_low_watermark(self) -> "CrawlKuaidailiSettings":

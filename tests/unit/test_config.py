@@ -20,6 +20,7 @@ def test_load_settings_example() -> None:
     assert settings.crawl.kuaidaili.low_watermark == 2
     assert settings.crawl.kuaidaili.lease_ttl_seconds == 600
     assert settings.crawl.kuaidaili.failure_threshold == 3
+    assert settings.crawl.kuaidaili.share_across_sources is False
     assert settings.crawl.agent_pool.enabled is False
     assert settings.crawl.agent_pool.db_path.name == "agent-pool.db"
     assert settings.crawl.agent_pool.db_path.is_absolute()
