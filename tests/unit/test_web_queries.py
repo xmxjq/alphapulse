@@ -383,6 +383,32 @@ def test_jiuyan_daily_report_groups_posts_into_multiple_fixed_targets(
     assert report.total_posts == 1
 
 
+def test_hupu_daily_report_deduplicates_multi_board_posts(tmp_path: Path) -> None:
+    reader = StubReader()
+    post = _post_summary("hupu", "641433410", "stock", 7)
+    reader.range_posts = [
+        post.model_copy(
+            update={"board_codes": ["stock", "上证指数", "科创50"]}
+        )
+    ]
+    queries = WebQueries(reader=reader, state=StateStore(tmp_path / "state.db"))
+
+    report = queries.hupu_daily_report("2026-07-22")
+
+    assert reader.range_call[0] == "hupu"
+    assert report.has_snapshot is True
+    assert report.total_posts == 1
+    assert [section.key for section in report.sections] == ["all", "fixed"]
+    assert report.sections[0].entries[0].post_count == 1
+    fixed = {entry.code: entry.post_count for entry in report.sections[1].entries}
+    assert fixed == {
+        "上证指数": 1,
+        "创业板指": 0,
+        "科创50": 1,
+        "上证50": 0,
+    }
+
+
 def test_daily_report_keeps_posts_from_unranked_boards(tmp_path: Path) -> None:
     day = "2026-07-22"
     state = StateStore(tmp_path / "state.db")

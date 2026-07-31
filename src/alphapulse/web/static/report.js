@@ -1,6 +1,6 @@
 // Per-day forum "newspaper" report. Fetches /api/{source}/report/{date} and renders
 // ranking sections → boards → the day's posts, with lazily-loaded comment threads.
-// `source` is guba, tgb, or jiuyan, read from the /report/{source}/{date} path.
+// `source` is guba, tgb, jiuyan, or hupu, read from the /report/{source}/{date} path.
 
 const REPORT_TZ = "Asia/Shanghai";
 
@@ -27,6 +27,14 @@ const SOURCE_META = {
     title: "韭研公社日报",
     subtitle: "Jiuyan Daily · 固定指数 · 公社热门搜索",
     colophon: "Generated from Jiuyan Gongshe search targets. Fixed indices and hot searches are snapshotted daily.",
+    comments: false,
+  },
+  hupu: {
+    label: "虎扑股票区",
+    edition: "虎扑 · 股票区",
+    title: "虎扑股票区日报",
+    subtitle: "Hupu Stock Daily · 全区新帖 · 核心指数",
+    colophon: "Generated from Hupu stock-board posts under a time-limited written authorization.",
     comments: false,
   },
 };

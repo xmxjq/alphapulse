@@ -20,6 +20,7 @@ class SeedDefinition(BaseModel):
     guba_board_codes: list[str] = Field(default_factory=list)
     tgb_board_codes: list[str] = Field(default_factory=list)
     jiuyan_target_codes: list[str] = Field(default_factory=list)
+    hupu_board_codes: list[str] = Field(default_factory=list)
     stock_ids: list[str] = Field(default_factory=list)
     topic_ids: list[str] = Field(default_factory=list)
     user_ids: list[str] = Field(default_factory=list)

@@ -587,6 +587,18 @@ def test_manual_and_compiler_preserve_jiuyan_targets() -> None:
     assert compiled.jiuyan_target_codes == ["上证指数", "机器人"]
 
 
+def test_manual_and_compiler_preserve_hupu_boards() -> None:
+    items = ManualSeedGenerator().generate(
+        ManualGeneratorDefinition(name="manual", hupu_board_codes=["stock"]),
+        datetime.now(UTC),
+    )
+    assert [(item.kind, item.value) for item in items] == [
+        ("hupu_board_code", "stock")
+    ]
+    compiled = SeedCompiler().compile("hupu-daily", items)
+    assert compiled.hupu_board_codes == ["stock"]
+
+
 def test_jiuyan_hot_targets_generator_snapshots_fixed_and_hot(
     tmp_path: Path,
 ) -> None:

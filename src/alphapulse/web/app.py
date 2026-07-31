@@ -372,6 +372,44 @@ def create_app(
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         return Response(content=encode(payload), media_type=TOON_MEDIA_TYPE)
 
+    @app.get("/api/hupu/report/{date}", response_model=ReportResponse)
+    def hupu_report(date: str, q: WebQueries = Depends(get_queries)) -> ReportResponse:
+        if not DATE_RE.match(date):
+            raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+        try:
+            return q.hupu_daily_report(date)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/llm/hupu/report/{date}",
+        response_class=Response,
+        responses={200: {"content": {TOON_MEDIA_TYPE: {}}}},
+    )
+    def hupu_llm_report(
+        date: str,
+        limit: int = Query(default=500, ge=1, le=5_000),
+        include_comments: bool = Query(default=False),
+        max_comments_per_post: int = Query(default=100, ge=0, le=500),
+        q: WebQueries = Depends(get_queries),
+    ) -> Response:
+        if not DATE_RE.match(date):
+            raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+        try:
+            payload = q.hupu_llm_report(
+                date,
+                limit=limit,
+                include_comments=include_comments,
+                max_comments_per_post=max_comments_per_post,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        return Response(content=encode(payload), media_type=TOON_MEDIA_TYPE)
+
     @app.get("/api/posts/{source}/{entity_id}", response_model=PostDetailResponse)
     def post_detail(
         source: str,

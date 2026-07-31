@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from alphapulse.runtime.config import (
     CrawlSettings,
     GubaSettings,
+    HupuSettings,
     JiuyanSettings,
     Settings,
     TgbSettings,
@@ -58,10 +59,14 @@ JIUYAN_REPORT_SECTIONS = [
     ("fixed", "固定指数"),
     ("hot", "公社热门搜索"),
 ]
+HUPU_REPORT_SECTIONS = [
+    ("all", "股票区全部新帖"),
+    ("fixed", "核心指数"),
+]
 
 
 RECENT_URL_WINDOW = timedelta(hours=1)
-ALLOWED_SOURCES = {"bilibili", "xueqiu", "guba", "tgb", "jiuyan"}
+ALLOWED_SOURCES = {"bilibili", "xueqiu", "guba", "tgb", "jiuyan", "hupu"}
 CONTENT_PREVIEW_CHARS = 280
 # Page-1 board list URLs only; deeper pages (list,{code}_{N}.html) are
 # re-discovered from page 1, so page 1 is what drives the next crawl.
@@ -1054,6 +1059,59 @@ class WebQueries:
             "jiuyan",
             report,
             schema="alphapulse.jiuyan.daily-report.v1",
+            include_comments=include_comments,
+            max_comments_per_post=max_comments_per_post,
+        )
+
+    def hupu_daily_report(
+        self, day: str, *, limit: int = 20_000
+    ) -> ReportResponse:
+        hupu = self.settings.sources.hupu if self.settings else HupuSettings()
+        base = str(hupu.base_url).rstrip("/")
+        board_url = f"{base}/{hupu.board_slug}-postdate"
+        ranking = [
+            {
+                "section": "all",
+                "rank": 1,
+                "code": hupu.board_slug,
+                "name": "股票区",
+                "url": board_url,
+            },
+            *[
+                {
+                    "section": "fixed",
+                    "rank": rank,
+                    "code": target,
+                    "name": target,
+                    "url": board_url,
+                }
+                for rank, target in enumerate(hupu.fixed_targets, start=1)
+            ],
+        ]
+        return self._daily_report(
+            "hupu",
+            day,
+            HUPU_REPORT_SECTIONS,
+            lambda _day: ranking,
+            hupu.ranking_timezone,
+            lambda _code: board_url,
+            limit,
+            multi_board=True,
+        )
+
+    def hupu_llm_report(
+        self,
+        day: str,
+        *,
+        limit: int = 500,
+        include_comments: bool = False,
+        max_comments_per_post: int = 100,
+    ) -> dict[str, Any]:
+        report = self.hupu_daily_report(day, limit=limit)
+        return self._llm_daily_report(
+            "hupu",
+            report,
+            schema="alphapulse.hupu.daily-report.v1",
             include_comments=include_comments,
             max_comments_per_post=max_comments_per_post,
         )

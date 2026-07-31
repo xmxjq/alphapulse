@@ -97,7 +97,7 @@ expiry_safety_seconds = 30
 #   uv run alphapulse --config settings.toml agent-token create --agent-id home-arm
 enabled = false
 db_path = ".runtime/agent-pool.db"
-sources = ["guba", "tgb", "jiuyan"]
+sources = ["guba", "tgb", "jiuyan", "hupu"]
 strategy = "agent_first"
 heartbeat_ttl_seconds = 90
 lease_seconds = 180
@@ -119,6 +119,7 @@ allowed_hosts = [
   "push2.eastmoney.com",
   "www.tgb.cn",
   "app.jiuyangongshe.com",
+  "bbs.hupu.com",
 ]
 
 [crawl.raw_store]
@@ -294,6 +295,31 @@ max_retries = 3
 fetch_comments = false
 
 [sources.jiuyan.cookies]
+
+[sources.hupu]
+# Hupu stock board. Enabling this source requires a current written
+# authorization; the crawler stops automatically after this date.
+enabled = false
+base_url = "https://bbs.hupu.com"
+board_slug = "stock"
+authorization_expires_on = 2029-07-31
+# /stock-postdate is sorted newest-first at roughly 50 posts per page.
+max_list_pages = 6
+list_recrawl_minutes = 30
+day_scoped = true
+ranking_timezone = "Asia/Shanghai"
+fixed_targets = ["上证指数", "创业板指", "科创50", "上证50"]
+fixed_target_aliases = { "上证指数" = ["沪指", "上证综指"], "创业板指" = ["创指", "创业板综指", "创业板ETF"], "科创50" = ["科创50ETF"], "上证50" = ["上证50ETF"] }
+# Conservative pacing protects paid and residential exits. Discovery uses the
+# paid route; details can use both one paid slot and one online agent slot.
+request_interval_min_seconds = 5.0
+request_interval_max_seconds = 9.0
+concurrent_paid_requests = 1
+concurrent_agent_requests = 1
+max_retries = 3
+fetch_comments = false
+
+[sources.hupu.cookies]
 
 [web]
 # Bind address for `alphapulse web`. Default to loopback; expose intentionally.

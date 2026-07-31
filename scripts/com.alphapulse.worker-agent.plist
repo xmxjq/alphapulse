@@ -55,6 +55,8 @@
     <string>www.tgb.cn</string>
     <string>--allow-host</string>
     <string>app.jiuyangongshe.com</string>
+    <string>--allow-host</string>
+    <string>bbs.hupu.com</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

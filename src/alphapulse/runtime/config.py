@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tomllib
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -100,7 +101,7 @@ class CrawlProxySettings(BaseModel):
     provider: ProxyProviderType | None = None
     max_attempts: int = Field(default=2, ge=1)
     fail_open: bool = False
-    # Source names ("guba", "tgb", "jiuyan", "xueqiu", "bilibili") that should use the proxy.
+    # Source names ("guba", "tgb", "jiuyan", "hupu", "xueqiu", "bilibili") that should use the proxy.
     # Empty means all sources. Scoping matters when a source carries an
     # authenticated cookie: routing it through rotating exits looks like
     # account sharing to the site.
@@ -160,7 +161,7 @@ class AgentPoolSettings(BaseModel):
 
     enabled: bool = False
     db_path: Path = Path(".runtime/agent-pool.db")
-    sources: list[str] = Field(default_factory=lambda: ["guba", "tgb", "jiuyan"])
+    sources: list[str] = Field(default_factory=lambda: ["guba", "tgb", "jiuyan", "hupu"])
     strategy: AgentPoolStrategy = "agent_first"
     heartbeat_ttl_seconds: int = Field(default=90, ge=10, le=3600)
     lease_seconds: int = Field(default=180, ge=10, le=3600)
@@ -180,6 +181,7 @@ class AgentPoolSettings(BaseModel):
             "push2.eastmoney.com",
             "www.tgb.cn",
             "app.jiuyangongshe.com",
+            "bbs.hupu.com",
         ]
     )
 
@@ -406,6 +408,57 @@ class JiuyanSettings(BaseModel):
         return self
 
 
+class HupuSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    base_url: HttpUrl = "https://bbs.hupu.com"
+    board_slug: str = "stock"
+    authorization_expires_on: date | None = None
+    max_list_pages: int = Field(default=6, ge=1, le=40)
+    list_recrawl_minutes: int = Field(default=30, ge=1)
+    day_scoped: bool = True
+    ranking_timezone: str = "Asia/Shanghai"
+    fixed_targets: list[str] = Field(
+        default_factory=lambda: ["上证指数", "创业板指", "科创50", "上证50"]
+    )
+    fixed_target_aliases: dict[str, list[str]] = Field(
+        default_factory=lambda: {
+            "上证指数": ["沪指", "上证综指"],
+            "创业板指": ["创指", "创业板综指", "创业板ETF"],
+            "科创50": ["科创50ETF"],
+            "上证50": ["上证50ETF"],
+        }
+    )
+    request_interval_min_seconds: float = Field(default=5.0, ge=0.0)
+    request_interval_max_seconds: float = Field(default=9.0, ge=0.0)
+    concurrent_paid_requests: int = Field(default=1, ge=1, le=8)
+    concurrent_agent_requests: int = Field(default=1, ge=0, le=16)
+    max_retries: int = Field(default=3, ge=1)
+    fetch_comments: bool = False
+    user_agent: str | None = None
+    cookies: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_hupu_settings(self) -> "HupuSettings":
+        if self.request_interval_max_seconds < self.request_interval_min_seconds:
+            raise ValueError(
+                "sources.hupu.request_interval_max_seconds must be >= "
+                "request_interval_min_seconds"
+            )
+        if self.enabled and self.authorization_expires_on is None:
+            raise ValueError(
+                "sources.hupu.authorization_expires_on is required when Hupu is enabled"
+            )
+        return self
+
+    def authorization_active(self, on_date: date | None = None) -> bool:
+        return bool(
+            self.authorization_expires_on is not None
+            and (on_date or date.today()) <= self.authorization_expires_on
+        )
+
+
 class SourcesSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -414,6 +467,7 @@ class SourcesSettings(BaseModel):
     guba: GubaSettings = Field(default_factory=GubaSettings)
     tgb: TgbSettings = Field(default_factory=TgbSettings)
     jiuyan: JiuyanSettings = Field(default_factory=JiuyanSettings)
+    hupu: HupuSettings = Field(default_factory=HupuSettings)
 
 
 class WebSettings(BaseModel):

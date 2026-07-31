@@ -14,6 +14,7 @@ func TestValidateTarget(t *testing.T) {
 		"guba.eastmoney.com":    {},
 		"www.tgb.cn":            {},
 		"app.jiuyangongshe.com": {},
+		"bbs.hupu.com":          {},
 	}
 	good, _ := url.Parse("https://guba.eastmoney.com/list,600519.html")
 	if err := validateTarget(good, allowed); err != nil {
@@ -28,6 +29,10 @@ func TestValidateTarget(t *testing.T) {
 	)
 	if err := validateTarget(jiuyan, allowed); err != nil {
 		t.Fatalf("expected allowed Jiuyan URL: %v", err)
+	}
+	hupu, _ := url.Parse("https://bbs.hupu.com/641433410.html")
+	if err := validateTarget(hupu, allowed); err != nil {
+		t.Fatalf("expected allowed Hupu URL: %v", err)
 	}
 	bad, _ := url.Parse("http://127.0.0.1/private")
 	if err := validateTarget(bad, allowed); err == nil {

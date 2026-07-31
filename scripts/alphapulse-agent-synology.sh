@@ -77,6 +77,7 @@ start_agent()
           --allow-host push2.eastmoney.com \
           --allow-host www.tgb.cn \
           --allow-host app.jiuyangongshe.com \
+          --allow-host bbs.hupu.com \
           >>'$LOG_FILE' 2>&1 &
         echo \$! >'$PID_FILE'
     "

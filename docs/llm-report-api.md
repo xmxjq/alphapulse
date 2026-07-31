@@ -7,6 +7,7 @@ AlphaPulse exposes compact daily reports in
 GET /api/llm/guba/report/YYYY-MM-DD
 GET /api/llm/tgb/report/YYYY-MM-DD
 GET /api/llm/jiuyan/report/YYYY-MM-DD
+GET /api/llm/hupu/report/YYYY-MM-DD
 ```
 
 The schemas are:
@@ -15,6 +16,7 @@ The schemas are:
 alphapulse.guba.daily-report.v1
 alphapulse.tgb.daily-report.v1
 alphapulse.jiuyan.daily-report.v1
+alphapulse.hupu.daily-report.v1
 ```
 
 All responses contain flat `sections`, `boards`, `posts`, and `comments`
@@ -55,3 +57,5 @@ curl --fail-with-body -sS \
 
 Jiuyan defaults to post-only crawling, so its `comments` table is normally
 empty even though posts retain the comment count reported by the source site.
+Hupu uses the same post-only default and exposes its four fixed-index
+classifications through each post's `board_codes` field.

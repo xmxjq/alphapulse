@@ -593,3 +593,54 @@ def test_seeds_endpoint_returns_compiled_sets(tmp_path: Path) -> None:
     summary = next(s for s in payload["seed_sets"] if s["name"] == "cn-core")
     SeedSetSummary.model_validate(summary)
     assert summary["stock_count"] == 1
+
+
+def test_hupu_report_and_llm_endpoints(tmp_path: Path) -> None:
+    reader = FakeReader()
+    summary = PostSummary(
+        source="hupu",
+        source_entity_id="641433410",
+        canonical_url="https://bbs.hupu.com/641433410.html",
+        author_entity_id="42",
+        title="沪指反弹",
+        content_preview="关注科创50",
+        published_at=datetime(2026, 7, 31, 1, 0, tzinfo=UTC),
+        fetched_at=datetime(2026, 7, 31, 1, 1, tzinfo=UTC),
+        like_count=3,
+        comment_count=7,
+        board_code="stock",
+        board_codes=["stock", "上证指数", "科创50"],
+    )
+    reader.range_posts = [summary]
+    reader.post_details[("hupu", "641433410")] = PostDetail(
+        source="hupu",
+        source_entity_id="641433410",
+        canonical_url="https://bbs.hupu.com/641433410.html",
+        author_entity_id="42",
+        title="沪指反弹",
+        content_text="关注上证指数和科创50",
+        language="zh",
+        published_at=summary.published_at,
+        fetched_at=summary.fetched_at,
+        like_count=3,
+        comment_count=7,
+        repost_count=None,
+        raw_topic_ids=["stock", "上证指数", "科创50"],
+    )
+    client = _build_client(tmp_path, reader)
+
+    report_response = client.get("/api/hupu/report/2026-07-31")
+    assert report_response.status_code == 200
+    assert report_response.json()["total_posts"] == 1
+
+    llm_response = client.get("/api/llm/hupu/report/2026-07-31")
+    assert llm_response.status_code == 200
+    payload = decode(llm_response.text)
+    assert payload["schema"] == "alphapulse.hupu.daily-report.v1"
+    assert payload["source"] == "hupu"
+    assert payload["included_post_count"] == 1
+    assert payload["posts"][0]["board_codes"] == [
+        "stock",
+        "上证指数",
+        "科创50",
+    ]

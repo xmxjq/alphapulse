@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 from alphapulse.runtime.config import load_settings
@@ -26,9 +27,10 @@ def test_load_settings_example() -> None:
     assert settings.crawl.agent_pool.enabled is False
     assert settings.crawl.agent_pool.db_path.name == "agent-pool.db"
     assert settings.crawl.agent_pool.db_path.is_absolute()
-    assert settings.crawl.agent_pool.sources == ["guba", "tgb", "jiuyan"]
+    assert settings.crawl.agent_pool.sources == ["guba", "tgb", "jiuyan", "hupu"]
     assert "www.tgb.cn" in settings.crawl.agent_pool.allowed_hosts
     assert "app.jiuyangongshe.com" in settings.crawl.agent_pool.allowed_hosts
+    assert "bbs.hupu.com" in settings.crawl.agent_pool.allowed_hosts
     assert settings.crawl.agent_pool.queue_wait_seconds == 10
     assert settings.crawl.agent_pool.lease_seconds == 180
     assert settings.crawl.agent_pool.job_wait_seconds == 120
@@ -92,6 +94,12 @@ def test_load_settings_example() -> None:
     assert settings.sources.jiuyan.concurrent_paid_requests == 1
     assert settings.sources.jiuyan.concurrent_agent_requests == 2
     assert settings.sources.jiuyan.fetch_comments is False
+    assert settings.sources.hupu.enabled is False
+    assert settings.sources.hupu.authorization_expires_on == date(2029, 7, 31)
+    assert settings.sources.hupu.max_list_pages == 6
+    assert settings.sources.hupu.concurrent_paid_requests == 1
+    assert settings.sources.hupu.concurrent_agent_requests == 1
+    assert settings.sources.hupu.fetch_comments is False
     assert settings.crawl.raw_store.enabled is False
     assert settings.crawl.raw_store.root_path.name == "raw"
     assert settings.crawl.raw_store.root_path.is_absolute()
@@ -105,6 +113,7 @@ def test_load_seed_catalog_example() -> None:
         "cn-core",
         "tgb-daily",
         "jiuyan-daily",
+        "hupu-daily",
     ]
     assert catalog.logical_sets[0].generators == ["cn-core-manual", "guba-hot"]
     manual = catalog.generator_map()["cn-core-manual"]
@@ -120,6 +129,8 @@ def test_load_seed_catalog_example() -> None:
     jiuyan_hot = catalog.generator_map()["jiuyan-hot"]
     assert jiuyan_hot.type == "jiuyan_hot_targets"
     assert jiuyan_hot.include_fixed_targets
+    hupu_stock = catalog.generator_map()["hupu-stock"]
+    assert hupu_stock.hupu_board_codes == ["stock"]
 
 
 def test_load_settings_with_proxy_enabled(tmp_path: Path) -> None:

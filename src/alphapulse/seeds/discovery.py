@@ -110,6 +110,10 @@ class ManualSeedGenerator:
             GeneratedSeedItem(kind="jiuyan_target_code", value=value)
             for value in definition.jiuyan_target_codes
         )
+        items.extend(
+            GeneratedSeedItem(kind="hupu_board_code", value=value)
+            for value in definition.hupu_board_codes
+        )
         items.extend(GeneratedSeedItem(kind="stock_id", value=value) for value in definition.stock_ids)
         items.extend(GeneratedSeedItem(kind="topic_id", value=value) for value in definition.topic_ids)
         items.extend(GeneratedSeedItem(kind="user_id", value=value) for value in definition.user_ids)
@@ -655,6 +659,7 @@ class SeedCompiler:
             "guba_board_code": set(),
             "tgb_board_code": set(),
             "jiuyan_target_code": set(),
+            "hupu_board_code": set(),
             "stock_id": set(),
             "topic_id": set(),
             "user_id": set(),
@@ -690,6 +695,7 @@ class SeedCompiler:
             guba_board_codes=ordered_guba_codes,
             tgb_board_codes=sorted(buckets["tgb_board_code"]),
             jiuyan_target_codes=ordered_jiuyan_codes,
+            hupu_board_codes=sorted(buckets["hupu_board_code"]),
             stock_ids=sorted(buckets["stock_id"]),
             topic_ids=sorted(buckets["topic_id"]),
             user_ids=sorted(buckets["user_id"]),

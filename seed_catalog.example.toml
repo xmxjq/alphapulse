@@ -11,6 +11,10 @@ generators = ["tgb-hot"]
 name = "jiuyan-daily"
 generators = ["jiuyan-hot"]
 
+[[logical_sets]]
+name = "hupu-daily"
+generators = ["hupu-stock"]
+
 [[generators]]
 name = "cn-core-manual"
 type = "manual"
@@ -54,3 +58,8 @@ name = "jiuyan-hot"
 type = "jiuyan_hot_targets"
 # include_fixed_targets = true
 # hot_targets_limit = 10
+
+[[generators]]
+name = "hupu-stock"
+type = "manual"
+hupu_board_codes = ["stock"]
