@@ -176,3 +176,29 @@ def test_existing_transport_bypasses_agent(monkeypatch, tmp_path) -> None:
 
     assert result.status_code == 200
     assert agent_pool.calls == []
+
+
+def test_article_detail_captcha_does_not_retry_within_one_task(monkeypatch) -> None:
+    client = JiuyanClient(
+        JiuyanSettings(
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+            max_retries=3,
+        ),
+        CrawlSettings(),
+    )
+    calls = 0
+
+    def captcha_response(*args, **kwargs):
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        return 200, "captcha", "https://app.jiuyangongshe.com/captcha"
+
+    monkeypatch.setattr(client, "_dispatch", captcha_response)
+
+    result = client.article_detail("blocked", transport="existing")
+
+    assert result.blocked is True
+    assert result.block_kind == "captcha"
+    assert calls == 1

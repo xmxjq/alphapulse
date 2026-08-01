@@ -276,6 +276,8 @@ class JiuyanClient:
                         agent_job_id, "blocked", f"blocked: {block_kind}"
                     )
                 last_result = result
+                if block_kind == "captcha" and "/api/v2/article/detail" in path:
+                    return result
                 if attempt + 1 < attempts:
                     continue
             else:
