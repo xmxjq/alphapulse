@@ -254,6 +254,86 @@ class RqliteStateStore:
             queued=False,
         )
 
+    def prune_pending_tasks_outside_pubdate_range(
+        self,
+        *,
+        source: str,
+        kind: str,
+        start_ts: int,
+        end_ts: int,
+    ) -> int:
+        response = self.client.execute(
+            [
+                [
+                    """
+                    DELETE FROM pending_tasks
+                    WHERE source = ?
+                      AND dedupe_key LIKE ?
+                      AND (pubdate_ts < ? OR pubdate_ts >= ?)
+                    """,
+                    source,
+                    f"{source}:{kind}:%",
+                    start_ts,
+                    end_ts,
+                ]
+            ],
+            queued=False,
+        )
+        return _rows_affected(response)
+
+    def record_task_failure(
+        self,
+        *,
+        dedupe_key: str,
+        source: str,
+        failure_kind: str,
+    ) -> int:
+        now = datetime.now(UTC).isoformat()
+        self.client.execute(
+            [
+                [
+                    """
+                    INSERT INTO task_failures (
+                        dedupe_key, source, failure_kind, attempts, last_failed_at
+                    ) VALUES (?, ?, ?, 1, ?)
+                    ON CONFLICT(dedupe_key, failure_kind) DO UPDATE SET
+                        source = excluded.source,
+                        attempts = task_failures.attempts + 1,
+                        last_failed_at = excluded.last_failed_at
+                    """,
+                    dedupe_key,
+                    source,
+                    failure_kind,
+                    now,
+                ]
+            ],
+            queued=False,
+        )
+        return self.task_failure_count(dedupe_key, failure_kind)
+
+    def task_failure_count(self, dedupe_key: str, failure_kind: str) -> int:
+        response = self.client.query_params(
+            [
+                [
+                    """
+                    SELECT attempts
+                    FROM task_failures
+                    WHERE dedupe_key = ? AND failure_kind = ?
+                    """,
+                    dedupe_key,
+                    failure_kind,
+                ]
+            ]
+        )
+        rows = _values(response)
+        return int(rows[0][0]) if rows else 0
+
+    def clear_task_failures(self, dedupe_key: str) -> None:
+        self.client.execute(
+            [["DELETE FROM task_failures WHERE dedupe_key = ?", dedupe_key]],
+            queued=False,
+        )
+
     def should_refresh_comments(
         self, source: str, source_entity_id: str, min_age: timedelta
     ) -> bool:

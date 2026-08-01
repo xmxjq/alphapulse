@@ -69,6 +69,15 @@ class StateStore:
                         discovered_at ASC
                     );
 
+                CREATE TABLE IF NOT EXISTS task_failures (
+                    dedupe_key TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    failure_kind TEXT NOT NULL,
+                    attempts INTEGER NOT NULL,
+                    last_failed_at TEXT NOT NULL,
+                    PRIMARY KEY (dedupe_key, failure_kind)
+                );
+
                 CREATE TABLE IF NOT EXISTS item_state (
                     source TEXT NOT NULL,
                     source_entity_id TEXT NOT NULL,
@@ -330,6 +339,76 @@ class StateStore:
         with self.connection() as conn:
             conn.execute(
                 "DELETE FROM pending_tasks WHERE dedupe_key = ?",
+                (dedupe_key,),
+            )
+
+    def prune_pending_tasks_outside_pubdate_range(
+        self,
+        *,
+        source: str,
+        kind: str,
+        start_ts: int,
+        end_ts: int,
+    ) -> int:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM pending_tasks
+                WHERE source = ?
+                  AND dedupe_key LIKE ?
+                  AND (pubdate_ts < ? OR pubdate_ts >= ?)
+                """,
+                (source, f"{source}:{kind}:%", start_ts, end_ts),
+            )
+        return max(0, cursor.rowcount)
+
+    def record_task_failure(
+        self,
+        *,
+        dedupe_key: str,
+        source: str,
+        failure_kind: str,
+    ) -> int:
+        now = datetime.now(UTC).isoformat()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO task_failures (
+                    dedupe_key, source, failure_kind, attempts, last_failed_at
+                ) VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(dedupe_key, failure_kind) DO UPDATE SET
+                    source = excluded.source,
+                    attempts = task_failures.attempts + 1,
+                    last_failed_at = excluded.last_failed_at
+                """,
+                (dedupe_key, source, failure_kind, now),
+            )
+            row = conn.execute(
+                """
+                SELECT attempts
+                FROM task_failures
+                WHERE dedupe_key = ? AND failure_kind = ?
+                """,
+                (dedupe_key, failure_kind),
+            ).fetchone()
+        return int(row["attempts"])
+
+    def task_failure_count(self, dedupe_key: str, failure_kind: str) -> int:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT attempts
+                FROM task_failures
+                WHERE dedupe_key = ? AND failure_kind = ?
+                """,
+                (dedupe_key, failure_kind),
+            ).fetchone()
+        return int(row["attempts"]) if row else 0
+
+    def clear_task_failures(self, dedupe_key: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "DELETE FROM task_failures WHERE dedupe_key = ?",
                 (dedupe_key,),
             )
 

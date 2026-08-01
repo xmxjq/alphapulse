@@ -291,6 +291,8 @@ request_interval_max_seconds = 3.0
 concurrent_paid_requests = 1
 concurrent_agent_requests = 2
 max_retries = 3
+# Stop retrying a specific detail URL after this many captcha responses.
+captcha_max_attempts = 3
 # Comments require an additional API call per post and are disabled by default.
 fetch_comments = false
 

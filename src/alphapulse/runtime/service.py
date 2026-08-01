@@ -8,6 +8,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from alphapulse.pipeline.contracts import (
     CrawlTask,
@@ -186,6 +187,7 @@ class AlphaPulseService:
             },
         )
         try:
+            self._prune_expired_guba_pending_tasks()
             queues = {source_name: TaskQueue() for source_name in self.sources}
             for seed in self._select_seeds(seed_set_name):
                 stats.seeds_processed += 1
@@ -334,6 +336,8 @@ class AlphaPulseService:
 
         while queue:
             task = queue.pop()
+            if self._discard_task(task, stats):
+                continue
             if source_blocked or self._source_circuit_open(task.source):
                 source_blocked = True
                 stats.skipped_tasks += 1
@@ -448,6 +452,8 @@ class AlphaPulseService:
             outcome = adapter.fetch_item(task)
             self._apply_outcome(task, outcome, queue, stats)
             if outcome.blocked:
+                if self._record_jiuyan_captcha_block(task, outcome):
+                    continue
                 self.state.release_url_claim(str(task.url))
                 continue_after_block = getattr(
                     adapter,
@@ -483,6 +489,8 @@ class AlphaPulseService:
             elif outcome.status_code is None:
                 self.state.release_url_claim(str(task.url))
             else:
+                if task.source == "jiuyan" and task.kind == "fetch_post":
+                    self.state.clear_task_failures(task.dedupe_key)
                 self.state.mark_url_fetched(str(task.url), outcome.status_code)
                 self.state.delete_pending_task(task.dedupe_key)
 
@@ -553,6 +561,8 @@ class AlphaPulseService:
                     ):
                         break
                     task = queue.pop()
+                    if self._discard_task(task, stats):
+                        continue
                     # Hybrid mode intentionally continues after a blocked
                     # transport. Persist every claimed task, including seed
                     # tasks, so the blocked member of a parallel batch remains
@@ -765,6 +775,8 @@ class AlphaPulseService:
                     if not queue or queue.peek().kind != batch_kind:
                         break
                     task = queue.pop()
+                    if self._discard_task(task, stats):
+                        continue
                     self.state.upsert_pending_tasks([task])
                     if not self.state.try_claim_url(
                         url=str(task.url),
@@ -797,6 +809,8 @@ class AlphaPulseService:
                     outcome = future.result()
                     self._apply_outcome(task, outcome, queue, stats)
                     if outcome.blocked:
+                        if self._record_jiuyan_captcha_block(task, outcome):
+                            continue
                         self.state.release_url_claim(str(task.url))
                         logger.warning(
                             "Jiuyan transport blocked; other pool remains eligible",
@@ -813,6 +827,7 @@ class AlphaPulseService:
                     elif outcome.status_code is None:
                         self.state.release_url_claim(str(task.url))
                     else:
+                        self.state.clear_task_failures(task.dedupe_key)
                         self.state.mark_url_fetched(
                             str(task.url),
                             outcome.status_code,
@@ -1058,6 +1073,14 @@ class AlphaPulseService:
         if not tasks:
             return
         assert self.state is not None
+        eligible_tasks: list[CrawlTask] = []
+        for task in tasks:
+            if self._discard_task(task, stats, check_failure_state=False):
+                continue
+            eligible_tasks.append(task)
+        tasks = eligible_tasks
+        if not tasks:
+            return
         if persist:
             self.state.upsert_pending_tasks(tasks)
         for task in tasks:
@@ -1081,6 +1104,124 @@ class AlphaPulseService:
         if task.kind == "refresh_comments":
             return timedelta(minutes=self.settings.crawl.comment_refresh_minutes)
         return timedelta(minutes=self.settings.crawl.post_recrawl_minutes)
+
+    def _prune_expired_guba_pending_tasks(self) -> None:
+        assert self.state is not None
+        if not (
+            self.settings.sources.guba.enabled
+            and self.settings.sources.guba.day_scoped
+        ):
+            return
+        start_ts, end_ts = self._guba_day_bounds()
+        pruned = sum(
+            self.state.prune_pending_tasks_outside_pubdate_range(
+                source="guba",
+                kind=kind,
+                start_ts=start_ts,
+                end_ts=end_ts,
+            )
+            for kind in ("fetch_post", "refresh_comments")
+        )
+        if pruned:
+            logger.info(
+                "Expired Guba pending tasks pruned",
+                extra={
+                    "event": "guba_pending_pruned",
+                    "extra_data": {
+                        "tasks": pruned,
+                        "day_start_ts": start_ts,
+                        "day_end_ts": end_ts,
+                    },
+                },
+            )
+
+    def _guba_day_bounds(self, now: datetime | None = None) -> tuple[int, int]:
+        timezone = ZoneInfo(self.settings.sources.guba.ranking_timezone)
+        local_now = (now or datetime.now(UTC)).astimezone(timezone)
+        start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_local = start_local + timedelta(days=1)
+        return int(start_local.timestamp()), int(end_local.timestamp())
+
+    def _discard_task(
+        self,
+        task: CrawlTask,
+        stats: RunStats,
+        *,
+        check_failure_state: bool = True,
+    ) -> bool:
+        assert self.state is not None
+        reason: str | None = None
+        if (
+            task.source == "guba"
+            and task.kind in {"fetch_post", "refresh_comments"}
+            and self.settings.sources.guba.enabled
+            and self.settings.sources.guba.day_scoped
+        ):
+            start_ts, end_ts = self._guba_day_bounds()
+            pubdate_ts = int(task.metadata.get("pubdate_ts") or 0)
+            if not start_ts <= pubdate_ts < end_ts:
+                reason = "outside_current_guba_day"
+        elif (
+            check_failure_state
+            and task.source == "jiuyan"
+            and task.kind == "fetch_post"
+            and self.state.task_failure_count(task.dedupe_key, "captcha")
+            >= self.settings.sources.jiuyan.captcha_max_attempts
+        ):
+            reason = "jiuyan_captcha_attempt_limit"
+
+        if reason is None:
+            return False
+        self.state.delete_pending_task(task.dedupe_key)
+        stats.skipped_tasks += 1
+        logger.info(
+            "Task discarded",
+            extra={
+                "event": "task_discarded",
+                "extra_data": {
+                    "source": task.source,
+                    "kind": task.kind,
+                    "url": str(task.url),
+                    "reason": reason,
+                },
+            },
+        )
+        return True
+
+    def _record_jiuyan_captcha_block(
+        self,
+        task: CrawlTask,
+        outcome: FetchOutcome,
+    ) -> bool:
+        assert self.state is not None
+        if not (
+            task.source == "jiuyan"
+            and task.kind == "fetch_post"
+            and outcome.blocked
+            and any(error.lower().startswith("blocked (captcha)") for error in outcome.errors)
+        ):
+            return False
+        attempts = self.state.record_task_failure(
+            dedupe_key=task.dedupe_key,
+            source=task.source,
+            failure_kind="captcha",
+        )
+        limit = self.settings.sources.jiuyan.captcha_max_attempts
+        if attempts < limit:
+            return False
+        self.state.delete_pending_task(task.dedupe_key)
+        logger.warning(
+            "Jiuyan detail abandoned after repeated captcha responses",
+            extra={
+                "event": "jiuyan_captcha_abandoned",
+                "extra_data": {
+                    "url": str(task.url),
+                    "attempts": attempts,
+                    "limit": limit,
+                },
+            },
+        )
+        return True
 
     def _is_guba_browser_post(self, task: CrawlTask) -> bool:
         return (

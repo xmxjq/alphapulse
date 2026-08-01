@@ -394,6 +394,7 @@ class JiuyanSettings(BaseModel):
     concurrent_paid_requests: int = Field(default=1, ge=1, le=16)
     concurrent_agent_requests: int = Field(default=2, ge=0, le=64)
     max_retries: int = Field(default=3, ge=1)
+    captcha_max_attempts: int = Field(default=3, ge=1, le=20)
     fetch_comments: bool = False
     user_agent: str | None = None
     cookies: dict[str, str] = Field(default_factory=dict)

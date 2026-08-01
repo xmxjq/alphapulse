@@ -31,6 +31,15 @@ CREATE INDEX IF NOT EXISTS idx_pending_tasks_seed_priority
         discovered_at ASC
     );
 
+CREATE TABLE IF NOT EXISTS task_failures (
+    dedupe_key TEXT NOT NULL,
+    source TEXT NOT NULL,
+    failure_kind TEXT NOT NULL,
+    attempts INTEGER NOT NULL,
+    last_failed_at TEXT NOT NULL,
+    PRIMARY KEY (dedupe_key, failure_kind)
+);
+
 CREATE TABLE IF NOT EXISTS item_state (
     source TEXT NOT NULL,
     source_entity_id TEXT NOT NULL,

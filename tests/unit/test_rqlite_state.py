@@ -71,6 +71,42 @@ def test_pending_tasks_use_parameterized_rqlite_statements() -> None:
     assert delete_statements[0][1] == task.dedupe_key
 
 
+def test_pending_pruning_and_failure_tracking_are_parameterized() -> None:
+    client = FakeRqliteClient()
+    state = RqliteStateStore(RqliteSettings(), client=client)
+
+    assert state.prune_pending_tasks_outside_pubdate_range(
+        source="guba",
+        kind="fetch_post",
+        start_ts=100,
+        end_ts=200,
+    ) == 1
+    prune_statement = client.executed[0][0][0]
+    assert "DELETE FROM pending_tasks" in prune_statement[0]
+    assert prune_statement[1:] == ["guba", "guba:fetch_post:%", 100, 200]
+
+    client.query_response = {"results": [{"values": [[2]]}]}
+    attempts = state.record_task_failure(
+        dedupe_key="jiuyan:fetch_post:https://www.jiuyangongshe.com/a/blocked",
+        source="jiuyan",
+        failure_kind="captcha",
+    )
+    assert attempts == 2
+    failure_statement = client.executed[1][0][0]
+    assert "INSERT INTO task_failures" in failure_statement[0]
+    assert failure_statement[1:4] == [
+        "jiuyan:fetch_post:https://www.jiuyangongshe.com/a/blocked",
+        "jiuyan",
+        "captcha",
+    ]
+
+    state.clear_task_failures(
+        "jiuyan:fetch_post:https://www.jiuyangongshe.com/a/blocked"
+    )
+    clear_statement = client.executed[2][0][0]
+    assert "DELETE FROM task_failures" in clear_statement[0]
+
+
 def test_jiuyan_ranking_uses_parameterized_statements() -> None:
     client = FakeRqliteClient()
     state = RqliteStateStore(RqliteSettings(), client=client)

@@ -1,4 +1,5 @@
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 
 from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, SeedDefinition
@@ -247,6 +248,63 @@ def test_guba_without_online_agents_keeps_conservative_block_stop(tmp_path: Path
     assert [route for route, _ in adapter.calls] == ["auto"]
 
 
+class CurrentDayGubaAdapter:
+    source_name = "guba"
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def discover(self, seed):
+        del seed
+        return []
+
+    def fetch_item(self, task):
+        self.calls.append(str(task.url))
+        return FetchOutcome(status_code=200)
+
+    def refresh_comments(self, item_ref):
+        raise AssertionError("not used")
+
+    def comment_task_for_post(self, post, seed_name):
+        raise AssertionError("not used")
+
+
+def test_guba_day_scoped_cycle_prunes_old_pending_details(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.guba.enabled = True
+    settings.sources.guba.day_scoped = True
+    adapter = CurrentDayGubaAdapter()
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={"guba": adapter},  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+    start_ts, _ = service._guba_day_bounds(datetime.now(UTC))
+    old = CrawlTask(
+        source="guba",
+        kind="fetch_post",
+        url="https://guba.eastmoney.com/news,600519,old.html",
+        seed_name="parallel-test",
+        metadata={"pubdate_ts": start_ts - 1},
+    )
+    current = CrawlTask(
+        source="guba",
+        kind="fetch_post",
+        url="https://guba.eastmoney.com/news,600519,current.html",
+        seed_name="parallel-test",
+        metadata={"pubdate_ts": start_ts + 1},
+    )
+    service.state.upsert_pending_tasks([old, current])
+
+    stats = service.run_cycle()
+
+    assert stats.pages_fetched == 1
+    assert adapter.calls == [str(current.url)]
+    assert service.state.load_pending_tasks() == []
+
+
 class HybridJiuyanAdapter:
     source_name = "jiuyan"
 
@@ -348,6 +406,71 @@ def test_jiuyan_hybrid_without_agent_capacity_never_uses_agent_route(
 
     assert stats.pages_fetched == 3
     assert {route for _, route, _ in adapter.calls} == {"existing"}
+
+
+class CaptchaJiuyanAdapter:
+    source_name = "jiuyan"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.client = type(
+            "HybridClient",
+            (),
+            {"agent_pool": object(), "proxy_provider": object()},
+        )()
+
+    def discover(self, seed):
+        del seed
+        return []
+
+    def available_agent_capacity(self) -> int:
+        return 0
+
+    def fetch_item_with_transport(self, task, transport):
+        del task
+        assert transport == "existing"
+        self.calls += 1
+        return FetchOutcome(
+            status_code=200,
+            blocked=True,
+            errors=["Blocked (captcha) from https://www.jiuyangongshe.com/a/blocked"],
+        )
+
+    def fetch_item(self, task):
+        raise AssertionError("hybrid queue must select a transport")
+
+    def refresh_comments(self, item_ref):
+        raise AssertionError("not used")
+
+    def comment_task_for_post(self, post, seed_name):
+        raise AssertionError("not used")
+
+
+def test_jiuyan_captcha_detail_is_abandoned_after_three_attempts(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    settings.sources.jiuyan.captcha_max_attempts = 3
+    adapter = CaptchaJiuyanAdapter()
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={"jiuyan": adapter},  # type: ignore[arg-type]
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+    task = CrawlTask(
+        source="jiuyan",
+        kind="fetch_post",
+        url="https://www.jiuyangongshe.com/a/blocked",
+        seed_name="parallel-test",
+    )
+    service.state.upsert_pending_tasks([task])
+
+    for _ in range(4):
+        service.run_cycle()
+
+    assert adapter.calls == 3
+    assert service.state.task_failure_count(task.dedupe_key, "captcha") == 3
+    assert service.state.load_pending_tasks() == []
 
 
 class RotatingTgbAdapter:
