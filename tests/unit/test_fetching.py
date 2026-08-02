@@ -305,6 +305,37 @@ def test_kuaidaili_experiment_rejects_incomplete_proxy_batch(
     assert ordinary.cohort is None
 
 
+def test_dual_mobile_success_does_not_reset_desktop_soft_block_streak(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(tmp_path, failure_threshold=3).kuaidaili,
+        source="guba",
+        experiment_active=lambda: True,
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: DummyUrlopenResponse(
+            "1.2.3.4:8080\n2.3.4.5:8081"
+        ),
+    )
+    dual_desktop = provider.acquire_for_experiment(eligible=True)
+    control = provider.acquire_for_experiment(eligible=True)
+    dual_mobile = provider.acquire_for_experiment(eligible=True)
+
+    for _ in range(3):
+        provider.report_bad(dual_desktop, "blocked: soft_block")
+        provider.report_success(dual_mobile)
+
+    assert (
+        provider.pool._benched_until.get((dual_desktop.proxy_url, "guba"), 0)
+        > time.monotonic()
+    )
+    remaining = provider.acquire_for_experiment(eligible=True)
+    assert remaining.proxy_url == control.proxy_url
+
+
 def test_kuaidaili_provider_uses_reported_api_expiry(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

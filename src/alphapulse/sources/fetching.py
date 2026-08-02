@@ -287,9 +287,10 @@ class KuaidailiProxyPool:
         source: str | None = None,
     ) -> None:
         with self._lock:
-            health_key = (lease.proxy_url, source)
-            streak = self._failure_streaks.get(health_key, 0) + 1
-            self._failure_streaks[health_key] = streak
+            bench_key = (lease.proxy_url, source)
+            streak_key = self._failure_streak_key(lease, source)
+            streak = self._failure_streaks.get(streak_key, 0) + 1
+            self._failure_streaks[streak_key] = streak
             should_bench = self._is_hard_failure(reason) or (
                 streak >= self.settings.failure_threshold
             )
@@ -304,8 +305,8 @@ class KuaidailiProxyPool:
                     float(self.settings.cooldown_seconds),
                     remaining_lifetime,
                 )
-                self._benched_until[health_key] = now + bench_seconds
-                self._failure_streaks.pop(health_key, None)
+                self._benched_until[bench_key] = now + bench_seconds
+                self._failure_streaks.pop(streak_key, None)
                 benched_until = datetime.now(UTC) + timedelta(
                     seconds=bench_seconds
                 )
@@ -323,7 +324,10 @@ class KuaidailiProxyPool:
         source: str | None = None,
     ) -> None:
         with self._lock:
-            self._failure_streaks.pop((lease.proxy_url, source), None)
+            self._failure_streaks.pop(
+                self._failure_streak_key(lease, source),
+                None,
+            )
         self.metrics.record_success(
             self.provider_name,
             lease.proxy_url,
@@ -579,6 +583,15 @@ class KuaidailiProxyPool:
             if url in self._experiment_roles
         }
         return {"control", "dual"}.issubset(live_roles)
+
+    @staticmethod
+    def _failure_streak_key(
+        lease: ProxyLease,
+        source: str | None,
+    ) -> tuple[str, str | None]:
+        if source is None or lease.channel is None:
+            return lease.proxy_url, source
+        return lease.proxy_url, f"{source}:{lease.channel}"
 
     @staticmethod
     def _metrics_source(source: str | None, lease: ProxyLease) -> str | None:
