@@ -15,6 +15,7 @@ from alphapulse.runtime.agent_pool import (
     AgentJobFailed,
     AgentPoolClient,
     AgentPoolUnavailable,
+    host_http_capability,
 )
 from alphapulse.runtime.config import CrawlSettings, GubaSettings
 from alphapulse.sources.fetching import ProxyLease, ProxyProvider, _build_proxy_provider
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 REPLY_LIST_API_PATH = "reply/api/Reply/ArticleNewReplyList"
 MOBILE_ARTICLE_API = "https://mguba.eastmoney.com/api/getArticle"
+MOBILE_SOURCE = "guba_mobile_primary"
 REQUEST_BACKOFF_MULTIPLIER_MAX = 16.0
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -79,18 +81,21 @@ class GubaClient:
         crawl_settings: CrawlSettings,
         *,
         proxy_provider: ProxyProvider | None = None,
+        mobile_proxy_provider: ProxyProvider | None = None,
     ) -> None:
         self.settings = settings
         self.crawl_settings = crawl_settings
         self.proxy_provider = proxy_provider or _build_proxy_provider(
             crawl_settings, source="guba"
         )
+        self.mobile_proxy_provider = mobile_proxy_provider
         self.agent_pool = (
             AgentPoolClient(crawl_settings.agent_pool)
             if crawl_settings.agent_pool.enabled
             and (
                 not crawl_settings.agent_pool.sources
                 or "guba" in crawl_settings.agent_pool.sources
+                or MOBILE_SOURCE in crawl_settings.agent_pool.sources
             )
             else None
         )
@@ -164,29 +169,52 @@ class GubaClient:
 
         for attempt in range(attempts):
             lease: ProxyLease | None = None
+            lease_provider: ProxyProvider | None = None
             proxy_url: str | None = None
             acquire_error: str | None = None
             agent_job_id: str | None = None
             self._adaptive_sleep(was_rate_limited=backoff_for_block)
 
+            effective_method = method
+            effective_url = url
+            effective_form = form
+            effective_referer = referer
+            effective_expect_marker = expect_marker
+            post_ref = extract_post_ref(url) if method == "GET" else None
+            primary_mobile = bool(
+                self.settings.mobile_detail_api_enabled and post_ref is not None
+            )
+            mobile_post_id: str | None = post_ref[1] if primary_mobile else None
+            if mobile_post_id is not None:
+                effective_method = "POST"
+                effective_url = f"{MOBILE_ARTICLE_API}?postid={mobile_post_id}"
+                effective_form = self._mobile_article_form(mobile_post_id)
+                effective_referer = "https://mguba.eastmoney.com/"
+                effective_expect_marker = None
+
             remote_response = None
             remote_error: str | None = None
             if self.agent_pool is not None and transport != "existing":
                 headers, body = self._request_parts(
-                    form=form,
-                    referer=referer,
+                    form=effective_form,
+                    referer=effective_referer,
                     json_body=json_body,
                     include_cookies=False,
                 )
                 try:
                     remote_response = self.agent_pool.fetch(
-                        source="guba",
-                        method=method,
-                        url=url,
+                        source=MOBILE_SOURCE if primary_mobile else "guba",
+                        method=effective_method,
+                        url=effective_url,
                         headers=headers,
                         body=body,
                         timeout_seconds=self.crawl_settings.request_timeout_seconds,
                         priority=100,
+                        capability=(
+                            host_http_capability("mguba.eastmoney.com")
+                            if primary_mobile
+                            else "http"
+                        ),
                     )
                     agent_job_id = remote_response.job_id
                 except (AgentPoolUnavailable, AgentJobFailed, ValueError) as exc:
@@ -215,10 +243,15 @@ class GubaClient:
                         text="",
                         error_message=remote_error or "No remote agent available",
                     )
-                if self.proxy_provider is not None:
+                request_proxy_provider = (
+                    (self.mobile_proxy_provider or self.proxy_provider)
+                    if primary_mobile
+                    else self.proxy_provider
+                )
+                if request_proxy_provider is not None:
                     try:
                         acquire_for_experiment = getattr(
-                            self.proxy_provider,
+                            request_proxy_provider,
                             "acquire_for_experiment",
                             None,
                         )
@@ -232,12 +265,13 @@ class GubaClient:
                                 eligible=True
                             )
                         else:
-                            lease = self.proxy_provider.acquire()
+                            lease = request_proxy_provider.acquire()
                     except Exception as exc:
                         if not self.crawl_settings.proxy.fail_open:
                             acquire_error = f"Failed to acquire proxy: {exc}"
                     else:
                         if lease is not None:
+                            lease_provider = request_proxy_provider
                             proxy_url = lease.proxy_url
                         elif not self.crawl_settings.proxy.fail_open:
                             acquire_error = "No proxy available from proxy provider"
@@ -254,14 +288,9 @@ class GubaClient:
                     continue
                 return last_result
 
-            effective_method = method
-            effective_url = url
-            effective_form = form
-            effective_referer = referer
-            effective_expect_marker = expect_marker
-            mobile_post_id: str | None = None
             if (
-                lease is not None
+                not primary_mobile
+                and lease is not None
                 and lease.channel == "mobile"
                 and self.settings.proxy_dual_endpoint_experiment_active()
             ):
@@ -316,7 +345,11 @@ class GubaClient:
                     },
                 )
                 if lease is not None and blocked:
-                    self._report_bad_proxy(lease, f"HTTP {exc.code}")
+                    self._report_bad_proxy(
+                        lease,
+                        f"HTTP {exc.code}",
+                        provider=lease_provider,
+                    )
                 if blocked and attempt + 1 < attempts:
                     backoff_for_block = True
                     continue
@@ -338,7 +371,11 @@ class GubaClient:
                     },
                 )
                 if lease is not None:
-                    self._report_bad_proxy(lease, str(exc))
+                    self._report_bad_proxy(
+                        lease,
+                        str(exc),
+                        provider=lease_provider,
+                    )
                 if attempt + 1 < attempts:
                     backoff_for_block = False
                     time.sleep(2**attempt)
@@ -400,7 +437,11 @@ class GubaClient:
                     },
                 )
                 if lease is not None:
-                    self._report_bad_proxy(lease, f"blocked: {block_kind}")
+                    self._report_bad_proxy(
+                        lease,
+                        f"blocked: {block_kind}",
+                        provider=lease_provider,
+                    )
                 if agent_job_id is not None:
                     self.agent_pool.store.record_outcome(
                         agent_job_id,
@@ -412,7 +453,7 @@ class GubaClient:
                     backoff_for_block = True
                     continue
             elif lease is not None:
-                self._report_success_proxy(lease)
+                self._report_success_proxy(lease, provider=lease_provider)
             elif agent_job_id is not None:
                 self.agent_pool.store.record_outcome(agent_job_id, "success")
             return result
@@ -635,16 +676,33 @@ class GubaClient:
         )
         time.sleep(base * self._backoff_multiplier)
 
-    def _report_bad_proxy(self, lease: ProxyLease, reason: str) -> None:
+    def _report_bad_proxy(
+        self,
+        lease: ProxyLease,
+        reason: str,
+        *,
+        provider: ProxyProvider | None = None,
+    ) -> None:
         if not self.crawl_settings.proxy_pool.report_bad_on_block:
             return
+        active_provider = provider or self.proxy_provider
+        if active_provider is None:
+            return
         try:
-            self.proxy_provider.report_bad(lease, reason)
+            active_provider.report_bad(lease, reason)
         except Exception:
             return
 
-    def _report_success_proxy(self, lease: ProxyLease) -> None:
+    def _report_success_proxy(
+        self,
+        lease: ProxyLease,
+        *,
+        provider: ProxyProvider | None = None,
+    ) -> None:
+        active_provider = provider or self.proxy_provider
+        if active_provider is None:
+            return
         try:
-            self.proxy_provider.report_success(lease)
+            active_provider.report_success(lease)
         except Exception:
             return

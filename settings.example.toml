@@ -97,7 +97,7 @@ expiry_safety_seconds = 30
 #   uv run alphapulse --config settings.toml agent-token create --agent-id home-arm
 enabled = false
 db_path = ".runtime/agent-pool.db"
-sources = ["guba", "guba_mobile_probe", "tgb", "jiuyan", "hupu"]
+sources = ["guba", "guba_mobile_primary", "guba_mobile_probe", "tgb", "jiuyan", "hupu"]
 strategy = "agent_first"
 heartbeat_ttl_seconds = 90
 lease_seconds = 180
@@ -209,6 +209,9 @@ request_interval_max_seconds = 6.0
 # together. Agent slots shrink automatically to current online capacity.
 concurrent_paid_requests = 1
 concurrent_agent_requests = 4
+# Use East Money's anonymous mobile getArticle API for post details. Lists and
+# rankings remain on their existing desktop/API endpoints.
+mobile_detail_api_enabled = false
 # Temporary A/B test: one Kuaidaili IP remains desktop-only while another
 # serves one desktop and one mobile-detail request concurrently. The extra paid
 # slot and mobile routing stop automatically at the timestamp below.

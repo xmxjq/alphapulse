@@ -112,6 +112,7 @@ def test_service_shares_kuaidaili_pool_across_sources(tmp_path: Path) -> None:
     settings.crawl.kuaidaili.metrics_path = tmp_path / "proxy-metrics.db"
     settings.crawl.kuaidaili.share_across_sources = True
     settings.sources.guba.enabled = True
+    settings.sources.guba.mobile_detail_api_enabled = True
     settings.sources.tgb.enabled = True
     settings.sources.jiuyan.enabled = True
 
@@ -123,6 +124,10 @@ def test_service_shares_kuaidaili_pool_across_sources(tmp_path: Path) -> None:
 
     assert all(isinstance(provider, KuaidailiProxyProvider) for provider in providers)
     assert providers[0].pool is providers[1].pool is providers[2].pool
+    mobile_provider = service.sources["guba"].client.mobile_proxy_provider
+    assert isinstance(mobile_provider, KuaidailiProxyProvider)
+    assert mobile_provider.source == "guba_mobile_primary"
+    assert mobile_provider.pool is providers[0].pool
 
 
 class HybridGubaAdapter:

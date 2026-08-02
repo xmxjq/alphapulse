@@ -1276,9 +1276,10 @@ class AlphaPulseService:
         if self.settings.sources.guba.enabled:
             guba_pool = shared_kuaidaili
             experiment = self.settings.sources.guba.proxy_dual_endpoint_experiment_enabled
+            mobile_primary = self.settings.sources.guba.mobile_detail_api_enabled
             if (
                 guba_pool is None
-                and experiment
+                and (experiment or mobile_primary)
                 and self.settings.crawl.proxy.enabled
                 and self.settings.crawl.proxy.provider == "kuaidaili"
                 and self._proxy_enabled_for_source("guba")
@@ -1295,6 +1296,11 @@ class AlphaPulseService:
                             if experiment
                             else None
                         ),
+                    ),
+                    mobile_proxy_provider=(
+                        guba_pool.provider("guba_mobile_primary")
+                        if mobile_primary
+                        else None
                     ),
                 )
                 if guba_pool is not None

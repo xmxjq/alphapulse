@@ -29,6 +29,7 @@ def test_load_settings_example() -> None:
     assert settings.crawl.agent_pool.db_path.is_absolute()
     assert settings.crawl.agent_pool.sources == [
         "guba",
+        "guba_mobile_primary",
         "guba_mobile_probe",
         "tgb",
         "jiuyan",
@@ -66,6 +67,7 @@ def test_load_settings_example() -> None:
     assert settings.sources.guba.request_interval_max_seconds == 6.0
     assert settings.sources.guba.concurrent_paid_requests == 1
     assert settings.sources.guba.concurrent_agent_requests == 4
+    assert settings.sources.guba.mobile_detail_api_enabled is False
     assert settings.sources.guba.proxy_dual_endpoint_experiment_enabled is False
     assert settings.sources.guba.proxy_dual_endpoint_experiment_until is None
     assert settings.sources.guba.max_retries == 3

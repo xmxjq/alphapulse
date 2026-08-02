@@ -162,7 +162,14 @@ class AgentPoolSettings(BaseModel):
     enabled: bool = False
     db_path: Path = Path(".runtime/agent-pool.db")
     sources: list[str] = Field(
-        default_factory=lambda: ["guba", "guba_mobile_probe", "tgb", "jiuyan", "hupu"]
+        default_factory=lambda: [
+            "guba",
+            "guba_mobile_primary",
+            "guba_mobile_probe",
+            "tgb",
+            "jiuyan",
+            "hupu",
+        ]
     )
     strategy: AgentPoolStrategy = "agent_first"
     heartbeat_ttl_seconds: int = Field(default=90, ge=10, le=3600)
@@ -300,6 +307,7 @@ class GubaSettings(BaseModel):
     request_interval_max_seconds: float = Field(default=6.0, ge=0.0)
     concurrent_paid_requests: int = Field(default=1, ge=1, le=16)
     concurrent_agent_requests: int = Field(default=4, ge=1, le=64)
+    mobile_detail_api_enabled: bool = False
     proxy_dual_endpoint_experiment_enabled: bool = False
     proxy_dual_endpoint_experiment_until: datetime | None = None
     max_retries: int = Field(default=3, ge=1)

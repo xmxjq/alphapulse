@@ -1219,6 +1219,167 @@ def test_guba_client_uses_mobile_api_for_dual_proxy_channel(monkeypatch) -> None
     assert calls[0][4] == "http://1.2.3.4:8080"
 
 
+def test_guba_client_uses_mobile_api_and_provider_for_primary_details(monkeypatch) -> None:
+    from alphapulse.sources.fetching import ProxyLease
+    from alphapulse.sources.guba import api as guba_api
+
+    events: list[tuple[str, str]] = []
+    desktop_lease = ProxyLease("http://desktop", "desktop", "test")
+    mobile_lease = ProxyLease("http://mobile", "mobile", "test")
+
+    class TrackingProvider:
+        def __init__(self, name, lease):
+            self.name = name
+            self.lease = lease
+
+        def acquire(self):
+            events.append((self.name, "acquire"))
+            return self.lease
+
+        def report_bad(self, lease, reason):
+            events.append((self.name, f"bad:{reason}"))
+
+        def report_success(self, lease):
+            events.append((self.name, "success"))
+
+    client = guba_api.GubaClient(
+        GubaSettings(
+            mobile_detail_api_enabled=True,
+            max_retries=1,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        CrawlSettings(),
+        proxy_provider=TrackingProvider("desktop", desktop_lease),
+        mobile_proxy_provider=TrackingProvider("mobile", mobile_lease),
+    )
+    monkeypatch.setattr(client, "_adaptive_sleep", lambda *, was_rate_limited: None)
+    calls: list[tuple] = []
+
+    def dispatch(*args):
+        calls.append(args)
+        return (
+            200,
+            json.dumps({"rc": 1, "post": {"post_id": 42, "post_title": "mobile"}}),
+            args[1],
+        )
+
+    monkeypatch.setattr(client, "_dispatch", dispatch)
+    desktop_url = f"{BASE}/news,600519,42.html"
+
+    result = client.get(desktop_url, expect_marker="var post_article")
+
+    assert not result.blocked
+    assert result.url == desktop_url
+    assert "var post_article=" in result.text
+    assert calls[0][0] == "POST"
+    assert calls[0][1] == f"{guba_api.MOBILE_ARTICLE_API}?postid=42"
+    assert calls[0][2]["postid"] == "42"
+    assert calls[0][4] == "http://mobile"
+    assert events == [("mobile", "acquire"), ("mobile", "success")]
+
+
+def test_guba_mobile_primary_reports_invalid_payload_to_mobile_provider(monkeypatch) -> None:
+    from alphapulse.sources.fetching import ProxyLease
+    from alphapulse.sources.guba import api as guba_api
+
+    events: list[tuple[str, str]] = []
+
+    class TrackingProvider:
+        def __init__(self, name):
+            self.name = name
+
+        def acquire(self):
+            events.append((self.name, "acquire"))
+            return ProxyLease(f"http://{self.name}", self.name, "test")
+
+        def report_bad(self, lease, reason):
+            events.append((self.name, f"bad:{reason}"))
+
+        def report_success(self, lease):
+            events.append((self.name, "success"))
+
+    client = guba_api.GubaClient(
+        GubaSettings(
+            mobile_detail_api_enabled=True,
+            max_retries=1,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        CrawlSettings(),
+        proxy_provider=TrackingProvider("desktop"),
+        mobile_proxy_provider=TrackingProvider("mobile"),
+    )
+    monkeypatch.setattr(client, "_adaptive_sleep", lambda *, was_rate_limited: None)
+    monkeypatch.setattr(
+        client,
+        "_dispatch",
+        lambda *args: (200, '{"rc":0,"me":"limited"}', args[1]),
+    )
+
+    result = client.get(
+        f"{BASE}/news,600519,42.html",
+        expect_marker="var post_article",
+    )
+
+    assert result.blocked
+    assert result.block_kind == "soft_block"
+    assert events == [
+        ("mobile", "acquire"),
+        ("mobile", "bad:blocked: soft_block"),
+    ]
+
+
+def test_guba_mobile_primary_leaves_list_requests_on_desktop(monkeypatch) -> None:
+    from alphapulse.sources.fetching import ProxyLease
+    from alphapulse.sources.guba import api as guba_api
+
+    events: list[tuple[str, str]] = []
+
+    class TrackingProvider:
+        def __init__(self, name):
+            self.name = name
+
+        def acquire(self):
+            events.append((self.name, "acquire"))
+            return ProxyLease(f"http://{self.name}", self.name, "test")
+
+        def report_bad(self, lease, reason):
+            raise AssertionError((lease, reason))
+
+        def report_success(self, lease):
+            events.append((self.name, "success"))
+
+    client = guba_api.GubaClient(
+        GubaSettings(
+            mobile_detail_api_enabled=True,
+            max_retries=1,
+            request_interval_min_seconds=0,
+            request_interval_max_seconds=0,
+        ),
+        CrawlSettings(),
+        proxy_provider=TrackingProvider("desktop"),
+        mobile_proxy_provider=TrackingProvider("mobile"),
+    )
+    monkeypatch.setattr(client, "_adaptive_sleep", lambda *, was_rate_limited: None)
+    calls: list[tuple] = []
+
+    def dispatch(*args):
+        calls.append(args)
+        return 200, '<script>var article_list={"re":[]};</script>', args[1]
+
+    monkeypatch.setattr(client, "_dispatch", dispatch)
+    list_url = f"{BASE}/list,600519.html"
+
+    result = client.get(list_url, expect_marker="var article_list")
+
+    assert not result.blocked
+    assert calls[0][0] == "GET"
+    assert calls[0][1] == list_url
+    assert calls[0][4] == "http://desktop"
+    assert events == [("desktop", "acquire"), ("desktop", "success")]
+
+
 def test_guba_client_benches_dual_proxy_when_mobile_payload_is_invalid(monkeypatch) -> None:
     from alphapulse.sources.fetching import ProxyLease
     from alphapulse.sources.guba import api as guba_api
