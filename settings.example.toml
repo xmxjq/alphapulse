@@ -115,6 +115,7 @@ fallback_to_existing_transport = true
 # Both the worker and agent binary enforce this exact hostname allowlist.
 allowed_hosts = [
   "guba.eastmoney.com",
+  "mguba.eastmoney.com",
   "emappdata.eastmoney.com",
   "push2.eastmoney.com",
   "www.tgb.cn",

@@ -26,6 +26,13 @@ class AgentJobFailed(RuntimeError):
     pass
 
 
+def host_http_capability(host: str) -> str:
+    normalized = host.strip().lower().rstrip(".")
+    if not normalized:
+        raise ValueError("Agent host capability requires a hostname")
+    return f"http-host:{normalized}"
+
+
 @dataclass(frozen=True)
 class RemoteFetchResponse:
     job_id: str
@@ -1011,16 +1018,19 @@ class AgentPoolClient:
         body: bytes | None,
         timeout_seconds: int,
         priority: int = 0,
+        capability: str = "http",
     ) -> RemoteFetchResponse:
         if not self.settings.enabled:
             raise AgentPoolUnavailable("Agent pool is disabled")
         if self.settings.sources and source not in self.settings.sources:
             raise AgentPoolUnavailable(f"Agent pool is not enabled for source {source}")
-        if not self.store.has_eligible_agent("http", source=source):
-            raise AgentPoolUnavailable("No online HTTP agent is available")
+        if not self.store.has_eligible_agent(capability, source=source):
+            raise AgentPoolUnavailable(
+                f"No online agent is available for capability {capability}"
+            )
         job_id = self.store.submit_job(
             source=source,
-            capability="http",
+            capability=capability,
             method=method,
             url=url,
             headers=headers,

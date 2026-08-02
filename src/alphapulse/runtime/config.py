@@ -177,6 +177,7 @@ class AgentPoolSettings(BaseModel):
     allowed_hosts: list[str] = Field(
         default_factory=lambda: [
             "guba.eastmoney.com",
+            "mguba.eastmoney.com",
             "emappdata.eastmoney.com",
             "push2.eastmoney.com",
             "www.tgb.cn",

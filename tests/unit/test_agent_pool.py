@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from alphapulse.runtime.agent_pool import AgentPoolStore
+from alphapulse.runtime.agent_pool import AgentPoolStore, host_http_capability
 from alphapulse.runtime.config import AgentPoolSettings
 
 
@@ -119,6 +119,38 @@ def test_available_capacity_subtracts_active_leases(tmp_path) -> None:
     assert store.available_capacity("http") == 2
     assert store.lease_job(agent_id="home-arm", capabilities=["http"]) is not None
     assert store.available_capacity("http") == 1
+
+
+def test_host_capability_targets_only_advertising_agent(tmp_path) -> None:
+    store = _store(tmp_path)
+    capability = host_http_capability("MGUBA.EASTMONEY.COM.")
+    store.heartbeat(
+        agent_id="mobile-agent",
+        version="test",
+        os_name="linux",
+        arch="amd64",
+        capabilities=["http", capability],
+        max_concurrency=1,
+    )
+    _heartbeat(store, agent_id="generic-agent")
+    store.settings.allowed_hosts.append("mguba.eastmoney.com")
+    job_id = store.submit_job(
+        source="guba",
+        capability=capability,
+        method="POST",
+        url="https://mguba.eastmoney.com/api/getArticle",
+        headers={},
+        body=b"postid=1",
+        timeout_seconds=30,
+    )
+
+    assert store.lease_job(agent_id="generic-agent", capabilities=["http"]) is None
+    lease = store.lease_job(
+        agent_id="mobile-agent",
+        capabilities=["http", capability],
+    )
+    assert lease is not None
+    assert lease["job_id"] == job_id
 
 
 def test_blocked_outcome_benches_agent(tmp_path) -> None:

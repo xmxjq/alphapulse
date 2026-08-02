@@ -40,6 +40,26 @@ func TestValidateTarget(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesForHosts(t *testing.T) {
+	capabilities := capabilitiesForHosts(map[string]struct{}{
+		"guba.eastmoney.com":  {},
+		"MGUBA.EASTMONEY.COM": {},
+	})
+	want := []string{
+		"http",
+		"http-host:guba.eastmoney.com",
+		"http-host:mguba.eastmoney.com",
+	}
+	if len(capabilities) != len(want) {
+		t.Fatalf("capabilities = %v, want %v", capabilities, want)
+	}
+	for index := range want {
+		if capabilities[index] != want[index] {
+			t.Fatalf("capabilities = %v, want %v", capabilities, want)
+		}
+	}
+}
+
 func TestUnsafeIP(t *testing.T) {
 	for _, raw := range []string{"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1"} {
 		if !unsafeIP(net.ParseIP(raw)) {

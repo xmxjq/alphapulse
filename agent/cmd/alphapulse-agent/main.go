@@ -165,7 +165,7 @@ func main() {
 		Version:        version,
 		OS:             runtime.GOOS,
 		Arch:           runtime.GOARCH,
-		Capabilities:   []string{"http"},
+		Capabilities:   capabilitiesForHosts(cfg.allowedHosts),
 		MaxConcurrency: cfg.maxConcurrency,
 	}
 	pacer := &requestPacer{
@@ -209,6 +209,15 @@ func main() {
 	)
 	<-ctx.Done()
 	wg.Wait()
+}
+
+func capabilitiesForHosts(allowedHosts map[string]struct{}) []string {
+	capabilities := []string{"http"}
+	for host := range allowedHosts {
+		capabilities = append(capabilities, "http-host:"+normalizeHost(host))
+	}
+	sort.Strings(capabilities)
+	return capabilities
 }
 
 func parseConfig() (config, error) {
