@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import http.client
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from alphapulse.pipeline.contracts import CrawlTask, ItemReference, SeedDefinition
@@ -130,6 +130,8 @@ def test_list_page_emits_posts_comments_and_next_page(tmp_path) -> None:
         "1743507860",
         "1741989503",
     ]
+    assert posts[0].metadata["title"]
+    assert posts[0].metadata["post_type"] is not None
     # Entry without stockbar_code falls back to the board code.
     assert str(posts[1].url) == f"{BASE}/news,600519,1743507860.html"
     # pubdate_ts comes from post_last_time so resurfaced posts sort first.
@@ -1150,6 +1152,121 @@ def test_guba_client_waits_before_acquiring_short_lived_proxy(monkeypatch) -> No
 
     assert result.status_code == 200
     assert events == ["sleep", "acquire", "dispatch", "success"]
+
+
+def test_guba_client_uses_mobile_api_for_dual_proxy_channel(monkeypatch) -> None:
+    from alphapulse.sources.fetching import ProxyLease
+    from alphapulse.sources.guba import api as guba_api
+
+    settings = GubaSettings(
+        enabled=True,
+        max_retries=1,
+        request_interval_min_seconds=0,
+        request_interval_max_seconds=0,
+        proxy_dual_endpoint_experiment_enabled=True,
+        proxy_dual_endpoint_experiment_until=datetime.now(UTC) + timedelta(hours=1),
+    )
+    client = guba_api.GubaClient(settings, CrawlSettings())
+
+    class MobileProxyProvider:
+        def acquire(self):
+            return ProxyLease(
+                "http://1.2.3.4:8080",
+                "1.2.3.4:8080",
+                "test",
+                cohort="dual",
+                channel="mobile",
+            )
+
+        def report_bad(self, lease, reason):
+            raise AssertionError((lease, reason))
+
+        def report_success(self, lease):
+            assert lease.channel == "mobile"
+
+    client.proxy_provider = MobileProxyProvider()
+    monkeypatch.setattr(client, "_adaptive_sleep", lambda *, was_rate_limited: None)
+    calls: list[tuple] = []
+
+    def dispatch(*args):
+        calls.append(args)
+        return (
+            200,
+            json.dumps(
+                {
+                    "rc": 1,
+                    "post": {
+                        "post_id": 42,
+                        "post_title": "mobile title",
+                        "post_content": "mobile body",
+                    },
+                }
+            ),
+            args[1],
+        )
+
+    monkeypatch.setattr(client, "_dispatch", dispatch)
+    desktop_url = f"{BASE}/news,600519,42.html"
+
+    result = client.get(desktop_url, expect_marker="var post_article")
+
+    assert not result.blocked
+    assert result.url == desktop_url
+    assert "var post_article=" in result.text
+    assert calls[0][0] == "POST"
+    assert calls[0][1] == f"{guba_api.MOBILE_ARTICLE_API}?postid=42"
+    assert calls[0][2]["postid"] == "42"
+    assert calls[0][4] == "http://1.2.3.4:8080"
+
+
+def test_guba_client_benches_dual_proxy_when_mobile_payload_is_invalid(monkeypatch) -> None:
+    from alphapulse.sources.fetching import ProxyLease
+    from alphapulse.sources.guba import api as guba_api
+
+    settings = GubaSettings(
+        enabled=True,
+        max_retries=1,
+        request_interval_min_seconds=0,
+        request_interval_max_seconds=0,
+        proxy_dual_endpoint_experiment_enabled=True,
+        proxy_dual_endpoint_experiment_until=datetime.now(UTC) + timedelta(hours=1),
+    )
+    client = guba_api.GubaClient(settings, CrawlSettings())
+    lease = ProxyLease(
+        "http://1.2.3.4:8080",
+        "1.2.3.4:8080",
+        "test",
+        cohort="dual",
+        channel="mobile",
+    )
+    reported: list[tuple[ProxyLease, str]] = []
+
+    class MobileProxyProvider:
+        def acquire(self):
+            return lease
+
+        def report_bad(self, failed_lease, reason):
+            reported.append((failed_lease, reason))
+
+        def report_success(self, successful_lease):
+            raise AssertionError(successful_lease)
+
+    client.proxy_provider = MobileProxyProvider()
+    monkeypatch.setattr(client, "_adaptive_sleep", lambda *, was_rate_limited: None)
+    monkeypatch.setattr(
+        client,
+        "_dispatch",
+        lambda *args: (200, '{"rc":0,"me":"limited"}', args[1]),
+    )
+
+    result = client.get(
+        f"{BASE}/news,600519,42.html",
+        expect_marker="var post_article",
+    )
+
+    assert result.blocked
+    assert result.block_kind == "soft_block"
+    assert reported == [(lease, "blocked: soft_block")]
 
 
 def test_marker_check_skips_error_redirects(monkeypatch) -> None:

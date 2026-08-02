@@ -210,6 +210,8 @@ class GubaAdapter:
                     metadata={
                         "post_id": entry.post_id,
                         "board_code": code,
+                        "title": entry.title,
+                        "post_type": entry.post_type,
                         "pubdate_ts": pubdate_ts,
                         "comment_count": entry.comment_count,
                     },
@@ -295,7 +297,12 @@ class GubaAdapter:
             outcome.errors.append(f"Post deleted or missing: {task.url}")
             return outcome
 
-        post, author, post_meta = parse_post_detail(response.text, str(task.url), fetched_at)
+        post, author, post_meta = parse_post_detail(
+            response.text,
+            str(task.url),
+            fetched_at,
+            fallback_title=str(task.metadata.get("title") or "") or None,
+        )
         meta: dict[str, Any] = {"post_id": post_id}
         if post_meta is not None:
             meta.update(

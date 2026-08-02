@@ -504,7 +504,7 @@ class AlphaPulseService:
         source_blocked = False
         guba_browser_posts_attempted = 0
         max_workers = (
-            self.settings.sources.guba.concurrent_paid_requests
+            self._guba_paid_slots()
             + self.settings.sources.guba.concurrent_agent_requests
         )
         logger.info(
@@ -515,7 +515,7 @@ class AlphaPulseService:
                     "source": "guba",
                     "tasks": len(queue),
                     "routing": "hybrid",
-                    "paid_slots": self.settings.sources.guba.concurrent_paid_requests,
+                    "paid_slots": self._guba_paid_slots(),
                     "agent_slot_limit": self.settings.sources.guba.concurrent_agent_requests,
                 },
             },
@@ -714,7 +714,7 @@ class AlphaPulseService:
         return "outcome", fetch_with_transport(task, route)
 
     def _guba_hybrid_routes(self, adapter: SourceAdapter) -> list[str]:
-        paid_slots = self.settings.sources.guba.concurrent_paid_requests
+        paid_slots = self._guba_paid_slots()
         capacity = getattr(adapter, "available_agent_capacity")()
         agent_slots = min(
             self.settings.sources.guba.concurrent_agent_requests,
@@ -723,6 +723,22 @@ class AlphaPulseService:
         if agent_slots == 0:
             return ["auto"] * paid_slots
         return ["existing"] * paid_slots + ["agent"] * agent_slots
+
+    def _guba_paid_slots(self) -> int:
+        slots = self.settings.sources.guba.concurrent_paid_requests
+        if self._guba_dual_endpoint_experiment_active():
+            slots += 1
+        return slots
+
+    def _guba_dual_endpoint_experiment_active(self) -> bool:
+        proxy = self.settings.crawl.proxy
+        return bool(
+            self.settings.sources.guba.proxy_dual_endpoint_experiment_active()
+            and proxy.enabled
+            and proxy.provider == "kuaidaili"
+            and self.settings.crawl.kuaidaili.batch_size >= 2
+            and self._proxy_enabled_for_source("guba")
+        )
 
     def _guba_hybrid_enabled(self) -> bool:
         adapter = self.sources.get("guba")
@@ -1247,13 +1263,30 @@ class AlphaPulseService:
         if self.settings.sources.bilibili.enabled:
             sources["bilibili"] = BilibiliAdapter(self.settings.sources.bilibili, self.settings.crawl)
         if self.settings.sources.guba.enabled:
+            guba_pool = shared_kuaidaili
+            experiment = self.settings.sources.guba.proxy_dual_endpoint_experiment_enabled
+            if (
+                guba_pool is None
+                and experiment
+                and self.settings.crawl.proxy.enabled
+                and self.settings.crawl.proxy.provider == "kuaidaili"
+                and self._proxy_enabled_for_source("guba")
+            ):
+                guba_pool = KuaidailiProxyPool(self.settings.crawl.kuaidaili)
             guba_client = (
                 GubaClient(
                     self.settings.sources.guba,
                     self.settings.crawl,
-                    proxy_provider=shared_kuaidaili.provider("guba"),
+                    proxy_provider=guba_pool.provider(
+                        "guba",
+                        experiment_active=(
+                            self._guba_dual_endpoint_experiment_active
+                            if experiment
+                            else None
+                        ),
+                    ),
                 )
-                if shared_kuaidaili is not None
+                if guba_pool is not None
                 and self._proxy_enabled_for_source("guba")
                 else None
             )

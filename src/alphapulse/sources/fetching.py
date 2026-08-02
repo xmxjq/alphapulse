@@ -6,7 +6,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib import parse, request
 from urllib.parse import urlparse
 
@@ -106,6 +106,8 @@ class ProxyLease:
     proxy_url: str
     delete_key: str
     provider_name: str
+    cohort: str | None = None
+    channel: str | None = None
 
 
 @dataclass(frozen=True)
@@ -217,12 +219,29 @@ class KuaidailiProxyPool:
         self._benched_until: dict[tuple[str, str | None], float] = {}
         self._failure_streaks: dict[tuple[str, str | None], int] = {}
         self._next_indexes: dict[str | None, int] = {}
+        self._experiment_roles: dict[str, str] = {}
+        self._dual_channel_indexes: dict[str, int] = {}
         self._lock = threading.Lock()
 
-    def provider(self, source: str | None = None) -> KuaidailiProxyProvider:
-        return KuaidailiProxyProvider(self.settings, source=source, pool=self)
+    def provider(
+        self,
+        source: str | None = None,
+        *,
+        experiment_active: Callable[[], bool] | None = None,
+    ) -> KuaidailiProxyProvider:
+        return KuaidailiProxyProvider(
+            self.settings,
+            source=source,
+            pool=self,
+            experiment_active=experiment_active,
+        )
 
-    def acquire(self, source: str | None = None) -> ProxyLease | None:
+    def acquire(
+        self,
+        source: str | None = None,
+        *,
+        experiment: bool = False,
+    ) -> ProxyLease | None:
         with self._lock:
             now = time.monotonic()
             self._prune_expired(now)
@@ -240,11 +259,11 @@ class KuaidailiProxyPool:
                 next_index += 1
                 if url in available:
                     self._next_indexes[source] = next_index
-                    lease = self._lease(url)
+                    lease = self._experiment_lease(url) if experiment else self._lease(url)
                     self.metrics.record_acquire(
                         self.provider_name,
                         lease.proxy_url,
-                        source=source,
+                        source=self._metrics_source(source, lease),
                     )
                     return lease
             self.metrics.record_pool_empty(
@@ -286,7 +305,7 @@ class KuaidailiProxyPool:
                 lease.proxy_url,
                 reason=reason,
                 benched_until=benched_until,
-                source=source,
+                source=self._metrics_source(source, lease),
             )
 
     def report_success(
@@ -299,7 +318,7 @@ class KuaidailiProxyPool:
         self.metrics.record_success(
             self.provider_name,
             lease.proxy_url,
-            source=source,
+            source=self._metrics_source(source, lease),
         )
 
     def _refresh(self, source: str | None) -> None:
@@ -382,6 +401,11 @@ class KuaidailiProxyPool:
             raise RuntimeError(reason)
 
         proxy_urls = list(expiry_by_url)
+        for index, url in enumerate(proxy_urls):
+            self._experiment_roles[url] = (
+                "dual" if len(proxy_urls) >= 2 and index % 2 == 0 else "control"
+            )
+            self._dual_channel_indexes.pop(url, None)
         self.metrics.record_batch(
             self.provider_name,
             proxy_urls,
@@ -434,6 +458,12 @@ class KuaidailiProxyPool:
             key: streak
             for key, streak in self._failure_streaks.items()
             if key[0] in live
+        }
+        self._experiment_roles = {
+            url: role for url, role in self._experiment_roles.items() if url in live
+        }
+        self._dual_channel_indexes = {
+            url: index for url, index in self._dual_channel_indexes.items() if url in live
         }
         if self._urls:
             self._next_indexes = {
@@ -518,6 +548,27 @@ class KuaidailiProxyPool:
             or "proxy setup failed" in lowered
         )
 
+    def _experiment_lease(self, url: str) -> ProxyLease:
+        cohort = self._experiment_roles.get(url, "control")
+        channel = "desktop"
+        if cohort == "dual":
+            index = self._dual_channel_indexes.get(url, 0)
+            channel = "desktop" if index % 2 == 0 else "mobile"
+            self._dual_channel_indexes[url] = index + 1
+        return ProxyLease(
+            proxy_url=url,
+            delete_key=_proxy_delete_key(url),
+            provider_name=self.provider_name,
+            cohort=cohort,
+            channel=channel,
+        )
+
+    @staticmethod
+    def _metrics_source(source: str | None, lease: ProxyLease) -> str | None:
+        if source is None or lease.cohort is None:
+            return source
+        return f"{source}_ab_{lease.cohort}_{lease.channel or 'desktop'}"
+
 
 class KuaidailiProxyProvider:
     """Source-scoped view over a short-lived Kuaidaili proxy pool."""
@@ -530,14 +581,19 @@ class KuaidailiProxyProvider:
         *,
         source: str | None = None,
         pool: KuaidailiProxyPool | None = None,
+        experiment_active: Callable[[], bool] | None = None,
     ) -> None:
         self.settings = settings
         self.source = source
         self.pool = pool or KuaidailiProxyPool(settings)
         self.metrics = self.pool.metrics
+        self.experiment_active = experiment_active
 
     def acquire(self) -> ProxyLease | None:
-        return self.pool.acquire(self.source)
+        return self.pool.acquire(
+            self.source,
+            experiment=bool(self.experiment_active and self.experiment_active()),
+        )
 
     def report_bad(self, lease: ProxyLease, reason: str) -> None:
         self.pool.report_bad(lease, reason, self.source)

@@ -216,6 +216,53 @@ def test_kuaidaili_provider_extracts_and_rotates_text_proxies(
     assert "num=2" in requested[0]
 
 
+def test_kuaidaili_dual_endpoint_experiment_assigns_stable_roles_and_metrics(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(tmp_path).kuaidaili,
+        source="guba",
+        experiment_active=lambda: True,
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: DummyUrlopenResponse(
+            "1.2.3.4:8080\n2.3.4.5:8081"
+        ),
+    )
+
+    dual_desktop = provider.acquire()
+    control = provider.acquire()
+    dual_mobile = provider.acquire()
+
+    assert dual_desktop.proxy_url == dual_mobile.proxy_url
+    assert dual_desktop.cohort == dual_mobile.cohort == "dual"
+    assert dual_desktop.channel == "desktop"
+    assert dual_mobile.channel == "mobile"
+    assert control.cohort == "control"
+    assert control.channel == "desktop"
+    assert control.proxy_url != dual_desktop.proxy_url
+
+    provider.report_success(dual_desktop)
+    provider.report_success(control)
+    provider.report_success(dual_mobile)
+    snapshot = provider.metrics.snapshot(
+        provider="kuaidaili",
+        since=datetime.now(UTC).replace(year=2020),
+        now=datetime.now(UTC),
+    )
+    sources = {item["source"]: item for item in snapshot["sources"]}
+    assert sources["guba_ab_dual_desktop"]["successes"] == 1
+    assert sources["guba_ab_dual_mobile"]["successes"] == 1
+    assert sources["guba_ab_control_desktop"]["successes"] == 1
+
+    provider.report_bad(dual_mobile, "HTTP 403")
+    after_block = provider.acquire()
+    assert after_block.proxy_url == control.proxy_url
+    assert after_block.cohort == "control"
+
+
 def test_kuaidaili_provider_uses_reported_api_expiry(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

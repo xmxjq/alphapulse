@@ -1,5 +1,5 @@
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, SeedDefinition
@@ -201,6 +201,31 @@ def test_guba_hybrid_queue_uses_paid_and_agent_slots_together(tmp_path: Path) ->
 
     assert stats.pages_fetched == 2
     assert {route for route, _ in adapter.calls} == {"existing", "agent"}
+
+
+def test_guba_dual_endpoint_experiment_adds_one_temporary_paid_slot() -> None:
+    settings = Settings()
+    settings.crawl.proxy.enabled = True
+    settings.crawl.proxy.provider = "kuaidaili"
+    settings.crawl.proxy.sources = ["guba"]
+    settings.crawl.kuaidaili.batch_size = 2
+    settings.sources.guba.concurrent_paid_requests = 2
+    settings.sources.guba.proxy_dual_endpoint_experiment_enabled = True
+    settings.sources.guba.proxy_dual_endpoint_experiment_until = (
+        datetime.now(UTC) + timedelta(hours=1)
+    )
+    service = AlphaPulseService(
+        settings,
+        store=FakeStore(),
+        sources={},
+        seed_discovery=StaticSeedDiscovery(),  # type: ignore[arg-type]
+    )
+
+    assert service._guba_paid_slots() == 3
+    settings.sources.guba.proxy_dual_endpoint_experiment_until = (
+        datetime.now(UTC) - timedelta(seconds=1)
+    )
+    assert service._guba_paid_slots() == 2
 
 
 def test_guba_hybrid_block_does_not_stop_other_pool(tmp_path: Path) -> None:

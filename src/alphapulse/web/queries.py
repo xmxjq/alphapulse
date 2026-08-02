@@ -636,6 +636,19 @@ class WebQueries:
                 "expiry_safety_seconds": (
                     settings.crawl.kuaidaili.expiry_safety_seconds
                 ),
+                "guba_ab_experiment_active": (
+                    settings.sources.guba.proxy_dual_endpoint_experiment_active(now)
+                    and settings.crawl.proxy.enabled
+                    and settings.crawl.proxy.provider == "kuaidaili"
+                    and settings.crawl.kuaidaili.batch_size >= 2
+                    and (
+                        not settings.crawl.proxy.sources
+                        or "guba" in settings.crawl.proxy.sources
+                    )
+                ),
+                "guba_ab_experiment_until": (
+                    settings.sources.guba.proxy_dual_endpoint_experiment_until
+                ),
             }
         )
 

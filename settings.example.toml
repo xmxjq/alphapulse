@@ -209,6 +209,11 @@ request_interval_max_seconds = 6.0
 # together. Agent slots shrink automatically to current online capacity.
 concurrent_paid_requests = 1
 concurrent_agent_requests = 4
+# Temporary A/B test: one Kuaidaili IP remains desktop-only while another
+# serves one desktop and one mobile-detail request concurrently. The extra paid
+# slot and mobile routing stop automatically at the timestamp below.
+proxy_dual_endpoint_experiment_enabled = false
+# proxy_dual_endpoint_experiment_until = "2026-08-03T10:30:00+08:00"
 max_retries = 3
 # Stop all guba work after a blocked response and retry after this cooldown.
 block_cooldown_seconds = 21600

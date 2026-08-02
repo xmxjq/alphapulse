@@ -175,6 +175,8 @@ class ProxyPoolResponse(BaseModel):
     lease_ttl_seconds: int
     use_api_expiry: bool
     expiry_safety_seconds: int
+    guba_ab_experiment_active: bool = False
+    guba_ab_experiment_until: datetime | None = None
     active_nodes: int
     benched_nodes: int
     expired_nodes: int

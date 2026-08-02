@@ -142,6 +142,8 @@ def parse_post_detail(
     html: str,
     url: str,
     fetched_at: datetime | None = None,
+    *,
+    fallback_title: str | None = None,
 ) -> tuple[NormalizedPost | None, NormalizedAuthor | None, GubaPostMeta | None]:
     fetched_at = fetched_at or datetime.now(UTC)
     payload = extract_embedded_json(html, "post_article")
@@ -163,7 +165,7 @@ def parse_post_detail(
     content_text = _strip_html(str(payload.get("post_content") or ""))
     if not content_text:
         content_text = _strip_html(str(payload.get("post_abstract") or ""))
-    title = payload.get("post_title") or None
+    title = payload.get("post_title") or fallback_title or None
     if not content_text and title:
         content_text = str(title)
     if not content_text:

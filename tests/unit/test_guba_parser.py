@@ -146,6 +146,19 @@ def test_parse_post_detail_normalizes_concept_board_code() -> None:
     assert post.raw_topic_ids == ["BK1152"]
 
 
+def test_parse_post_detail_uses_list_title_when_mobile_payload_omits_it() -> None:
+    html = '<script>var post_article={"post_id":42,"post_content":"body"};</script>'
+
+    post, _, _ = parse_post_detail(
+        html,
+        "https://guba.eastmoney.com/news,600519,42.html",
+        fallback_title="list title",
+    )
+
+    assert post is not None
+    assert post.title == "list title"
+
+
 def test_parse_post_detail_deleted_page() -> None:
     post, author, meta = parse_post_detail(
         _read("post_deleted.html"),

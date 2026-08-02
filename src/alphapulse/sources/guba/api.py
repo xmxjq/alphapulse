@@ -19,12 +19,13 @@ from alphapulse.runtime.agent_pool import (
 from alphapulse.runtime.config import CrawlSettings, GubaSettings
 from alphapulse.sources.fetching import ProxyLease, ProxyProvider, _build_proxy_provider
 from alphapulse.sources.guba.parser import extract_embedded_json
-from alphapulse.sources.guba.urls import getdata_url
+from alphapulse.sources.guba.urls import extract_post_ref, getdata_url
 
 logger = logging.getLogger(__name__)
 
 
 REPLY_LIST_API_PATH = "reply/api/Reply/ArticleNewReplyList"
+MOBILE_ARTICLE_API = "https://mguba.eastmoney.com/api/getArticle"
 REQUEST_BACKOFF_MULTIPLIER_MAX = 16.0
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -238,6 +239,26 @@ class GubaClient:
                     continue
                 return last_result
 
+            effective_method = method
+            effective_url = url
+            effective_form = form
+            effective_referer = referer
+            effective_expect_marker = expect_marker
+            mobile_post_id: str | None = None
+            if (
+                lease is not None
+                and lease.channel == "mobile"
+                and self.settings.proxy_dual_endpoint_experiment_active()
+            ):
+                ref = extract_post_ref(url)
+                if method == "GET" and ref is not None:
+                    mobile_post_id = ref[1]
+                    effective_method = "POST"
+                    effective_url = f"{MOBILE_ARTICLE_API}?postid={mobile_post_id}"
+                    effective_form = self._mobile_article_form(mobile_post_id)
+                    effective_referer = "https://mguba.eastmoney.com/"
+                    effective_expect_marker = None
+
             started = time.monotonic()
             try:
                 if remote_response is not None:
@@ -246,7 +267,12 @@ class GubaClient:
                     final_url = remote_response.final_url
                 else:
                     status_code, text, final_url = self._dispatch(
-                        method, url, form, referer, proxy_url, json_body
+                        effective_method,
+                        effective_url,
+                        effective_form,
+                        effective_referer,
+                        proxy_url,
+                        json_body,
                     )
             except error.HTTPError as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
@@ -308,10 +334,25 @@ class GubaClient:
             if remote_response is not None and remote_response.duration_ms is not None:
                 duration_ms = remote_response.duration_ms
             block_kind = classify_block(status_code, text, final_url)
+            if mobile_post_id is not None and block_kind is None:
+                mobile_post = self._mobile_article_post(text, mobile_post_id)
+                if mobile_post is None:
+                    block_kind = "soft_block"
+                else:
+                    text = (
+                        "<script>var post_article="
+                        + json.dumps(
+                            mobile_post,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        + ";</script>"
+                    )
+                    final_url = url
             if (
                 block_kind is None
-                and expect_marker is not None
-                and expect_marker not in text
+                and effective_expect_marker is not None
+                and effective_expect_marker not in text
                 and "/error" not in final_url.lower()
             ):
                 # An HTTP 200 page missing its expected data payload is a
@@ -362,6 +403,37 @@ class GubaClient:
             return result
 
         return last_result or GubaHttpResult(url=url, status_code=0, text="", error_message="Request failed")
+
+    @staticmethod
+    def _mobile_article_form(post_id: str) -> dict[str, str]:
+        return {
+            "deviceid": "ugc",
+            "version": "200",
+            "plat": "wap",
+            "product": "guba",
+            "ctoken": "",
+            "utoken": "",
+            "postid": post_id,
+            "type": "0",
+            "cutword": "true",
+            "paytext": "true",
+            "location": "",
+            "env": "prod",
+            "bizfrom": "ugc",
+        }
+
+    @staticmethod
+    def _mobile_article_post(text: str, post_id: str) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict) or payload.get("rc") != 1:
+            return None
+        post = payload.get("post")
+        if not isinstance(post, dict) or str(post.get("post_id")) != post_id:
+            return None
+        return post
 
     def _dispatch(
         self,

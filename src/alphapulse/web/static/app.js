@@ -472,6 +472,11 @@ function renderProxySummary(payload) {
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Success rate"), el("div", { class: "value" }, fmtPercent(payload.success_rate))]),
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Last success"), el("div", { class: "value" }, fmtDate(payload.last_success_at))]),
     el("div", { class: "stat" }, [el("div", { class: "label" }, "Last failure"), el("div", { class: "value" }, fmtDate(payload.last_failure_at))]),
+    el("div", { class: "stat" }, [
+      el("div", { class: "label" }, "Guba A/B"),
+      el("div", { class: `value ${payload.guba_ab_experiment_active ? "status-ok" : ""}` }, payload.guba_ab_experiment_active ? "active" : "inactive"),
+    ]),
+    el("div", { class: "stat" }, [el("div", { class: "label" }, "A/B until"), el("div", { class: "value" }, fmtDate(payload.guba_ab_experiment_until))]),
   ]));
 }
 
@@ -501,8 +506,13 @@ function renderProxySources(payload) {
     return;
   }
   const head = el("tr", {}, ["Source", "Requests", "OK", "Failure", "Rate", "Leases", "IPs extracted", "API / empty", "Last activity"].map(h => el("th", {}, h)));
+  const sourceLabels = {
+    guba_ab_control_desktop: "Guba control / desktop",
+    guba_ab_dual_desktop: "Guba dual / desktop",
+    guba_ab_dual_mobile: "Guba dual / mobile",
+  };
   const rows = payload.sources.map(source => el("tr", {}, [
-    el("td", { class: "source-name" }, source.source),
+    el("td", { class: "source-name" }, sourceLabels[source.source] || source.source),
     el("td", { class: "num" }, String(source.successes + source.failures)),
     el("td", { class: "num status-ok" }, String(source.successes)),
     el("td", { class: "num status-failed" }, String(source.failures)),

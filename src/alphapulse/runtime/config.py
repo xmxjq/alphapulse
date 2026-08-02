@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tomllib
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -300,6 +300,8 @@ class GubaSettings(BaseModel):
     request_interval_max_seconds: float = Field(default=6.0, ge=0.0)
     concurrent_paid_requests: int = Field(default=1, ge=1, le=16)
     concurrent_agent_requests: int = Field(default=4, ge=1, le=64)
+    proxy_dual_endpoint_experiment_enabled: bool = False
+    proxy_dual_endpoint_experiment_until: datetime | None = None
     max_retries: int = Field(default=3, ge=1)
     block_cooldown_seconds: int = Field(default=21600, ge=1)
     user_agent: str | None = None
@@ -312,7 +314,31 @@ class GubaSettings(BaseModel):
             raise ValueError(
                 "sources.guba.request_interval_max_seconds must be >= request_interval_min_seconds"
             )
+        if (
+            self.proxy_dual_endpoint_experiment_enabled
+            and self.proxy_dual_endpoint_experiment_until is None
+        ):
+            raise ValueError(
+                "sources.guba.proxy_dual_endpoint_experiment_until is required "
+                "when the experiment is enabled"
+            )
+        if (
+            self.proxy_dual_endpoint_experiment_until is not None
+            and self.proxy_dual_endpoint_experiment_until.tzinfo is None
+        ):
+            raise ValueError(
+                "sources.guba.proxy_dual_endpoint_experiment_until must include a timezone"
+            )
         return self
+
+    def proxy_dual_endpoint_experiment_active(
+        self,
+        now: datetime | None = None,
+    ) -> bool:
+        if not self.proxy_dual_endpoint_experiment_enabled:
+            return False
+        until = self.proxy_dual_endpoint_experiment_until
+        return until is not None and (now or datetime.now(UTC)) < until
 
 
 class TgbSettings(BaseModel):

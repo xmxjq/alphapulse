@@ -119,6 +119,27 @@ task/cycle as blocked (and is still retried within the request and counted in
 proxy-pool metrics) but never triggers the multi-hour source-wide cooldown on
 its own — only a genuinely confirmed block does.
 
+## Guba dual-endpoint A/B experiment
+
+With `batch_size = 2`, a time-bounded experiment can keep one extracted IP as
+the desktop-only control and assign the other IP two alternating channels:
+desktop post HTML and the mobile `getArticle` API. The crawler adds one paid
+slot only while the experiment is active, so the expected allocation is one
+control request plus two dual-cohort requests.
+
+```toml
+[sources.guba]
+concurrent_paid_requests = 2
+proxy_dual_endpoint_experiment_enabled = true
+proxy_dual_endpoint_experiment_until = "2026-08-03T10:30:00+08:00"
+```
+
+The deadline must include a timezone. After it passes, the extra slot and
+mobile routing turn off without a restart. Proxy metrics are split into
+`guba_ab_control_desktop`, `guba_ab_dual_desktop`, and
+`guba_ab_dual_mobile`. Health remains shared by IP: a hard block on either
+dual channel benches that IP for all Guba traffic.
+
 ## Recovery
 
 Keep both `crawler` and `guba_browser` stopped while changing proxy settings.

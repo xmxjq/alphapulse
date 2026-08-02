@@ -227,6 +227,8 @@ def test_proxy_pool_endpoint_returns_empty_metrics(tmp_path: Path) -> None:
     assert parsed.window_hours == 24
     assert parsed.use_api_expiry is False
     assert parsed.expiry_safety_seconds == 30
+    assert parsed.guba_ab_experiment_active is False
+    assert parsed.guba_ab_experiment_until is None
     assert client.get("/api/proxy-pool", params={"hours": 0}).status_code == 422
 
 
