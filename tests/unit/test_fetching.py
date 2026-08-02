@@ -285,6 +285,26 @@ def test_kuaidaili_experiment_does_not_label_ineligible_requests(
     assert lease.channel is None
 
 
+def test_kuaidaili_experiment_rejects_incomplete_proxy_batch(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(tmp_path).kuaidaili,
+        source="guba",
+        experiment_active=lambda: True,
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: DummyUrlopenResponse("1.2.3.4:8080"),
+    )
+
+    assert provider.acquire_for_experiment(eligible=True) is None
+    ordinary = provider.acquire()
+    assert ordinary is not None
+    assert ordinary.cohort is None
+
+
 def test_kuaidaili_provider_uses_reported_api_expiry(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

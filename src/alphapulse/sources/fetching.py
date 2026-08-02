@@ -248,6 +248,15 @@ class KuaidailiProxyPool:
             if len(self._available(now, source)) <= self.settings.low_watermark:
                 self._refresh(source)
             available = set(self._available(now, source))
+            if experiment and not self._experiment_batch_complete():
+                metric_source = (
+                    f"{source}_ab_incomplete_batch" if source else source
+                )
+                self.metrics.record_pool_empty(
+                    self.provider_name,
+                    source=metric_source,
+                )
+                return None
             if not available:
                 self.metrics.record_pool_empty(
                     self.provider_name, source=source
@@ -562,6 +571,14 @@ class KuaidailiProxyPool:
             cohort=cohort,
             channel=channel,
         )
+
+    def _experiment_batch_complete(self) -> bool:
+        live_roles = {
+            self._experiment_roles[url]
+            for url in self._urls
+            if url in self._experiment_roles
+        }
+        return {"control", "dual"}.issubset(live_roles)
 
     @staticmethod
     def _metrics_source(source: str | None, lease: ProxyLease) -> str | None:

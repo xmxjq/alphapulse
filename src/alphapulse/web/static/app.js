@@ -510,6 +510,7 @@ function renderProxySources(payload) {
     guba_ab_control_desktop: "Guba control / desktop",
     guba_ab_dual_desktop: "Guba dual / desktop",
     guba_ab_dual_mobile: "Guba dual / mobile",
+    guba_ab_incomplete_batch: "Guba A/B / incomplete batch",
   };
   const rows = payload.sources.map(source => el("tr", {}, [
     el("td", { class: "source-name" }, sourceLabels[source.source] || source.source),
