@@ -21,6 +21,7 @@ from alphapulse.runtime.config import load_settings
 API_HOST = "mguba.eastmoney.com"
 ARTICLE_API = f"https://{API_HOST}/api/getArticle"
 LIST_API = "https://gbapi.eastmoney.com/webarticlelist/api/Article/Articlelist"
+PROBE_SOURCE = "guba_mobile_probe"
 USER_AGENT = (
     "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36"
@@ -195,7 +196,7 @@ def main() -> int:
         headers, body = article_request(post_id)
         try:
             response = client.fetch(
-                source="guba",
+                source=PROBE_SOURCE,
                 capability=capability,
                 method="POST",
                 url=f"{ARTICLE_API}?postid={post_id}",

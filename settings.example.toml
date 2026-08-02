@@ -97,7 +97,7 @@ expiry_safety_seconds = 30
 #   uv run alphapulse --config settings.toml agent-token create --agent-id home-arm
 enabled = false
 db_path = ".runtime/agent-pool.db"
-sources = ["guba", "tgb", "jiuyan", "hupu"]
+sources = ["guba", "guba_mobile_probe", "tgb", "jiuyan", "hupu"]
 strategy = "agent_first"
 heartbeat_ttl_seconds = 90
 lease_seconds = 180

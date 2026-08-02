@@ -161,7 +161,9 @@ class AgentPoolSettings(BaseModel):
 
     enabled: bool = False
     db_path: Path = Path(".runtime/agent-pool.db")
-    sources: list[str] = Field(default_factory=lambda: ["guba", "tgb", "jiuyan", "hupu"])
+    sources: list[str] = Field(
+        default_factory=lambda: ["guba", "guba_mobile_probe", "tgb", "jiuyan", "hupu"]
+    )
     strategy: AgentPoolStrategy = "agent_first"
     heartbeat_ttl_seconds: int = Field(default=90, ge=10, le=3600)
     lease_seconds: int = Field(default=180, ge=10, le=3600)

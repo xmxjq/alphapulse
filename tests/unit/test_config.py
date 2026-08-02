@@ -27,7 +27,13 @@ def test_load_settings_example() -> None:
     assert settings.crawl.agent_pool.enabled is False
     assert settings.crawl.agent_pool.db_path.name == "agent-pool.db"
     assert settings.crawl.agent_pool.db_path.is_absolute()
-    assert settings.crawl.agent_pool.sources == ["guba", "tgb", "jiuyan", "hupu"]
+    assert settings.crawl.agent_pool.sources == [
+        "guba",
+        "guba_mobile_probe",
+        "tgb",
+        "jiuyan",
+        "hupu",
+    ]
     assert "www.tgb.cn" in settings.crawl.agent_pool.allowed_hosts
     assert "app.jiuyangongshe.com" in settings.crawl.agent_pool.allowed_hosts
     assert "bbs.hupu.com" in settings.crawl.agent_pool.allowed_hosts
