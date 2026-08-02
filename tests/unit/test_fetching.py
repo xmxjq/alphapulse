@@ -232,9 +232,9 @@ def test_kuaidaili_dual_endpoint_experiment_assigns_stable_roles_and_metrics(
         ),
     )
 
-    dual_desktop = provider.acquire()
-    control = provider.acquire()
-    dual_mobile = provider.acquire()
+    dual_desktop = provider.acquire_for_experiment(eligible=True)
+    control = provider.acquire_for_experiment(eligible=True)
+    dual_mobile = provider.acquire_for_experiment(eligible=True)
 
     assert dual_desktop.proxy_url == dual_mobile.proxy_url
     assert dual_desktop.cohort == dual_mobile.cohort == "dual"
@@ -258,9 +258,31 @@ def test_kuaidaili_dual_endpoint_experiment_assigns_stable_roles_and_metrics(
     assert sources["guba_ab_control_desktop"]["successes"] == 1
 
     provider.report_bad(dual_mobile, "HTTP 403")
-    after_block = provider.acquire()
+    after_block = provider.acquire_for_experiment(eligible=True)
     assert after_block.proxy_url == control.proxy_url
     assert after_block.cohort == "control"
+
+
+def test_kuaidaili_experiment_does_not_label_ineligible_requests(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = KuaidailiProxyProvider(
+        _kuaidaili_settings(tmp_path).kuaidaili,
+        source="guba",
+        experiment_active=lambda: True,
+    )
+    monkeypatch.setattr(
+        "alphapulse.sources.fetching.request.urlopen",
+        lambda url, timeout: DummyUrlopenResponse(
+            "1.2.3.4:8080\n2.3.4.5:8081"
+        ),
+    )
+
+    lease = provider.acquire_for_experiment(eligible=False)
+
+    assert lease.cohort is None
+    assert lease.channel is None
 
 
 def test_kuaidaili_provider_uses_reported_api_expiry(

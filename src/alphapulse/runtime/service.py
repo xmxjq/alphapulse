@@ -545,8 +545,12 @@ class AlphaPulseService:
                         )
                     break
 
-                routes = self._guba_hybrid_routes(adapter)
                 first = queue.peek()
+                experiment_eligible = first.kind == "fetch_post"
+                routes = self._guba_hybrid_routes(
+                    adapter,
+                    experiment_eligible=experiment_eligible,
+                )
                 if first.kind == "refresh_comments" or self._is_guba_browser_post(first):
                     routes = ["existing"]
 
@@ -713,8 +717,15 @@ class AlphaPulseService:
         fetch_with_transport = getattr(adapter, "fetch_item_with_transport")
         return "outcome", fetch_with_transport(task, route)
 
-    def _guba_hybrid_routes(self, adapter: SourceAdapter) -> list[str]:
-        paid_slots = self._guba_paid_slots()
+    def _guba_hybrid_routes(
+        self,
+        adapter: SourceAdapter,
+        *,
+        experiment_eligible: bool = True,
+    ) -> list[str]:
+        paid_slots = self._guba_paid_slots(
+            experiment_eligible=experiment_eligible,
+        )
         capacity = getattr(adapter, "available_agent_capacity")()
         agent_slots = min(
             self.settings.sources.guba.concurrent_agent_requests,
@@ -724,9 +735,9 @@ class AlphaPulseService:
             return ["auto"] * paid_slots
         return ["existing"] * paid_slots + ["agent"] * agent_slots
 
-    def _guba_paid_slots(self) -> int:
+    def _guba_paid_slots(self, *, experiment_eligible: bool = True) -> int:
         slots = self.settings.sources.guba.concurrent_paid_requests
-        if self._guba_dual_endpoint_experiment_active():
+        if experiment_eligible and self._guba_dual_endpoint_experiment_active():
             slots += 1
         return slots
 

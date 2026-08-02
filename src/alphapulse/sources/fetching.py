@@ -590,9 +590,16 @@ class KuaidailiProxyProvider:
         self.experiment_active = experiment_active
 
     def acquire(self) -> ProxyLease | None:
+        return self.acquire_for_experiment(eligible=False)
+
+    def acquire_for_experiment(self, *, eligible: bool) -> ProxyLease | None:
         return self.pool.acquire(
             self.source,
-            experiment=bool(self.experiment_active and self.experiment_active()),
+            experiment=bool(
+                eligible
+                and self.experiment_active
+                and self.experiment_active()
+            ),
         )
 
     def report_bad(self, lease: ProxyLease, reason: str) -> None:

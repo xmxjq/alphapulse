@@ -217,7 +217,22 @@ class GubaClient:
                     )
                 if self.proxy_provider is not None:
                     try:
-                        lease = self.proxy_provider.acquire()
+                        acquire_for_experiment = getattr(
+                            self.proxy_provider,
+                            "acquire_for_experiment",
+                            None,
+                        )
+                        experiment_eligible = (
+                            self.settings.proxy_dual_endpoint_experiment_active()
+                            and method == "GET"
+                            and extract_post_ref(url) is not None
+                        )
+                        if callable(acquire_for_experiment) and experiment_eligible:
+                            lease = acquire_for_experiment(
+                                eligible=True
+                            )
+                        else:
+                            lease = self.proxy_provider.acquire()
                     except Exception as exc:
                         if not self.crawl_settings.proxy.fail_open:
                             acquire_error = f"Failed to acquire proxy: {exc}"

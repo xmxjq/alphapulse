@@ -222,6 +222,7 @@ def test_guba_dual_endpoint_experiment_adds_one_temporary_paid_slot() -> None:
     )
 
     assert service._guba_paid_slots() == 3
+    assert service._guba_paid_slots(experiment_eligible=False) == 2
     settings.sources.guba.proxy_dual_endpoint_experiment_until = (
         datetime.now(UTC) - timedelta(seconds=1)
     )
