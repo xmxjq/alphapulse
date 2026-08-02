@@ -60,6 +60,19 @@ func TestCapabilitiesForHosts(t *testing.T) {
 	}
 }
 
+func TestSupportsTargetCapability(t *testing.T) {
+	target, _ := url.Parse("https://mguba.eastmoney.com/api/getArticle")
+	if !supportsTargetCapability("http", target) {
+		t.Fatal("generic HTTP capability should remain supported")
+	}
+	if !supportsTargetCapability("http-host:mguba.eastmoney.com", target) {
+		t.Fatal("matching host capability should be supported")
+	}
+	if supportsTargetCapability("http-host:guba.eastmoney.com", target) {
+		t.Fatal("a host capability must not authorize another target host")
+	}
+}
+
 func TestUnsafeIP(t *testing.T) {
 	for _, raw := range []string{"127.0.0.1", "10.0.0.1", "169.254.1.1", "::1"} {
 		if !unsafeIP(net.ParseIP(raw)) {

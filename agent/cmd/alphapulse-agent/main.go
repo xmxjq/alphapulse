@@ -744,12 +744,16 @@ func lease(
 }
 
 func executeJob(ctx context.Context, cfg config, job leasedJob) (fetchResult, error) {
-	if job.Capability != "http" {
-		return fetchResult{}, fmt.Errorf("unsupported capability %q", job.Capability)
-	}
 	target, err := url.Parse(job.URL)
 	if err != nil {
 		return fetchResult{}, fmt.Errorf("parse target URL: %w", err)
+	}
+	if !supportsTargetCapability(job.Capability, target) {
+		return fetchResult{}, fmt.Errorf(
+			"capability %q does not authorize target host %q",
+			job.Capability,
+			target.Hostname(),
+		)
 	}
 	if err := validateTarget(target, cfg.allowedHosts); err != nil {
 		return fetchResult{}, err
@@ -826,6 +830,13 @@ func executeJob(ctx context.Context, cfg config, job leasedJob) (fetchResult, er
 		body:       body,
 		durationMS: time.Since(started).Milliseconds(),
 	}, nil
+}
+
+func supportsTargetCapability(capability string, target *url.URL) bool {
+	if capability == "http" {
+		return true
+	}
+	return capability == "http-host:"+normalizeHost(target.Hostname())
 }
 
 func reportCompletion(
