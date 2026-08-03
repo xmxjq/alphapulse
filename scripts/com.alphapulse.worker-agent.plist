@@ -48,6 +48,8 @@
     <string>--allow-host</string>
     <string>guba.eastmoney.com</string>
     <string>--allow-host</string>
+    <string>mguba.eastmoney.com</string>
+    <string>--allow-host</string>
     <string>emappdata.eastmoney.com</string>
     <string>--allow-host</string>
     <string>push2.eastmoney.com</string>
