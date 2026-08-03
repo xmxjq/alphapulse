@@ -140,6 +140,7 @@ func TestRequestPacerSpacesRequests(t *testing.T) {
 	if err := pacer.wait(ctx); err != nil {
 		t.Fatal(err)
 	}
+	pacer.markRequest()
 	started := time.Now()
 	if err := pacer.wait(ctx); err != nil {
 		t.Fatal(err)

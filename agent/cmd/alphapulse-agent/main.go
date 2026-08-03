@@ -656,6 +656,11 @@ func workerLoop(
 			}
 			continue
 		}
+		// Finish the local cooldown before leasing so a conservative interval
+		// cannot consume the server-side lease while this worker is sleeping.
+		if err := pacer.wait(ctx); err != nil {
+			return
+		}
 		job, err := lease(ctx, apiClient, cfg, info)
 		if err != nil {
 			log.Printf("worker=%d lease failed: %v", workerID, err)
@@ -665,9 +670,7 @@ func workerLoop(
 		if job == nil {
 			continue
 		}
-		if err := pacer.wait(ctx); err != nil {
-			return
-		}
+		pacer.markRequest()
 		result, err := executeJob(ctx, cfg, *job)
 		if err != nil {
 			log.Printf("worker=%d job=%s failed: %v", workerID, job.JobID, err)
@@ -687,16 +690,7 @@ func (pacer *requestPacer) wait(ctx context.Context) error {
 		return nil
 	}
 	pacer.mu.Lock()
-	now := time.Now()
-	startAt := now
-	if pacer.nextAt.After(startAt) {
-		startAt = pacer.nextAt
-	}
-	interval := pacer.minimum
-	if spread := pacer.maximum - pacer.minimum; spread > 0 {
-		interval += time.Duration(rand.Int63n(int64(spread) + 1))
-	}
-	pacer.nextAt = startAt.Add(interval)
+	startAt := pacer.nextAt
 	pacer.mu.Unlock()
 
 	delay := time.Until(startAt)
@@ -711,6 +705,19 @@ func (pacer *requestPacer) wait(ctx context.Context) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func (pacer *requestPacer) markRequest() {
+	if pacer.maximum <= 0 {
+		return
+	}
+	interval := pacer.minimum
+	if spread := pacer.maximum - pacer.minimum; spread > 0 {
+		interval += time.Duration(rand.Int63n(int64(spread) + 1))
+	}
+	pacer.mu.Lock()
+	pacer.nextAt = time.Now().Add(interval)
+	pacer.mu.Unlock()
 }
 
 func lease(
