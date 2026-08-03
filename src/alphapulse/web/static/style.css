@@ -62,14 +62,27 @@ main { padding: 16px 20px; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .stat { background: var(--panel-2); border-radius: 4px; padding: 6px 10px; }
+.stat-primary { box-shadow: inset 2px 0 0 var(--accent); }
 .stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; }
 .stat .value { font-family: var(--mono); font-size: 16px; }
+.stat .value-time { font-size: 13px; line-height: 22px; }
+.pool-health { text-transform: uppercase; }
+.pool-health.healthy { color: var(--ok); }
+.pool-health.degraded, .pool-health.idle { color: var(--warn); }
+.pool-health.offline, .pool-health.disabled { color: var(--err); }
 
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; font-size: 11px; }
+tbody tr:hover td { background: var(--panel-2); }
 td.num { text-align: right; font-family: var(--mono); }
 td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
+.cell-detail {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .status-ok { color: var(--ok); }
 .status-failed { color: var(--err); }
@@ -147,9 +160,6 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 11px; }
 .proxy-status.benched { color: var(--warn); }
 .proxy-status.expired { color: var(--muted); }
 .source-name { font-family: var(--mono); font-weight: 700; text-transform: uppercase; }
-.source-stack { display: grid; gap: 3px; min-width: 220px; }
-.source-line { display: flex; justify-content: space-between; gap: 10px; white-space: nowrap; }
-.source-line.benched { color: var(--warn); }
 .agent-status { font-family: var(--mono); font-size: 11px; text-transform: uppercase; }
 .agent-status.online, .agent-status.completed { color: var(--ok); }
 .agent-status.benched, .agent-status.leased, .agent-status.queued { color: var(--warn); }

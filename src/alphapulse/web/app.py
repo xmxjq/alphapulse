@@ -6,6 +6,7 @@ import ipaddress
 import json
 import re
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -135,8 +136,12 @@ def create_app(
         return q.proxy_pool(hours)
 
     @app.get("/api/agent-pool", response_model=AgentPoolResponse)
-    def agent_pool_status() -> AgentPoolResponse:
-        snapshot = agent_pool.snapshot()
+    def agent_pool_status(
+        hours: int = Query(default=24, ge=1, le=168),
+    ) -> AgentPoolResponse:
+        snapshot = agent_pool.snapshot(
+            since=datetime.now(UTC) - timedelta(hours=hours)
+        )
         paid_slots = settings.sources.guba.concurrent_paid_requests
         agent_slot_limit = settings.sources.guba.concurrent_agent_requests
         active_agent_slots = min(
@@ -146,6 +151,7 @@ def create_app(
         return AgentPoolResponse.model_validate(
             {
                 **snapshot,
+                "window_hours": hours,
                 "routing_mode": "hybrid",
                 "paid_slots": paid_slots,
                 "agent_slot_limit": agent_slot_limit,

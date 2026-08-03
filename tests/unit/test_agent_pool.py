@@ -121,6 +121,45 @@ def test_available_capacity_subtracts_active_leases(tmp_path) -> None:
     assert store.available_capacity("http") == 1
 
 
+def test_snapshot_applies_window_to_completed_work(tmp_path) -> None:
+    store = _store(tmp_path)
+    _heartbeat(store)
+    job_id = store.submit_job(
+        source="guba",
+        capability="http",
+        method="GET",
+        url="https://guba.eastmoney.com/list,600519.html",
+        headers={},
+        body=None,
+        timeout_seconds=30,
+    )
+    lease = store.lease_job(agent_id="home-arm", capabilities=["http"])
+    assert lease is not None
+    assert store.complete_job(
+        agent_id="home-arm",
+        job_id=job_id,
+        lease_id=lease["lease_id"],
+        status_code=200,
+        final_url="https://guba.eastmoney.com/list,600519.html",
+        headers={},
+        body=b"ok",
+        duration_ms=5,
+    )
+    store.record_outcome(job_id, "success")
+    old = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    with store.connection() as conn:
+        conn.execute(
+            "UPDATE agent_jobs SET created_at = ?, completed_at = ? WHERE job_id = ?",
+            (old, old, job_id),
+        )
+
+    snapshot = store.snapshot(since=datetime.now(UTC) - timedelta(hours=1))
+
+    assert snapshot["completed_jobs"] == 0
+    assert snapshot["sources"] == []
+    assert snapshot["jobs"] == []
+
+
 def test_host_capability_targets_only_advertising_agent(tmp_path) -> None:
     store = _store(tmp_path)
     capability = host_http_capability("MGUBA.EASTMONEY.COM.")

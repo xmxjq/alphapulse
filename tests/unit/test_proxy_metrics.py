@@ -108,3 +108,23 @@ def test_proxy_metrics_tracks_per_proxy_expiry_and_batch_detail(tmp_path) -> Non
     batch = snapshot["events"][0]
     assert batch["detail"]["ttl_mode"] == "api"
     assert batch["detail"]["effective_ttl_min"] == 270
+
+
+def test_proxy_snapshot_counts_but_does_not_return_expired_nodes(tmp_path) -> None:
+    store = ProxyMetricsStore(tmp_path / "proxy-metrics.db")
+    now = datetime.now(UTC)
+    store.record_batch(
+        "kuaidaili",
+        ["http://1.2.3.4:8080"],
+        expires_at=now - timedelta(minutes=1),
+    )
+
+    snapshot = store.snapshot(
+        provider="kuaidaili",
+        since=now - timedelta(hours=1),
+        now=now,
+    )
+
+    assert snapshot["unique_nodes"] == 1
+    assert snapshot["expired_nodes"] == 1
+    assert snapshot["nodes"] == []

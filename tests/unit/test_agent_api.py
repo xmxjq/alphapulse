@@ -99,7 +99,9 @@ def test_agent_pool_dashboard_endpoint(tmp_path) -> None:
 
     assert response.status_code == 200
     assert response.json()["enabled"] is True
+    assert response.json()["window_hours"] == 24
     assert response.json()["online_nodes"] == 0
     assert response.json()["routing_mode"] == "hybrid"
     assert response.json()["paid_slots"] == 1
     assert response.json()["combined_capacity"] == 1
+    assert client.get("/api/agent-pool", params={"hours": 0}).status_code == 422

@@ -763,8 +763,14 @@ class AgentPoolStore:
                 detail=_safe_detail(reason),
             )
 
-    def snapshot(self, *, recent_limit: int = 50) -> dict[str, Any]:
+    def snapshot(
+        self,
+        *,
+        recent_limit: int = 50,
+        since: datetime | None = None,
+    ) -> dict[str, Any]:
         now = _utcnow()
+        since_iso = since.isoformat() if since is not None else ""
         online_threshold = (
             now - timedelta(seconds=self.settings.heartbeat_ttl_seconds)
         ).isoformat()
@@ -785,8 +791,12 @@ class AgentPoolStore:
                 """
                 SELECT status, COUNT(*) AS count
                 FROM agent_jobs
+                WHERE ? = ''
+                   OR status IN ('queued', 'leased')
+                   OR COALESCE(completed_at, leased_at, created_at) >= ?
                 GROUP BY status
-                """
+                """,
+                (since_iso, since_iso),
             ).fetchall()
             source_job_rows = conn.execute(
                 """
@@ -799,29 +809,33 @@ class AgentPoolStore:
                     SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_jobs,
                     MAX(COALESCE(completed_at, leased_at, created_at)) AS last_activity_at
                 FROM agent_jobs
+                WHERE ? = ''
+                   OR status IN ('queued', 'leased')
+                   OR COALESCE(completed_at, leased_at, created_at) >= ?
                 GROUP BY source
                 ORDER BY source
-                """
+                """,
+                (since_iso, since_iso),
             ).fetchall()
             source_outcome_rows = conn.execute(
                 """
                 SELECT
                     source,
-                    SUM(success_count) AS successes,
-                    SUM(failure_count) AS failures,
-                    SUM(blocked_count) AS blocked,
+                    SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) AS successes,
+                    SUM(CASE WHEN outcome IN ('blocked', 'failure') THEN 1 ELSE 0 END) AS failures,
+                    SUM(CASE WHEN outcome = 'blocked' THEN 1 ELSE 0 END) AS blocked,
                     MAX(
-                        CASE
-                            WHEN last_success_at IS NULL THEN last_failure_at
-                            WHEN last_failure_at IS NULL THEN last_success_at
-                            WHEN last_success_at >= last_failure_at THEN last_success_at
-                            ELSE last_failure_at
+                        CASE WHEN outcome IS NOT NULL
+                            THEN COALESCE(completed_at, leased_at, created_at)
                         END
                     ) AS last_outcome_at
-                FROM agent_source_health
+                FROM agent_jobs
+                WHERE ? = ''
+                   OR COALESCE(completed_at, leased_at, created_at) >= ?
                 GROUP BY source
                 ORDER BY source
-                """
+                """,
+                (since_iso, since_iso),
             ).fetchall()
             job_rows = conn.execute(
                 """
@@ -829,10 +843,13 @@ class AgentPoolStore:
                        leased_by, attempts, response_status, duration_ms,
                        error_message, outcome
                 FROM agent_jobs
+                WHERE ? = ''
+                   OR status IN ('queued', 'leased')
+                   OR COALESCE(completed_at, leased_at, created_at) >= ?
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (recent_limit,),
+                (since_iso, since_iso, recent_limit),
             ).fetchall()
         source_health_by_agent: dict[str, list[dict[str, Any]]] = {}
         for row in source_health_rows:

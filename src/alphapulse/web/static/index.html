@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AlphaPulse dashboard</title>
-    <link rel="stylesheet" href="/static/style.css?v=20260731-hupu-1" />
+    <link rel="stylesheet" href="/static/style.css?v=20260803-pools-cleanup-1" />
   </head>
   <body>
     <header>
@@ -145,16 +145,16 @@
         </div>
         <div class="grid">
           <article class="card">
-            <h2>Pool health</h2>
+            <h2>Availability</h2>
             <div id="proxy-summary" class="body">Loading...</div>
           </article>
           <article class="card">
-            <h2>Usage and purchase signals</h2>
+            <h2>Usage</h2>
             <div id="proxy-economics" class="body">Loading...</div>
           </article>
         </div>
         <article class="card">
-          <h2>Activity by source</h2>
+          <h2>Activity by website</h2>
           <div id="proxy-sources" class="body">Loading...</div>
         </article>
         <article class="card">
@@ -162,45 +162,54 @@
           <div id="proxy-trend" class="body">Loading...</div>
         </article>
         <article class="card">
-          <h2>Proxy nodes</h2>
+          <h2>Current IPs</h2>
           <div id="proxy-nodes" class="body">Loading...</div>
         </article>
         <article class="card">
-          <h2>Recent pool events</h2>
+          <h2>Recent issues</h2>
           <div id="proxy-events" class="body">Loading...</div>
         </article>
       </section>
 
       <section id="agents-view" class="view">
         <div class="toolbar">
+          <label>
+            Window
+            <select id="agents-hours">
+              <option value="1">1 hour</option>
+              <option value="6">6 hours</option>
+              <option value="24" selected>24 hours</option>
+              <option value="72">72 hours</option>
+            </select>
+          </label>
           <button id="agents-refresh">Refresh</button>
           <span id="agents-meta" class="meta"></span>
         </div>
         <div class="grid">
           <article class="card">
-            <h2>Agent health</h2>
+            <h2>Availability</h2>
             <div id="agents-summary" class="body">Loading...</div>
           </article>
           <article class="card">
-            <h2>Job queue</h2>
+            <h2>Workload</h2>
             <div id="agents-jobs-summary" class="body">Loading...</div>
           </article>
         </div>
         <article class="card">
-          <h2>Activity by source</h2>
+          <h2>Activity by website</h2>
           <div id="agents-sources" class="body">Loading...</div>
         </article>
         <article class="card">
-          <h2>Self-hosted nodes</h2>
+          <h2>Nodes</h2>
           <div id="agents-nodes" class="body">Loading...</div>
         </article>
         <article class="card">
-          <h2>Recent agent jobs</h2>
+          <h2>Recent work</h2>
           <div id="agents-jobs" class="body">Loading...</div>
         </article>
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260802-guba-mobile-primary-1"></script>
+    <script src="/static/app.js?v=20260803-pools-cleanup-1"></script>
   </body>
 </html>

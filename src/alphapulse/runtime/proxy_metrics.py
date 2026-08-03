@@ -309,9 +309,13 @@ class ProxyMetricsStore:
                 """
                 SELECT * FROM proxy_nodes
                 WHERE provider = ?
+                  AND (
+                      expires_at > ?
+                      OR COALESCE(last_acquired_at, last_seen_at) >= ?
+                  )
                 ORDER BY COALESCE(last_acquired_at, last_seen_at) DESC
                 """,
-                (provider,),
+                (provider, now_iso, since_iso),
             ).fetchall()
             event_rows = conn.execute(
                 """
@@ -387,15 +391,16 @@ class ProxyMetricsStore:
                 status = "active"
                 active_nodes += 1
             attempts = int(row["success_count"]) + int(row["failure_count"])
-            nodes.append(
-                {
-                    **dict(row),
-                    "status": status,
-                    "success_rate": (
-                        int(row["success_count"]) / attempts if attempts else None
-                    ),
-                }
-            )
+            if status != "expired":
+                nodes.append(
+                    {
+                        **dict(row),
+                        "status": status,
+                        "success_rate": (
+                            int(row["success_count"]) / attempts if attempts else None
+                        ),
+                    }
+                )
 
         trend: dict[str, dict[str, Any]] = {}
         for row in trend_rows:
