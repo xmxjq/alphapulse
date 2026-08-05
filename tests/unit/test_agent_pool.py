@@ -13,7 +13,11 @@ def _store(tmp_path) -> AgentPoolStore:
         AgentPoolSettings(
             enabled=True,
             db_path=tmp_path / "agent-pool.db",
-            allowed_hosts=["guba.eastmoney.com", "www.tgb.cn"],
+            allowed_hosts=[
+                "guba.eastmoney.com",
+                "mguba.eastmoney.com",
+                "www.tgb.cn",
+            ],
             heartbeat_ttl_seconds=90,
             lease_seconds=10,
             blocked_cooldown_seconds=60,
@@ -119,6 +123,102 @@ def test_available_capacity_subtracts_active_leases(tmp_path) -> None:
     assert store.available_capacity("http") == 2
     assert store.lease_job(agent_id="home-arm", capabilities=["http"]) is not None
     assert store.available_capacity("http") == 1
+
+
+def test_lease_job_enforces_advertised_max_concurrency(tmp_path) -> None:
+    store = _store(tmp_path)
+    _heartbeat(store)
+    for source in ("guba", "tgb"):
+        store.submit_job(
+            source=source,
+            capability="http",
+            method="GET",
+            url=(
+                "https://guba.eastmoney.com/list,600519.html"
+                if source == "guba"
+                else "https://www.tgb.cn/a/post-1"
+            ),
+            headers={},
+            body=None,
+            timeout_seconds=30,
+        )
+
+    first = store.lease_job(agent_id="home-arm", capabilities=["http"])
+
+    assert first is not None
+    assert store.lease_job(agent_id="home-arm", capabilities=["http"]) is None
+
+
+def test_capability_filter_does_not_hide_compatible_job_behind_other_jobs(tmp_path) -> None:
+    store = _store(tmp_path)
+    _heartbeat(store)
+    mobile_capability = host_http_capability("mguba.eastmoney.com")
+    for index in range(120):
+        store.submit_job(
+            source="guba_mobile_primary",
+            capability=mobile_capability,
+            method="POST",
+            url="https://mguba.eastmoney.com/api/getArticle",
+            headers={},
+            body=f"postid={index}".encode(),
+            timeout_seconds=30,
+        )
+    generic_job = store.submit_job(
+        source="tgb",
+        capability="http",
+        method="GET",
+        url="https://www.tgb.cn/a/post-1",
+        headers={},
+        body=None,
+        timeout_seconds=30,
+    )
+
+    lease = store.lease_job(agent_id="home-arm", capabilities=["http"])
+
+    assert lease is not None
+    assert lease["job_id"] == generic_job
+
+
+def test_lease_selection_fairly_rotates_sources(tmp_path) -> None:
+    store = _store(tmp_path)
+    _heartbeat(store)
+    for index in range(3):
+        store.submit_job(
+            source="guba",
+            capability="http",
+            method="GET",
+            url=f"https://guba.eastmoney.com/list,600519-{index}.html",
+            headers={},
+            body=None,
+            timeout_seconds=30,
+        )
+        store.submit_job(
+            source="tgb",
+            capability="http",
+            method="GET",
+            url=f"https://www.tgb.cn/a/post-{index}",
+            headers={},
+            body=None,
+            timeout_seconds=30,
+        )
+
+    leased_sources: list[str] = []
+    for _ in range(6):
+        lease = store.lease_job(agent_id="home-arm", capabilities=["http"])
+        assert lease is not None
+        leased_sources.append(str(lease["source"]))
+        assert store.complete_job(
+            agent_id="home-arm",
+            job_id=lease["job_id"],
+            lease_id=lease["lease_id"],
+            status_code=200,
+            final_url=lease["url"],
+            headers={},
+            body=b"ok",
+            duration_ms=1,
+        )
+
+    assert leased_sources == ["guba", "tgb", "guba", "tgb", "guba", "tgb"]
 
 
 def test_snapshot_applies_window_to_completed_work(tmp_path) -> None:

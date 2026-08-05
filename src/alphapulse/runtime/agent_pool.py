@@ -175,6 +175,8 @@ class AgentPoolStore:
                     ON agent_jobs (status, available_at, priority DESC, created_at);
                 CREATE INDEX IF NOT EXISTS idx_agent_jobs_agent
                     ON agent_jobs (leased_by, status, lease_expires_at);
+                CREATE INDEX IF NOT EXISTS idx_agent_jobs_source_leased
+                    ON agent_jobs (source, leased_at);
 
                 CREATE TABLE IF NOT EXISTS agent_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -388,6 +390,8 @@ class AgentPoolStore:
     ) -> str:
         self._validate_url(url)
         with self.connection() as conn:
+            # Reclaim expired leases before enforcing the queue limit.
+            self._maintenance(conn, _utcnow())
             pending = conn.execute(
                 "SELECT COUNT(*) AS count FROM agent_jobs WHERE status IN ('queued', 'leased')"
             ).fetchone()
@@ -427,50 +431,66 @@ class AgentPoolStore:
         now = _utcnow()
         now_iso = now.isoformat()
         lease_expires = (now + timedelta(seconds=self.settings.lease_seconds)).isoformat()
+        capability_values = sorted(set(capabilities))
+        if not capability_values:
+            return None
         with self.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             self._maintenance(conn, now)
             node = conn.execute(
-                "SELECT benched_until FROM agent_nodes WHERE agent_id = ?",
+                """
+                SELECT benched_until, max_concurrency
+                FROM agent_nodes
+                WHERE agent_id = ?
+                """,
                 (agent_id,),
             ).fetchone()
             if node is None or (
                 node["benched_until"] is not None and node["benched_until"] > now_iso
             ):
                 return None
-            rows = conn.execute(
+            active = conn.execute(
                 """
-                SELECT *
+                SELECT COUNT(*) AS count
                 FROM agent_jobs
-                WHERE status = 'queued' AND available_at <= ?
-                ORDER BY priority DESC, created_at
-                LIMIT 100
+                WHERE leased_by = ?
+                  AND status = 'leased'
+                  AND lease_expires_at > ?
                 """,
-                (now_iso,),
+                (agent_id, now_iso),
+            ).fetchone()
+            if active is not None and int(active["count"]) >= int(node["max_concurrency"]):
+                return None
+            placeholders = ", ".join("?" for _ in capability_values)
+            rows = conn.execute(
+                f"""
+                SELECT job.*
+                FROM agent_jobs AS job
+                WHERE job.status = 'queued'
+                  AND job.available_at <= ?
+                  AND job.capability IN ({placeholders})
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM agent_source_health AS health
+                      WHERE health.agent_id = ?
+                        AND health.source = job.source
+                        AND health.benched_until IS NOT NULL
+                        AND health.benched_until > ?
+                  )
+                ORDER BY
+                    job.priority DESC,
+                    (
+                        SELECT MAX(history.leased_at)
+                        FROM agent_jobs AS history
+                        WHERE history.source = job.source
+                          AND history.leased_at IS NOT NULL
+                    ) ASC,
+                    job.created_at ASC
+                LIMIT 500
+                """,
+                [now_iso, *capability_values, agent_id, now_iso],
             ).fetchall()
-            benched_sources = {
-                str(row["source"])
-                for row in conn.execute(
-                    """
-                    SELECT source
-                    FROM agent_source_health
-                    WHERE agent_id = ?
-                      AND benched_until IS NOT NULL
-                      AND benched_until > ?
-                    """,
-                    (agent_id, now_iso),
-                ).fetchall()
-            }
-            capability_set = set(capabilities)
-            row = next(
-                (
-                    candidate
-                    for candidate in rows
-                    if candidate["capability"] in capability_set
-                    and candidate["source"] not in benched_sources
-                ),
-                None,
-            )
+            row = rows[0] if rows else None
             if row is None:
                 return None
             lease_id = secrets.token_urlsafe(18)
