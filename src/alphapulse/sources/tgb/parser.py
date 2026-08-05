@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
+from urllib.parse import urljoin
 
 from lxml import html as lxml_html
 
@@ -20,6 +21,8 @@ _TITLE_MARKER_RE = re.compile(r"^(?:\[[^\]]{1,3}\]\s*)+")
 _BLOG_ID_RE = re.compile(r"/blog/(\d+)")
 _COUNTS_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 _REPLY_ID_RE = re.compile(r"reply(\d+)")
+_SHUO_ID_RE = re.compile(r"[?&]shuoID=([0-9A-Za-z_-]+)", re.IGNORECASE)
+_PAREN_COUNT_RE = re.compile(r"[\(\uff08]\s*(\d+)\s*[\)\uff09]")
 
 
 def _text(element) -> str:
@@ -111,6 +114,17 @@ class TgbListEntry:
     last_time: datetime | None
 
 
+@dataclass
+class TgbShuoEntry:
+    shuo_id: str
+    canonical_url: str
+    content_text: str
+    user_id: str | None
+    user_nickname: str | None
+    comment_count: int | None
+    publish_time: datetime | None
+
+
 def parse_list_page(html: str, *, reference: datetime | None = None) -> list[TgbListEntry]:
     """Parse a 社区总版 / 精华 feed page (``.Nbbs-tiezi-lists`` rows)."""
     doc = lxml_html.fromstring(html)
@@ -188,6 +202,53 @@ def parse_stock_feed(html: str) -> list[TgbListEntry]:
                 click_count=None,
                 publish_time=parse_full_datetime(_text(source_cell)) if source_cell is not None else None,
                 last_time=None,
+            )
+        )
+    return entries
+
+
+def parse_shuo_feed(html: str, *, base_url: str = "https://www.tgb.cn") -> list[TgbShuoEntry]:
+    """Parse fast-news blocks embedded in stock pages.
+
+    The index pages use ``shuo.tgb.cn/shuo/toViewShuo?shuoID=...`` links for
+    快讯 instead of the normal ``/a/{id}`` post links.  They are complete feed
+    items, so fetching the shuo detail page is unnecessary for the crawler.
+    """
+    doc = lxml_html.fromstring(html)
+    entries: list[TgbShuoEntry] = []
+    seen: set[str] = set()
+    for row in doc.cssselect("div[id^='forumRow_']"):
+        body_link = _first(row, "a.related-body")
+        if body_link is None:
+            continue
+        href = body_link.get("href") or ""
+        match = _SHUO_ID_RE.search(href)
+        if match is None:
+            continue
+        shuo_id = match.group(1)
+        if shuo_id in seen:
+            continue
+        content = _text(body_link)
+        if not content:
+            continue
+        seen.add(shuo_id)
+
+        user_el = _first(row, ".user-name")
+        source_el = _first(row, ".related-sources")
+        count_match = _PAREN_COUNT_RE.search(_text(row))
+        entries.append(
+            TgbShuoEntry(
+                shuo_id=shuo_id,
+                canonical_url=urljoin(base_url.rstrip("/") + "/", href),
+                content_text=content,
+                user_id=None,
+                user_nickname=_text(user_el) if user_el is not None else None,
+                comment_count=int(count_match.group(1)) if count_match else None,
+                publish_time=(
+                    parse_full_datetime(_text(source_el))
+                    if source_el is not None
+                    else None
+                ),
             )
         )
     return entries

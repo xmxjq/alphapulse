@@ -9,6 +9,7 @@ from alphapulse.sources.tgb.parser import (
     parse_list_page,
     parse_post_detail,
     parse_short_datetime,
+    parse_shuo_feed,
     parse_stock_feed,
 )
 from alphapulse.sources.tgb.rankings import parse_hot_stocks
@@ -68,6 +69,30 @@ def test_parse_stock_feed_dedupes_to_posts() -> None:
     assert len(ids) == len(set(ids))  # deduped to underlying posts
     assert all(e.publish_time is not None for e in entries)
     assert entries[0].post_id == "2tDH0LW6lEd"
+
+
+def test_parse_shuo_feed_extracts_fast_news() -> None:
+    html = """
+    <div id="forumRow_2084897797165408308" class="stockNews">
+      <div class="user-name"><span>极速快讯</span></div>
+      <div class="related-sources">2026-08-05 15:02</div>
+      <a class="related-body"
+         href="https://shuo.tgb.cn/shuo/toViewShuo?shuoID=2084897797165408308">
+        【收评：科创50指数大涨4.78%】 评论(3)
+      </a>
+    </div>
+    """
+
+    entries = parse_shuo_feed(html)
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.shuo_id == "2084897797165408308"
+    assert entry.canonical_url.endswith("shuoID=2084897797165408308")
+    assert entry.content_text.startswith("【收评")
+    assert entry.user_nickname == "极速快讯"
+    assert entry.comment_count == 3
+    assert entry.publish_time == datetime(2026, 8, 5, 7, 2, tzinfo=UTC)
 
 
 def test_parse_post_detail() -> None:

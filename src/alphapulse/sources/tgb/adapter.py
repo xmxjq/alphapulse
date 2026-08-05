@@ -9,6 +9,7 @@ from alphapulse.pipeline.contracts import (
     CrawlTask,
     FetchOutcome,
     ItemReference,
+    NormalizedAuthor,
     NormalizedComment,
     NormalizedPost,
     SeedDefinition,
@@ -17,9 +18,11 @@ from alphapulse.runtime.config import CrawlSettings, TgbSettings
 from alphapulse.sources.tgb.api import TgbClient, TgbHttpResult, is_missing_page
 from alphapulse.sources.tgb.parser import (
     TgbListEntry,
+    TgbShuoEntry,
     parse_comments,
     parse_list_page,
     parse_post_detail,
+    parse_shuo_feed,
     parse_stock_feed,
 )
 from alphapulse.sources.tgb.urls import (
@@ -222,13 +225,19 @@ class TgbAdapter:
         code = str(task.metadata.get("board_code") or "")
 
         entries = parse_stock_feed(response.text)
+        shuo_entries = parse_shuo_feed(response.text, base_url=str(self.settings.base_url))
         self._save_raw(
             response,
             task.kind,
             requested_url=str(task.url),
-            meta={"board_code": code, "board_kind": KIND_STOCK, "entries": len(entries)},
+            meta={
+                "board_code": code,
+                "board_kind": KIND_STOCK,
+                "entries": len(entries),
+                "shuo_entries": len(shuo_entries),
+            },
         )
-        if not entries:
+        if not entries and not shuo_entries:
             # An empty mention feed is normal (a quiet stock), not an error.
             return outcome
 
@@ -239,7 +248,41 @@ class TgbAdapter:
             ):
                 continue
             outcome.discovered_tasks.append(self._post_task(task, entry, KIND_STOCK, code))
+        for entry in shuo_entries:
+            if day_start is not None and not (
+                entry.publish_time is not None and entry.publish_time >= day_start
+            ):
+                continue
+            post = self._shuo_post(entry, code)
+            outcome.posts.append(post)
+            if entry.user_nickname:
+                outcome.authors.append(
+                    NormalizedAuthor(
+                        source=self.source_name,
+                        source_entity_id=f"shuo-user:{entry.user_nickname}",
+                        display_name=entry.user_nickname,
+                        fetched_at=post.fetched_at,
+                    )
+                )
         return outcome
+
+    def _shuo_post(self, entry: TgbShuoEntry, board_code: str) -> NormalizedPost:
+        fetched_at = datetime.now(UTC)
+        return NormalizedPost(
+            source=self.source_name,
+            source_entity_id=f"shuo:{entry.shuo_id}",
+            canonical_url=entry.canonical_url,
+            author_entity_id=(
+                f"shuo-user:{entry.user_nickname}" if entry.user_nickname else None
+            ),
+            title=entry.content_text,
+            content_text=entry.content_text,
+            language="zh",
+            published_at=entry.publish_time,
+            fetched_at=fetched_at,
+            comment_count=entry.comment_count,
+            raw_topic_ids=[board_code],
+        )
 
     def _handle_post_detail(self, task: CrawlTask, response: TgbHttpResult) -> FetchOutcome:
         outcome = FetchOutcome(status_code=response.status_code)

@@ -80,6 +80,17 @@ def _stock_html(rows: list[str]) -> str:
     return f"<html><body><div id='stockContent'>{''.join(rows)}</div></body></html>"
 
 
+def _shuo_row(shuo_id: str, body: str, when_full: str) -> str:
+    return f"""
+    <div id="forumRow_{shuo_id}" class="stockNews">
+      <div class="user-name"><span>极速快讯</span></div>
+      <div class="related-sources">{when_full}</div>
+      <a class="related-body" href="https://shuo.tgb.cn/shuo/toViewShuo?shuoID={shuo_id}">
+        {body} 评论(2)
+      </a>
+    </div>"""
+
+
 def test_discover_builds_kind_specific_urls(tmp_path) -> None:
     adapter = _adapter(tmp_path, FakeTgbClient())
     seed = SeedDefinition(name="tgb", tgb_board_codes=["jinghua", "zongban", "sz000938"])
@@ -157,6 +168,22 @@ def test_stock_feed_day_scopes(tmp_path) -> None:
     outcome = adapter.fetch_item(_discover_task(url, "sz000938", "stock"))
     posts = [(t.metadata["post_id"], t.metadata["board_code"]) for t in outcome.discovered_tasks if t.kind == "fetch_post"]
     assert posts == [("todayX", "sz000938")]
+
+
+def test_stock_feed_writes_shuo_without_detail_task(tmp_path) -> None:
+    url = f"{BASE}/quotes/sh000688"
+    html = _stock_html([_shuo_row("2084897797165408308", "科创50指数大涨", _bj_today_full())])
+    adapter = _adapter(tmp_path, FakeTgbClient({url: _ok(url, html)}))
+
+    outcome = adapter.fetch_item(_discover_task(url, "sh000688", "stock"))
+
+    assert len(outcome.discovered_tasks) == 0
+    assert len(outcome.posts) == 1
+    post = outcome.posts[0]
+    assert post.source_entity_id == "shuo:2084897797165408308"
+    assert post.raw_topic_ids == ["sh000688"]
+    assert post.comment_count == 2
+    assert str(post.canonical_url).startswith("https://shuo.tgb.cn/shuo/toViewShuo")
 
 
 def test_post_detail_sets_board_from_metadata(tmp_path) -> None:

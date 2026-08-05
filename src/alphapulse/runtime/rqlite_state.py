@@ -223,25 +223,29 @@ class RqliteStateStore:
     def get_jiuyan_ranking(self, day: str) -> list[dict[str, object]]:
         return self._get_ranking("jiuyan_daily_ranking", day)
 
-    def load_pending_tasks(self, seed_name: str | None = None) -> list[CrawlTask]:
-        if seed_name is None:
-            statement: list[Any] = [
-                """
-                SELECT task_json
-                FROM pending_tasks
-                ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
-                """
-            ]
-        else:
-            statement = [
-                """
-                SELECT task_json
-                FROM pending_tasks
-                WHERE seed_name = ?
-                ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
-                """,
-                seed_name,
-            ]
+    def load_pending_tasks(
+        self,
+        seed_name: str | None = None,
+        source: str | None = None,
+    ) -> list[CrawlTask]:
+        clauses: list[str] = []
+        params: list[str] = []
+        if seed_name is not None:
+            clauses.append("seed_name = ?")
+            params.append(seed_name)
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(source)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        statement: list[Any] = [
+            f"""
+            SELECT task_json
+            FROM pending_tasks
+            {where}
+            ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
+            """,
+            *params,
+        ]
         response = self.client.query_params([statement])
         return [
             CrawlTask.model_validate(json.loads(row[0]))

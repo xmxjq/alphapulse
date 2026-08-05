@@ -8,6 +8,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 from zoneinfo import ZoneInfo
 
 from alphapulse.pipeline.contracts import (
@@ -130,6 +131,7 @@ class AlphaPulseService:
     store: StorageStore | None = None
     sources: dict[str, SourceAdapter] = field(default_factory=dict)
     seed_discovery: SeedDiscoveryManager | None = None
+    seed_discovery_lock: Lock = field(default_factory=Lock)
 
     def __post_init__(self) -> None:
         if self.state is None:
@@ -151,25 +153,190 @@ class AlphaPulseService:
 
     def run_forever(self) -> None:
         logger.info(
-            "Starting AlphaPulse service loop",
+            "Starting AlphaPulse independent source loops",
             extra={
                 "event": "service_start",
                 "extra_data": {
                     "sources": sorted(self.sources.keys()),
                     "poll_interval_seconds": self.settings.crawl.poll_interval_seconds,
+                    "scheduling": "independent_source_loops",
                 },
             },
         )
+        with ThreadPoolExecutor(
+            max_workers=max(1, len(self.sources)),
+            thread_name_prefix="alphapulse-independent-source",
+        ) as executor:
+            for source_name in self.sources:
+                executor.submit(self._run_source_forever, source_name)
+            # Source workers own their own retry and sleep loops. Keeping the
+            # supervisor alive here prevents a slow source from becoming the
+            # scheduler for every other source.
+            while True:
+                time.sleep(3600)
+
+    def _run_source_forever(self, source_name: str) -> None:
+        poll_interval = self.settings.crawl.poll_interval_seconds
         while True:
-            self.run_cycle()
+            started = time.monotonic()
+            try:
+                self.run_source_cycle(source_name)
+            except Exception:
+                logger.exception(
+                    "Source crawl cycle failed; worker will retry",
+                    extra={
+                        "event": "source_cycle_failed",
+                        "extra_data": {"source": source_name},
+                    },
+                )
+            elapsed = time.monotonic() - started
+            delay = max(0.0, poll_interval - elapsed)
             logger.info(
-                "Sleeping between cycles",
+                "Sleeping between source cycles",
                 extra={
-                    "event": "cycle_sleep",
-                    "extra_data": {"seconds": self.settings.crawl.poll_interval_seconds},
+                    "event": "source_cycle_sleep",
+                    "extra_data": {
+                        "source": source_name,
+                        "seconds": round(delay, 3),
+                        "cycle_seconds": round(elapsed, 3),
+                    },
                 },
             )
-            time.sleep(self.settings.crawl.poll_interval_seconds)
+            time.sleep(delay)
+
+    def run_source_cycle(
+        self,
+        source_name: str,
+        seed_set_name: str | None = None,
+    ) -> RunStats:
+        """Run one source without waiting for any other source.
+
+        ``run_cycle`` remains the aggregate, one-shot API used by tests and
+        manual runs. The long-running service uses this source-scoped variant
+        so a large Guba queue cannot delay the next TGB, Jiuyan, or Hupu cycle.
+        """
+        assert self.state is not None
+        assert self.store is not None
+        assert self.seed_discovery is not None
+        adapter = self.sources.get(source_name)
+        if adapter is None:
+            raise KeyError(f"Unknown source adapter: {source_name}")
+
+        run_id = str(uuid.uuid4())
+        started_at = datetime.now(UTC)
+        stats = RunStats()
+        logger.info(
+            "Source crawl cycle started",
+            extra={
+                "event": "source_cycle_start",
+                "extra_data": {
+                    "run_id": run_id,
+                    "source": source_name,
+                    "seed_set": seed_set_name,
+                },
+            },
+        )
+        try:
+            if source_name == "guba":
+                self._prune_expired_guba_pending_tasks()
+            queue = TaskQueue()
+            for seed in self._select_seeds(seed_set_name):
+                stats.seeds_processed += 1
+                discovered = adapter.discover(seed)
+                for task in discovered:
+                    if task.source == source_name:
+                        self._enqueue_task(queue, task, stats)
+                logger.debug(
+                    "Source seed expanded",
+                    extra={
+                        "event": "source_seed_expanded",
+                        "extra_data": {
+                            "source": source_name,
+                            "seed": seed.name,
+                            "tasks": len(discovered),
+                        },
+                    },
+                )
+
+            recovered = 0
+            for task in self.state.load_pending_tasks(
+                seed_set_name,
+                source=source_name,
+            ):
+                self.state.release_url_claim(str(task.url))
+                self._enqueue_task(queue, task, stats)
+                recovered += 1
+            if recovered:
+                logger.info(
+                    "Source pending tasks recovered",
+                    extra={
+                        "event": "source_pending_tasks_recovered",
+                        "extra_data": {
+                            "run_id": run_id,
+                            "source": source_name,
+                            "tasks": recovered,
+                        },
+                    },
+                )
+
+            logger.info(
+                "Source seed discovery complete",
+                extra={
+                    "event": "source_seeds_discovered",
+                    "extra_data": {
+                        "run_id": run_id,
+                        "source": source_name,
+                        "seeds_processed": stats.seeds_processed,
+                        "tasks_enqueued": stats.tasks_enqueued,
+                    },
+                },
+            )
+            source_stats = self._run_source_queue(source_name, queue)
+            stats.merge(source_stats)
+            self.store.insert_crawl_run(
+                run_id=run_id,
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                stats=stats.to_dict(),
+                status="succeeded",
+            )
+            logger.info(
+                "Source crawl cycle finished",
+                extra={
+                    "event": "source_cycle_done",
+                    "extra_data": {
+                        "run_id": run_id,
+                        "source": source_name,
+                        "status": "succeeded",
+                        "duration_seconds": round(
+                            (datetime.now(UTC) - started_at).total_seconds(), 3
+                        ),
+                        **stats.to_dict(),
+                    },
+                },
+            )
+            return stats
+        except Exception:
+            stats.errors += 1
+            self.store.insert_crawl_run(
+                run_id=run_id,
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                stats=stats.to_dict(),
+                status="failed",
+            )
+            logger.exception(
+                "Source crawl cycle failed",
+                extra={
+                    "event": "source_cycle_failed",
+                    "extra_data": {
+                        "run_id": run_id,
+                        "source": source_name,
+                        **stats.to_dict(),
+                    },
+                },
+            )
+            raise
 
     def run_cycle(self, seed_set_name: str | None = None) -> RunStats:
         assert self.state is not None
@@ -1264,7 +1431,8 @@ class AlphaPulseService:
 
     def _select_seeds(self, seed_set_name: str | None) -> list[SeedDefinition]:
         assert self.seed_discovery is not None
-        return self.seed_discovery.ensure_compiled_seed_sets(seed_set_name)
+        with self.seed_discovery_lock:
+            return self.seed_discovery.ensure_compiled_seed_sets(seed_set_name)
 
     def _build_sources(self) -> dict[str, SourceAdapter]:
         sources: dict[str, SourceAdapter] = {}

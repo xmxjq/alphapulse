@@ -310,26 +310,30 @@ class StateStore:
                 ],
             )
 
-    def load_pending_tasks(self, seed_name: str | None = None) -> list[CrawlTask]:
+    def load_pending_tasks(
+        self,
+        seed_name: str | None = None,
+        source: str | None = None,
+    ) -> list[CrawlTask]:
         with self.connection() as conn:
-            if seed_name is None:
-                rows = conn.execute(
-                    """
-                    SELECT task_json
-                    FROM pending_tasks
-                    ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
-                    """
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT task_json
-                    FROM pending_tasks
-                    WHERE seed_name = ?
-                    ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
-                    """,
-                    (seed_name,),
-                ).fetchall()
+            clauses: list[str] = []
+            params: list[str] = []
+            if seed_name is not None:
+                clauses.append("seed_name = ?")
+                params.append(seed_name)
+            if source is not None:
+                clauses.append("source = ?")
+                params.append(source)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            rows = conn.execute(
+                f"""
+                SELECT task_json
+                FROM pending_tasks
+                {where}
+                ORDER BY priority DESC, pubdate_ts DESC, discovered_at ASC
+                """,
+                params,
+            ).fetchall()
         return [
             CrawlTask.model_validate(json.loads(row["task_json"]))
             for row in rows
