@@ -1363,6 +1363,12 @@ class AlphaPulseService:
             >= self.settings.sources.jiuyan.captcha_max_attempts
         ):
             reason = "jiuyan_captcha_attempt_limit"
+        elif (
+            task.source == "tgb"
+            and task.kind == "refresh_comments"
+            and str(task.metadata.get("post_id") or "").startswith("shuo:")
+        ):
+            reason = "tgb_shuo_has_no_detail_comments"
 
         if reason is None:
             return False

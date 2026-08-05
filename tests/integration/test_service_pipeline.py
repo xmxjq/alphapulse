@@ -4,7 +4,7 @@ from pathlib import Path
 
 from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, SeedDefinition
 from alphapulse.runtime.config import Settings, load_settings
-from alphapulse.runtime.service import AlphaPulseService
+from alphapulse.runtime.service import AlphaPulseService, RunStats
 from alphapulse.sources.bilibili.api import BilibiliApiResult
 from alphapulse.sources.fetching import FetchResult, KuaidailiProxyProvider
 
@@ -100,6 +100,23 @@ def test_service_processes_source_queues_in_parallel(tmp_path: Path) -> None:
     stats = service.run_cycle()
 
     assert stats.pages_fetched == 2
+
+
+def test_service_discards_legacy_tgb_shuo_comment_tasks(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    service = AlphaPulseService(settings, store=FakeStore())
+    task = CrawlTask(
+        source="tgb",
+        kind="refresh_comments",
+        url="https://shuo.tgb.cn/shuo/toViewShuo?shuoID=123",
+        seed_name="tgb",
+        metadata={"post_id": "shuo:123"},
+    )
+    stats = RunStats()
+
+    assert service._discard_task(task, stats)
+    assert stats.skipped_tasks == 1
 
 
 def test_service_shares_kuaidaili_pool_across_sources(tmp_path: Path) -> None:
