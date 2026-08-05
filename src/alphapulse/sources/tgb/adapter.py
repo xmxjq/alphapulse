@@ -337,7 +337,13 @@ class TgbAdapter:
         )
         return comments
 
-    def comment_task_for_post(self, post: NormalizedPost, seed_name: str) -> CrawlTask:
+    def comment_task_for_post(
+        self, post: NormalizedPost, seed_name: str
+    ) -> CrawlTask | None:
+        # shuo.tgb.cn feed items are already complete fast-news payloads. Their
+        # detail endpoint redirects to login and is not needed for the report.
+        if post.source_entity_id.startswith("shuo:"):
+            return None
         return CrawlTask(
             source=self.source_name,
             kind="refresh_comments",

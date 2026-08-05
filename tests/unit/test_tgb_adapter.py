@@ -184,6 +184,7 @@ def test_stock_feed_writes_shuo_without_detail_task(tmp_path) -> None:
     assert post.raw_topic_ids == ["sh000688"]
     assert post.comment_count == 2
     assert str(post.canonical_url).startswith("https://shuo.tgb.cn/shuo/toViewShuo")
+    assert adapter.comment_task_for_post(post, "tgb") is None
 
 
 def test_post_detail_sets_board_from_metadata(tmp_path) -> None:
