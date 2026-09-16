@@ -50,6 +50,34 @@ This guide shows how to enable and run the Eastmoney Guba (东方财富股吧) c
   `content_sha256` and `post_mod_count` per fetch, and prior versions remain
   reconstructable from the raw blob archive.
 
+### Transient Errors And Board Membership
+
+HTTP 5xx responses, including 544, are transport failures rather than successful
+fetches or parser errors. They use the existing bounded retry count and adaptive
+pacing, record proxy/agent failures, and do not open a source-wide block circuit.
+After exhaustion, the durable task remains eligible for a later cycle. The raw
+fetch log preserves the upstream status; the retryable pipeline outcome has no
+completed status.
+
+A concept-board listing can reference a post owned by a stock or another board.
+MongoDB preserves both the original board and observed listing memberships.
+Subsequent detail refreshes add memberships instead of replacing them. Daily
+reports display posts in every observed board while keeping overall post and
+comment totals deduplicated. Listing metadata updates never create bodyless
+post documents.
+
+For a bounded repair using existing raw archives, inspect the plan first:
+
+```bash
+python scripts/recover_guba_listings.py --config settings.toml
+python scripts/recover_guba_listings.py --config settings.toml --apply
+```
+
+The repair uses today's archived listings, updates associations on existing
+posts only, and requeues missing posts whose last URL status is still 544 and
+whose claim is at least ten minutes old. It does not fetch pages directly,
+change pacing, alter retention, or backfill previous days.
+
 ## 1. Enable Guba In `settings.toml`
 
 ```toml

@@ -115,6 +115,29 @@ def test_comment_upsert_writes_replace_one_ops() -> None:
     assert operations[0]._doc["post_entity_id"] == "p1"
 
 
+def test_guba_upsert_preserves_memberships_and_merges_same_batch() -> None:
+    store, client = _make_store()
+    post = NormalizedPost(source="guba", source_entity_id="42",
+        canonical_url="https://guba.eastmoney.com/news,600519,42.html",
+        content_text="old", raw_topic_ids=["600519", "BK1152"])
+    newer = post.model_copy(update={"content_text": "new", "raw_topic_ids": ["600519", "BK1128"]})
+    store.upsert_posts([post, newer])
+    op = client.databases["alphapulse"].collections["posts"].bulk_writes[0][0]
+    assert op._doc["$set"]["content_text"] == "new"
+    assert "raw_topic_ids" not in op._doc["$set"]
+    assert op._doc["$addToSet"]["raw_topic_ids"]["$each"] == ["600519", "BK1152", "BK1128"]
+    assert op._upsert is True
+
+
+def test_list_memberships_do_not_create_bodyless_posts() -> None:
+    store, client = _make_store()
+    store.add_post_board_memberships("guba", {"42": ["BK1152"]})
+    op = client.databases["alphapulse"].collections["posts"].bulk_writes[0][0]
+    assert op._filter == {"_id": "guba:42"}
+    assert op._upsert is False
+    assert op._doc == {"$addToSet": {"raw_topic_ids": {"$each": ["BK1152"]}}}
+
+
 def test_insert_crawl_run_upserts_by_run_id() -> None:
     store, client = _make_store()
     started = datetime(2026, 4, 22, 12, 0, tzinfo=UTC)

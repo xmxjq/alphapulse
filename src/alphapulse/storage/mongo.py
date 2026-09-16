@@ -118,16 +118,47 @@ class MongoStore:
     def upsert_posts(self, posts: list[NormalizedPost]) -> None:
         if not posts:
             return
-        from pymongo import ReplaceOne
+        from pymongo import ReplaceOne, UpdateOne
 
         deduped: dict[str, NormalizedPost] = {}
         for item in posts:
-            deduped[_entity_id(item.source, item.source_entity_id)] = item
-        operations = [
-            ReplaceOne({"_id": key}, _post_doc(item), upsert=True)
-            for key, item in deduped.items()
-        ]
+            key = _entity_id(item.source, item.source_entity_id)
+            previous = deduped.get(key)
+            if previous is not None and item.source == "guba":
+                item = item.model_copy(update={
+                    "raw_topic_ids": list(dict.fromkeys([*previous.raw_topic_ids, *item.raw_topic_ids]))
+                })
+            deduped[key] = item
+        operations = []
+        for key, item in deduped.items():
+            doc = _post_doc(item)
+            if item.source == "guba":
+                codes = doc.pop("raw_topic_ids")
+                doc.pop("_id")
+                operations.append(UpdateOne(
+                    {"_id": key},
+                    {"$set": doc, "$addToSet": {"raw_topic_ids": {"$each": codes}}},
+                    upsert=True,
+                ))
+            else:
+                operations.append(ReplaceOne({"_id": key}, doc, upsert=True))
         self._collection(self.settings.posts_collection).bulk_write(operations, ordered=False)
+
+    def add_post_board_memberships(self, source: str, memberships: dict[str, list[str]]) -> None:
+        if source != "guba" or not memberships:
+            return
+        from pymongo import UpdateOne
+
+        operations = [
+            UpdateOne(
+                {"_id": _entity_id(source, post_id)},
+                {"$addToSet": {"raw_topic_ids": {"$each": codes}}},
+                upsert=False,
+            )
+            for post_id, codes in memberships.items() if codes
+        ]
+        if operations:
+            self._collection(self.settings.posts_collection).bulk_write(operations, ordered=False)
 
     def upsert_comments(self, comments: list[NormalizedComment]) -> None:
         if not comments:

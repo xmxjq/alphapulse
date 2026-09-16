@@ -89,6 +89,23 @@ docker compose run --rm crawler uv run bili login
 
 This stores credentials for `bilibili-cli`, which AlphaPulse reuses when it asks the tool for recent videos from a user space.
 
+The unattended discovery client reads the saved CLI credential first, then
+falls back to `[sources.bilibili.cookies]`. It does not refresh from browsers,
+validate-and-delete saved credentials, or launch a login flow during crawling.
+Search endpoints provided by the CLI remain unauthenticated.
+
+Check the effective discovery session without exposing or modifying credentials:
+
+```bash
+docker compose exec crawler /app/.venv/bin/python scripts/check_bilibili_session.py --config /app/settings.toml
+```
+
+`api_code=-101` with `authenticated=false` confirms that the supplied session
+is not logged in; an HTTP 412 alone does not establish session expiry.
+Network failures report `authenticated=null`. Complete any required login
+interactively using `bili login`; the saved credential is loaded on subsequent
+discovery calls without restarting the crawler.
+
 ## 4. Validate Config
 
 Before running the crawler:

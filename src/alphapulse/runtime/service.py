@@ -1230,6 +1230,11 @@ class AlphaPulseService:
                         comment_tasks.append(comment_task)
             self._enqueue_tasks(queue, comment_tasks, stats, persist=True)
 
+        if outcome.post_board_memberships:
+            add_memberships = getattr(self.store, "add_post_board_memberships", None)
+            if callable(add_memberships):
+                add_memberships(task.source, outcome.post_board_memberships)
+
         self._enqueue_tasks(queue, outcome.discovered_tasks, stats, persist=True)
 
         log_level = logging.WARNING if (outcome.blocked or outcome.errors) else logging.INFO
