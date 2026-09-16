@@ -78,16 +78,22 @@ If you use `space_discovery_backend = "cli"`, log in with `bilibili-cli` before 
 Local environment:
 
 ```bash
-uv run bili login
+uv run python scripts/login_bilibili.py
 ```
 
 Docker Compose:
 
 ```bash
-docker compose run --rm crawler uv run bili login
+docker compose exec crawler /app/.venv/bin/python /app/scripts/login_bilibili.py
 ```
 
-This stores credentials for `bilibili-cli`, which AlphaPulse reuses when it asks the tool for recent videos from a user space.
+This stores credentials in the existing `bilibili-cli` credential file, which
+AlphaPulse reuses when it asks the tool for recent videos from a user space.
+Use this project login entry point rather than the legacy `bili login`: it
+accepts cookies returned by the QR polling response as well as legacy callback
+URLs, rejects empty sessions and unknown states, and verifies login against the
+navigation API before saving or reporting success. Run it in an interactive
+terminal; do not redirect its QR challenge to logs.
 
 The unattended discovery client reads the saved CLI credential first, then
 falls back to `[sources.bilibili.cookies]`. It does not refresh from browsers,
@@ -103,7 +109,7 @@ docker compose exec crawler /app/.venv/bin/python scripts/check_bilibili_session
 `api_code=-101` with `authenticated=false` confirms that the supplied session
 is not logged in; an HTTP 412 alone does not establish session expiry.
 Network failures report `authenticated=null`. Complete any required login
-interactively using `bili login`; the saved credential is loaded on subsequent
+interactively using `scripts/login_bilibili.py`; the saved credential is loaded on subsequent
 discovery calls without restarting the crawler.
 
 ## 4. Validate Config
@@ -185,6 +191,6 @@ If Bilibili crawl is not running:
 - Confirm the seed catalog contains either `bilibili_video_targets` or `bilibili_space_urls`
 - Run `validate-config` and check the normalized output
 - Run `backfill --seed-set bili-core` to test one logical set in isolation
-- If `space_discovery_backend = "cli"`, confirm `uv run bili status` or `docker compose run --rm crawler uv run bili status` shows a valid login
+- If `space_discovery_backend = "cli"`, use the read-only `scripts/check_bilibili_session.py` check above to confirm a valid login
 - If `space_discovery_backend = "api"` starts returning `HTTP 412`, switch to the `cli` backend or refresh credentials
 - If direct video or comment fetches start failing, refresh cookies under `[sources.bilibili.cookies]`
