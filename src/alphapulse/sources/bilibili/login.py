@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 GENERATE_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
 POLL_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
 NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
+QR_LOGIN_HOSTS = frozenset({"passport.bilibili.com", "account.bilibili.com"})
 COOKIE_FIELDS = {
     "SESSDATA": "sessdata",
     "bili_jct": "bili_jct",
@@ -19,6 +20,24 @@ COOKIE_FIELDS = {
 
 class LoginFailure(RuntimeError):
     """A fixed diagnostic, never a response body or credential value."""
+
+
+def validate_qr_destination(url: str, expected_key: str) -> None:
+    try:
+        parsed = urlsplit(url)
+        valid = (
+            parsed.scheme == "https"
+            and parsed.hostname in QR_LOGIN_HOSTS
+            and parsed.port in (None, 443)
+            and parsed.username is None
+            and not parsed.fragment
+            and not any(char in url for char in "\r\n\t")
+            and parse_qs(parsed.query).get("qrcode_key") == [expected_key]
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise LoginFailure("Unexpected QR destination.")
 
 
 def credential_fields(data: dict[str, Any], cookies: dict[str, str]) -> dict[str, str]:
@@ -63,9 +82,7 @@ def run_qr_login(
     if not isinstance(generated, dict) or not generated.get("qrcode_key") or not generated.get("url"):
         raise LoginFailure("Login endpoint did not return a QR challenge.")
     qr_url = str(generated["url"])
-    parsed = urlsplit(qr_url)
-    if parsed.scheme != "https" or parsed.hostname != "passport.bilibili.com":
-        raise LoginFailure("Unexpected QR destination.")
+    validate_qr_destination(qr_url, generated["qrcode_key"])
     render_qr(qr_url)
     deadline = monotonic() + timeout
     while monotonic() < deadline:

@@ -4,6 +4,7 @@ import pytest
 
 from alphapulse.sources.bilibili.login import (
     GENERATE_URL, NAV_URL, POLL_URL, LoginFailure, credential_fields, run_qr_login,
+    validate_qr_destination,
 )
 
 
@@ -36,7 +37,7 @@ class Session:
     def get(self, url, **kwargs):
         self.calls.append((url, kwargs))
         if url == GENERATE_URL:
-            data = {"url": "https://passport.bilibili.com/h5-app/passport/login/scan?fixture=1",
+            data = {"url": "https://account.bilibili.com/h5-app/passport/login/scan?qrcode_key=fixture-key",
                     "qrcode_key": "fixture-key"}
         elif url == POLL_URL:
             data = {"code": self.state, "url": "https://passport.bilibili.com/crossDomain"}
@@ -71,3 +72,27 @@ def test_failure_never_saves_credentials(session):
     with pytest.raises(LoginFailure):
         execute(session, saved)
     assert saved == []
+
+
+@pytest.mark.parametrize("host", ["passport.bilibili.com", "account.bilibili.com"])
+def test_official_qr_origins_are_accepted(host):
+    validate_qr_destination(f"https://{host}/scan?qrcode_key=fixture-key", "fixture-key")
+    validate_qr_destination(f"https://{host}:443/scan?qrcode_key=fixture-key", "fixture-key")
+
+
+@pytest.mark.parametrize("url", [
+    "http://account.bilibili.com/scan?qrcode_key=fixture-key",
+    "https://account.bilibili.com.evil.invalid/scan?qrcode_key=fixture-key",
+    "https://evil.invalid/scan?qrcode_key=fixture-key",
+    "https://user@account.bilibili.com/scan?qrcode_key=fixture-key",
+    "https://account.bilibili.com:8443/scan?qrcode_key=fixture-key",
+    "https://account.bilibili.com:invalid/scan?qrcode_key=fixture-key",
+    "https://account.bilibili.com/scan?qrcode_key=other",
+    "https://account.bilibili.com/scan?qrcode_key=fixture-key&qrcode_key=other",
+    "https://account.bilibili.com/scan",
+    "https://account.bilibili.com/scan?qrcode_key=fixture-key#extra",
+    "https://account.bilibili.com/\nscan?qrcode_key=fixture-key",
+])
+def test_untrusted_or_mismatched_qr_destinations_are_rejected(url):
+    with pytest.raises(LoginFailure):
+        validate_qr_destination(url, "fixture-key")
