@@ -153,7 +153,8 @@ class ProxyMetricsStore:
             )
 
     def record_acquire(
-        self, provider: str, proxy_url: str, *, source: str | None = None
+        self, provider: str, proxy_url: str, *, source: str | None = None,
+        wait_ms: int | None = None,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         identifier = proxy_id(proxy_url)
@@ -173,6 +174,7 @@ class ProxyMetricsStore:
                 occurred_at=now,
                 proxy_identifier=identifier,
                 source=source,
+                detail={"wait_ms": max(0, wait_ms)} if wait_ms is not None else None,
             )
 
     def record_success(

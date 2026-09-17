@@ -4,6 +4,7 @@ import json
 import re
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Protocol
@@ -221,6 +222,11 @@ class KuaidailiProxyPool:
         self._next_indexes: dict[str | None, int] = {}
         self._experiment_roles: dict[str, str] = {}
         self._dual_channel_indexes: dict[str, int] = {}
+        self._recent_acquires: dict[str, deque[float]] = {}
+        self._recent_results: deque[bool] = deque(maxlen=50)
+        self._adaptive_fallback_until = 0.0
+        self._expansion_retry_at = 0.0
+        self._adaptive_expansion_remaining = 0
         self._lock = threading.Lock()
 
     def provider(
@@ -242,11 +248,12 @@ class KuaidailiProxyPool:
         *,
         experiment: bool = False,
     ) -> ProxyLease | None:
+        started = time.monotonic()
         with self._lock:
             now = time.monotonic()
             self._prune_expired(now)
-            if len(self._available(now, source)) <= self.settings.low_watermark:
-                self._refresh(source)
+            self._refresh_for_demand(source, now, experiment=experiment)
+            now = time.monotonic()
             available = set(self._available(now, source))
             if experiment and not self._experiment_batch_complete():
                 metric_source = (
@@ -262,6 +269,13 @@ class KuaidailiProxyPool:
                     self.provider_name, source=source
                 )
                 return None
+            if self.settings.adaptive_batching and not experiment:
+                under_pressure_limit = {
+                    url for url in available
+                    if self._recent_count(url, now) < self.settings.adaptive_request_limit_per_minute
+                }
+                # Once full-sized, never throttle below the original pool capacity.
+                available = under_pressure_limit or available
             next_index = self._next_indexes.get(source, 0)
             for _ in range(len(self._urls)):
                 url = self._urls[next_index % len(self._urls)]
@@ -269,16 +283,72 @@ class KuaidailiProxyPool:
                 if url in available:
                     self._next_indexes[source] = next_index
                     lease = self._experiment_lease(url) if experiment else self._lease(url)
+                    if self.settings.adaptive_batching:
+                        self._recent_acquires.setdefault(url, deque()).append(now)
                     self.metrics.record_acquire(
                         self.provider_name,
                         lease.proxy_url,
                         source=self._metrics_source(source, lease),
+                        wait_ms=int((time.monotonic() - started) * 1000),
                     )
                     return lease
             self.metrics.record_pool_empty(
                 self.provider_name, source=source
             )
             return None
+
+    def _recent_count(self, url: str, now: float) -> int:
+        recent = self._recent_acquires.get(url)
+        if recent is None:
+            return 0
+        while recent and recent[0] <= now - 60:
+            recent.popleft()
+        return len(recent)
+
+    def _refresh_for_demand(
+        self, source: str | None, now: float, *, experiment: bool
+    ) -> None:
+        available = self._available(now, source)
+        if not self.settings.adaptive_batching or experiment:
+            if len(available) <= self.settings.low_watermark:
+                self._refresh(source)
+            return
+
+        recovering = now < self._adaptive_fallback_until
+        pressured = bool(available) and all(
+            self._recent_count(url, now) >= self.settings.adaptive_request_limit_per_minute
+            for url in available
+        )
+        if not available:
+            needed = self.settings.batch_size if recovering else 1
+        elif recovering:
+            # Match the original policy: use surviving IPs until none are
+            # usable, then purchase the configured batch. Do not top up early.
+            return
+        elif pressured:
+            needed = min(
+                self.settings.batch_size - len(available),
+                self._adaptive_expansion_remaining,
+            )
+        else:
+            return
+        if needed <= 0 or (available and now < self._expansion_retry_at):
+            return
+        if not available and now < self._expansion_retry_at:
+            raise RuntimeError("Paid proxy extraction is cooling down")
+        reason = "recovery" if recovering else "pressure" if pressured else "single"
+        try:
+            self._refresh(source, count=needed, allocation=reason)
+            if not available:
+                self._adaptive_expansion_remaining = self.settings.batch_size - needed
+            else:
+                self._adaptive_expansion_remaining -= needed
+        except Exception:
+            # Optional expansion must not discard a healthy cached route or
+            # hammer the extraction API. Required extraction still fails closed.
+            self._expansion_retry_at = time.monotonic() + 30
+            if not self._available(time.monotonic(), source):
+                raise
 
     def report_bad(
         self,
@@ -287,6 +357,7 @@ class KuaidailiProxyPool:
         source: str | None = None,
     ) -> None:
         with self._lock:
+            self._record_adaptive_result(False)
             bench_key = (lease.proxy_url, source)
             streak_key = self._failure_streak_key(lease, source)
             streak = self._failure_streaks.get(streak_key, 0) + 1
@@ -297,6 +368,11 @@ class KuaidailiProxyPool:
             benched_until = None
             if should_bench:
                 now = time.monotonic()
+                if self.settings.adaptive_batching:
+                    self._adaptive_fallback_until = max(
+                        self._adaptive_fallback_until,
+                        now + self.settings.adaptive_recovery_seconds,
+                    )
                 remaining_lifetime = max(
                     0.0,
                     self._expires_at.get(lease.proxy_url, now) - now,
@@ -324,6 +400,7 @@ class KuaidailiProxyPool:
         source: str | None = None,
     ) -> None:
         with self._lock:
+            self._record_adaptive_result(True)
             self._failure_streaks.pop(
                 self._failure_streak_key(lease, source),
                 None,
@@ -334,7 +411,26 @@ class KuaidailiProxyPool:
             source=self._metrics_source(source, lease),
         )
 
-    def _refresh(self, source: str | None) -> None:
+    def _record_adaptive_result(self, success: bool) -> None:
+        if not self.settings.adaptive_batching:
+            return
+        self._recent_results.append(success)
+        failures = self._recent_results.count(False)
+        if (
+            not success
+            and len(self._recent_results) >= 20
+            and failures >= 3
+            and failures / len(self._recent_results) > 0.05
+        ):
+            self._adaptive_fallback_until = max(
+                self._adaptive_fallback_until,
+                time.monotonic() + self.settings.adaptive_recovery_seconds,
+            )
+
+    def _refresh(
+        self, source: str | None, *, count: int | None = None, allocation: str = "configured"
+    ) -> None:
+        requested_count = self.settings.batch_size if count is None else count
         try:
             api_url = self.settings.api_url_file.read_text(encoding="utf-8").strip()
             if not api_url.startswith(("http://", "https://")):
@@ -342,11 +438,11 @@ class KuaidailiProxyPool:
             parts = parse.urlsplit(api_url)
             query = parse.parse_qsl(parts.query, keep_blank_values=True)
             query = [
-                (key, str(self.settings.batch_size) if key == "num" else value)
+                (key, str(requested_count) if key == "num" else value)
                 for key, value in query
             ]
             if not any(key == "num" for key, _ in query):
-                query.append(("num", str(self.settings.batch_size)))
+                query.append(("num", str(requested_count)))
             if self.settings.use_api_expiry:
                 query = [
                     (key, "1" if key == "f_et" else value)
@@ -425,6 +521,8 @@ class KuaidailiProxyPool:
             expires_at_by_proxy=expiry_wall_by_url,
             source=source,
             detail={
+                "requested": requested_count,
+                "allocation": allocation,
                 "ttl_mode": (
                     "api"
                     if api_ttl_count and not fallback_ttl_count
@@ -477,6 +575,9 @@ class KuaidailiProxyPool:
         }
         self._dual_channel_indexes = {
             url: index for url, index in self._dual_channel_indexes.items() if url in live
+        }
+        self._recent_acquires = {
+            url: times for url, times in self._recent_acquires.items() if url in live
         }
         if self._urls:
             self._next_indexes = {
