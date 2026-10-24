@@ -13,7 +13,29 @@ from alphapulse.runtime.agent_pool import AgentPoolStore
 from alphapulse.runtime.logging import configure_logging
 from alphapulse.runtime.service import AlphaPulseService
 from alphapulse.seeds.catalog import SeedCatalogLoader
-from alphapulse.storage.rawstore import build_raw_store
+from alphapulse.storage.rawstore import (
+    MAX_BLOB_RETENTION_DAYS,
+    MAX_FETCH_LOG_RETENTION_DAYS,
+    MIN_RETENTION_DAYS,
+    build_raw_store,
+)
+
+
+def _retention_days(maximum: int):
+    def parse(raw: str) -> int:
+        try:
+            value = int(raw)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"expected an integer, got {raw!r}"
+            ) from None
+        if not MIN_RETENTION_DAYS <= value <= maximum:
+            raise argparse.ArgumentTypeError(
+                f"must be between {MIN_RETENTION_DAYS} and {maximum} days, got {value}"
+            )
+        return value
+
+    return parse
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,9 +72,15 @@ def build_parser() -> argparse.ArgumentParser:
     prune_parser = subparsers.add_parser(
         "raw-prune", help="Delete expired raw response blobs and fetch-log rows."
     )
-    prune_parser.add_argument("--days", type=int, help="Blob retention in days (overrides settings).")
     prune_parser.add_argument(
-        "--fetch-log-days", type=int, help="Fetch-log retention in days (overrides settings)."
+        "--days",
+        type=_retention_days(MAX_BLOB_RETENTION_DAYS),
+        help="Blob retention in days (overrides settings).",
+    )
+    prune_parser.add_argument(
+        "--fetch-log-days",
+        type=_retention_days(MAX_FETCH_LOG_RETENTION_DAYS),
+        help="Fetch-log retention in days (overrides settings).",
     )
     prune_parser.add_argument("--dry-run", action="store_true", help="Report only; delete nothing.")
     prune_parser.add_argument(

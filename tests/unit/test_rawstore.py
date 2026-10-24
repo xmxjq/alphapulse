@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
 
 from alphapulse.storage.rawstore import FetchRecord, RawResponseStore
 
@@ -180,7 +184,7 @@ def test_prune_skips_within_min_interval(tmp_path) -> None:
     assert forced.skipped is False
 
 
-def test_prune_removes_emptied_shard_dir(tmp_path) -> None:
+def test_prune_keeps_emptied_shard_dir(tmp_path) -> None:
     store = RawResponseStore(tmp_path / "raw")
     sha = store.save(_record(fetched_at=_ago(40)), "only body")
     assert sha is not None
@@ -189,6 +193,73 @@ def test_prune_removes_emptied_shard_dir(tmp_path) -> None:
 
     stats = store.prune(retention_days=7, fetch_log_retention_days=30)
 
-    assert stats.shards_removed == 1
+    assert stats.shards_removed == 0
     assert not blob.exists()
-    assert not blob.parent.exists()
+    assert blob.parent.is_dir()
+
+
+def test_prune_keeps_shard_dir_during_in_flight_write(tmp_path, monkeypatch) -> None:
+    store = RawResponseStore(tmp_path / "raw")
+    body = "racing body"
+    sha = hashlib.sha256(body.encode()).hexdigest()
+    shard = tmp_path / "raw" / "blobs" / sha[:2]
+    shard.mkdir(parents=True, exist_ok=True)
+    filler = "0" * 62
+    aged = shard / f"{sha[:2]}{filler}.gz"
+    aged.write_bytes(gzip.compress(b"aged body"))
+    _set_age(aged, 40)
+
+    original_write_bytes = Path.write_bytes
+    pruned = []
+
+    def write_bytes_after_prune(path, data, *args, **kwargs):
+        if not pruned:
+            pruned.append(store.prune(retention_days=7, fetch_log_retention_days=30))
+        return original_write_bytes(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_bytes", write_bytes_after_prune)
+
+    saved = store.save(_record(fetched_at=datetime.now(UTC)), body)
+
+    assert saved == sha
+    assert pruned and pruned[0].blobs_deleted == 1
+    assert not aged.exists()
+    assert shard.is_dir()
+    assert store.load_body(sha) == body.encode()
+
+
+@pytest.mark.parametrize("days", [0, -1, 366])
+def test_prune_rejects_out_of_range_retention_days(tmp_path, days: int) -> None:
+    store = RawResponseStore(tmp_path / "raw")
+    sha = store.save(_record(fetched_at=_ago(40)), "stale body")
+    assert sha is not None
+    blob = _blob_path(tmp_path, sha)
+    _set_age(blob, 40)
+
+    with pytest.raises(ValueError, match="retention_days"):
+        store.prune(retention_days=days, fetch_log_retention_days=30)
+
+    assert blob.exists()
+    with store.connection() as conn:
+        rows = conn.execute("SELECT COUNT(*) AS total FROM fetch_log").fetchone()
+        meta = conn.execute("SELECT COUNT(*) AS total FROM raw_store_meta").fetchone()
+    assert rows["total"] == 1
+    assert meta["total"] == 0
+
+
+@pytest.mark.parametrize("days", [0, -5, 3651])
+def test_prune_rejects_out_of_range_fetch_log_retention(tmp_path, days: int) -> None:
+    store = RawResponseStore(tmp_path / "raw")
+
+    with pytest.raises(ValueError, match="fetch_log_retention_days"):
+        store.prune(retention_days=7, fetch_log_retention_days=days)
+
+
+def test_prune_validates_even_when_throttled_or_dry_run(tmp_path) -> None:
+    store = RawResponseStore(tmp_path / "raw")
+    store.prune(retention_days=7, fetch_log_retention_days=30)
+
+    with pytest.raises(ValueError, match="retention_days"):
+        store.prune(retention_days=0)
+    with pytest.raises(ValueError, match="retention_days"):
+        store.prune(retention_days=-3, dry_run=True)

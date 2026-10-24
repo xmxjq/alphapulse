@@ -14,6 +14,11 @@ if TYPE_CHECKING:
     from alphapulse.runtime.config import Settings
 
 
+MIN_RETENTION_DAYS = 1
+MAX_BLOB_RETENTION_DAYS = 365
+MAX_FETCH_LOG_RETENTION_DAYS = 3650
+
+
 @dataclass
 class FetchRecord:
     source: str
@@ -33,8 +38,26 @@ class PruneStats:
     blobs_deleted: int = 0
     bytes_deleted: int = 0
     fetch_log_rows_deleted: int = 0
-    shards_removed: int = 0
+    shards_removed: int = 0  # kept for output compatibility; shard dirs stay
     skipped: bool = False
+
+
+def _check_retention_days(value: int, *, maximum: int, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer, got {value!r}")
+    if not MIN_RETENTION_DAYS <= value <= maximum:
+        raise ValueError(
+            f"{label} must be between {MIN_RETENTION_DAYS} and {maximum} days, got {value}"
+        )
+    return value
+
+
+def _check_optional_retention_days(
+    value: int | None, *, maximum: int, label: str
+) -> int | None:
+    if value is None:
+        return None
+    return _check_retention_days(value, maximum=maximum, label=label)
 
 
 class RawResponseStore:
@@ -172,7 +195,19 @@ class RawResponseStore:
         Metadata outlives bodies, mirroring response_body_retention_hours versus
         job_metadata_retention_days: a blob file is removed once it is older than
         retention_days, so load_body can miss for a row still in the log.
+
+        Emptied shard directories are kept: removing one races with a
+        concurrent save that already created the directory and is about to
+        write its blob, which would fail with FileNotFoundError.
         """
+        retention_days = _check_retention_days(
+            retention_days, maximum=MAX_BLOB_RETENTION_DAYS, label="retention_days"
+        )
+        fetch_log_retention_days = _check_optional_retention_days(
+            fetch_log_retention_days,
+            maximum=MAX_FETCH_LOG_RETENTION_DAYS,
+            label="fetch_log_retention_days",
+        )
         moment = now or datetime.now(UTC)
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=UTC)
@@ -218,9 +253,6 @@ class RawResponseStore:
                 stats.bytes_deleted += blob_stat.st_size
                 if not dry_run:
                     blob.unlink(missing_ok=True)
-            if not dry_run and not any(shard.iterdir()):
-                shard.rmdir()
-                stats.shards_removed += 1
 
         if not dry_run:
             self._record_prune(moment)
