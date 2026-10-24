@@ -101,7 +101,13 @@ max_retries = 3
 enabled = true
 root_path = ".runtime/raw"
 compress = true
+blob_retention_days = 7        # gzip blobs older than this (by mtime) are deleted
+fetch_log_retention_days = 90  # fetch_log rows older than this (by fetch time) are deleted
 ```
+
+Retention prunes on the crawl cycle at most once every 6 hours, so a log row can
+outlive its blob body: `load_body` misses for an expired body while the row
+still explains the fetch. See `docs/raw-store-retention.md`.
 
 Every request sleeps `uniform(min, max)` seconds times an adaptive backoff
 multiplier (doubles on rate-limit responses, halves back down on success).

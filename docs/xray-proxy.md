@@ -92,3 +92,8 @@ After enabling, confirm crawl traffic stays clean via the fetch log:
 sqlite3 .runtime/raw/fetch_log.db \
   "SELECT block_kind, COUNT(*) FROM fetch_log WHERE block_kind IS NOT NULL GROUP BY 1"
 ```
+
+Rows older than `fetch_log_retention_days` (default 90) are pruned from this
+log, so a clean `block_kind` column can mean the evidence aged out rather than
+that traffic stayed clean - check inside the retention window when validating a
+proxy change. See `docs/raw-store-retention.md`.
