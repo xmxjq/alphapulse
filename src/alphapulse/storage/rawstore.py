@@ -6,7 +6,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
@@ -26,6 +26,15 @@ class FetchRecord:
     block_kind: str | None = None
     parser_error: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PruneStats:
+    blobs_deleted: int = 0
+    bytes_deleted: int = 0
+    fetch_log_rows_deleted: int = 0
+    shards_removed: int = 0
+    skipped: bool = False
 
 
 class RawResponseStore:
@@ -82,6 +91,11 @@ class RawResponseStore:
 
                 CREATE INDEX IF NOT EXISTS idx_fetch_log_sha
                     ON fetch_log (content_sha256);
+
+                CREATE TABLE IF NOT EXISTS raw_store_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
                 """
             )
 
@@ -142,6 +156,98 @@ class RawResponseStore:
     def _blob_path(self, sha256: str) -> Path:
         suffix = ".gz" if self.compress else ".bin"
         return self.blobs_dir / sha256[:2] / f"{sha256}{suffix}"
+
+
+    def prune(
+        self,
+        *,
+        retention_days: int,
+        fetch_log_retention_days: int | None = None,
+        dry_run: bool = False,
+        min_interval: timedelta = timedelta(hours=6),
+        now: datetime | None = None,
+    ) -> PruneStats:
+        """Delete fetch-log rows and blob bodies past their retention windows.
+
+        Metadata outlives bodies, mirroring response_body_retention_hours versus
+        job_metadata_retention_days: a blob file is removed once it is older than
+        retention_days, so load_body can miss for a row still in the log.
+        """
+        moment = now or datetime.now(UTC)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        stats = PruneStats()
+        if (
+            not dry_run
+            and min_interval.total_seconds() > 0
+            and self._pruned_recently(moment, min_interval)
+        ):
+            stats.skipped = True
+            return stats
+
+        if fetch_log_retention_days is not None:
+            cutoff = (moment - timedelta(days=fetch_log_retention_days)).isoformat()
+            with self.connection() as conn:
+                if dry_run:
+                    row = conn.execute(
+                        "SELECT COUNT(*) AS total FROM fetch_log WHERE fetched_at < ?",
+                        (cutoff,),
+                    ).fetchone()
+                    stats.fetch_log_rows_deleted = int(row["total"])
+                else:
+                    cursor = conn.execute(
+                        "DELETE FROM fetch_log WHERE fetched_at < ?", (cutoff,)
+                    )
+                    stats.fetch_log_rows_deleted = max(cursor.rowcount, 0)
+
+        suffix = ".gz" if self.compress else ".bin"
+        blob_cutoff = (moment - timedelta(days=retention_days)).timestamp()
+        for shard in sorted(self.blobs_dir.iterdir()):
+            if not shard.is_dir():
+                continue
+            for blob in shard.iterdir():
+                if blob.suffix != suffix:
+                    continue
+                try:
+                    blob_stat = blob.stat()
+                except FileNotFoundError:
+                    continue
+                if blob_stat.st_mtime >= blob_cutoff:
+                    continue
+                stats.blobs_deleted += 1
+                stats.bytes_deleted += blob_stat.st_size
+                if not dry_run:
+                    blob.unlink(missing_ok=True)
+            if not dry_run and not any(shard.iterdir()):
+                shard.rmdir()
+                stats.shards_removed += 1
+
+        if not dry_run:
+            self._record_prune(moment)
+        return stats
+
+    def _pruned_recently(self, moment: datetime, min_interval: timedelta) -> bool:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM raw_store_meta WHERE key = 'last_prune'"
+            ).fetchone()
+        if row is None:
+            return False
+        try:
+            last = datetime.fromisoformat(str(row["value"]))
+        except ValueError:
+            return False
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        return moment - last < min_interval
+
+    def _record_prune(self, moment: datetime) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT INTO raw_store_meta (key, value) VALUES ('last_prune', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (moment.isoformat(),),
+            )
 
 
 def build_raw_store(settings: "Settings") -> RawResponseStore | None:

@@ -148,11 +148,16 @@ class CrawlKuaidailiSettings(BaseModel):
     share_across_sources: bool = False
     use_api_expiry: bool = False
     expiry_safety_seconds: int = Field(default=30, ge=0, le=300)
+    adaptive_batching: bool = False
+    adaptive_request_limit_per_minute: int = Field(default=16, ge=1, le=600)
+    adaptive_recovery_seconds: int = Field(default=600, ge=60, le=3600)
 
     @model_validator(mode="after")
     def validate_low_watermark(self) -> "CrawlKuaidailiSettings":
         if self.low_watermark >= self.batch_size:
             raise ValueError("crawl.kuaidaili.low_watermark must be less than batch_size")
+        if self.adaptive_batching and (self.batch_size < 2 or self.low_watermark != 0):
+            raise ValueError("adaptive batching requires batch_size >= 2 and low_watermark = 0")
         return self
 
 
@@ -202,6 +207,8 @@ class RawStoreSettings(BaseModel):
     enabled: bool = False
     root_path: Path = Path(".runtime/raw")
     compress: bool = True
+    blob_retention_days: int = Field(default=7, ge=1, le=365)
+    fetch_log_retention_days: int = Field(default=90, ge=1, le=3650)
 
 
 class XueqiuSettings(BaseModel):
@@ -451,6 +458,8 @@ class HupuSettings(BaseModel):
 
     enabled: bool = False
     base_url: HttpUrl = "https://bbs.hupu.com"
+    mobile_api_enabled: bool = True
+    mobile_base_url: HttpUrl = "https://m.hupu.com"
     board_slug: str = "stock"
     authorization_expires_on: date | None = None
     max_list_pages: int = Field(default=6, ge=1, le=40)
@@ -528,6 +537,11 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_state_dir(self) -> "Settings":
+        if (
+            self.crawl.kuaidaili.adaptive_batching
+            and self.sources.guba.proxy_dual_endpoint_experiment_enabled
+        ):
+            raise ValueError("adaptive batching cannot be combined with the Guba paired-IP experiment")
         if self.crawl.state_backend == "sqlite":
             self.crawl.state_path.parent.mkdir(parents=True, exist_ok=True)
         return self

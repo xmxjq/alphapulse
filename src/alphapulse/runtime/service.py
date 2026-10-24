@@ -239,6 +239,8 @@ class AlphaPulseService:
         try:
             if source_name == "guba":
                 self._prune_expired_guba_pending_tasks()
+            elif source_name == "hupu":
+                self._prune_expired_hupu_pending_tasks()
             queue = TaskQueue()
             for seed in self._select_seeds(seed_set_name):
                 stats.seeds_processed += 1
@@ -355,6 +357,8 @@ class AlphaPulseService:
         )
         try:
             self._prune_expired_guba_pending_tasks()
+            self._prune_expired_hupu_pending_tasks()
+            self._prune_raw_store()
             queues = {source_name: TaskQueue() for source_name in self.sources}
             for seed in self._select_seeds(seed_set_name):
                 stats.seeds_processed += 1
@@ -1230,6 +1234,11 @@ class AlphaPulseService:
                         comment_tasks.append(comment_task)
             self._enqueue_tasks(queue, comment_tasks, stats, persist=True)
 
+        if outcome.post_board_memberships:
+            add_memberships = getattr(self.store, "add_post_board_memberships", None)
+            if callable(add_memberships):
+                add_memberships(task.source, outcome.post_board_memberships)
+
         self._enqueue_tasks(queue, outcome.discovered_tasks, stats, persist=True)
 
         log_level = logging.WARNING if (outcome.blocked or outcome.errors) else logging.INFO
@@ -1331,6 +1340,73 @@ class AlphaPulseService:
 
     def _guba_day_bounds(self, now: datetime | None = None) -> tuple[int, int]:
         timezone = ZoneInfo(self.settings.sources.guba.ranking_timezone)
+        local_now = (now or datetime.now(UTC)).astimezone(timezone)
+        start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_local = start_local + timedelta(days=1)
+        return int(start_local.timestamp()), int(end_local.timestamp())
+
+    def _prune_expired_hupu_pending_tasks(self) -> None:
+        assert self.state is not None
+        if not (
+            self.settings.sources.hupu.enabled
+            and self.settings.sources.hupu.day_scoped
+        ):
+            return
+        start_ts, end_ts = self._hupu_day_bounds()
+        pruned = self.state.prune_pending_tasks_outside_pubdate_range(
+            source="hupu",
+            kind="fetch_post",
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+        if pruned:
+            logger.info(
+                "Expired Hupu pending tasks pruned",
+                extra={
+                    "event": "hupu_pending_pruned",
+                    "extra_data": {
+                        "tasks": pruned,
+                        "day_start_ts": start_ts,
+                        "day_end_ts": end_ts,
+                    },
+                },
+            )
+
+    def _prune_raw_store(self) -> None:
+        raw_settings = self.settings.crawl.raw_store
+        if not raw_settings.enabled:
+            return
+        store = build_raw_store(self.settings)
+        if store is None:
+            return
+        try:
+            stats = store.prune(
+                retention_days=raw_settings.blob_retention_days,
+                fetch_log_retention_days=raw_settings.fetch_log_retention_days,
+            )
+        except Exception:
+            logger.exception(
+                "Raw store prune failed",
+                extra={"event": "raw_store_prune_failed", "extra_data": {}},
+            )
+            return
+        if stats.skipped:
+            return
+        logger.info(
+            "Raw store pruned",
+            extra={
+                "event": "raw_store_pruned",
+                "extra_data": {
+                    "blobs_deleted": stats.blobs_deleted,
+                    "bytes_deleted": stats.bytes_deleted,
+                    "fetch_log_rows_deleted": stats.fetch_log_rows_deleted,
+                    "shards_removed": stats.shards_removed,
+                },
+            },
+        )
+
+    def _hupu_day_bounds(self, now: datetime | None = None) -> tuple[int, int]:
+        timezone = ZoneInfo(self.settings.sources.hupu.ranking_timezone)
         local_now = (now or datetime.now(UTC)).astimezone(timezone)
         start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_local = start_local + timedelta(days=1)

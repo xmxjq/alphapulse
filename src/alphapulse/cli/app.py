@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
+from datetime import timedelta
 from pathlib import Path
 
 from alphapulse.cli.sql_shell import run_once, run_repl, SqlExecutor
@@ -11,6 +13,7 @@ from alphapulse.runtime.agent_pool import AgentPoolStore
 from alphapulse.runtime.logging import configure_logging
 from alphapulse.runtime.service import AlphaPulseService
 from alphapulse.seeds.catalog import SeedCatalogLoader
+from alphapulse.storage.rawstore import build_raw_store
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +46,18 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("validate-config", help="Validate config and print normalized settings.")
     subparsers.add_parser("init-db", help="Create configured storage schema.")
     subparsers.add_parser("health", help="Check configured storage connectivity and local state.")
+
+    prune_parser = subparsers.add_parser(
+        "raw-prune", help="Delete expired raw response blobs and fetch-log rows."
+    )
+    prune_parser.add_argument("--days", type=int, help="Blob retention in days (overrides settings).")
+    prune_parser.add_argument(
+        "--fetch-log-days", type=int, help="Fetch-log retention in days (overrides settings)."
+    )
+    prune_parser.add_argument("--dry-run", action="store_true", help="Report only; delete nothing.")
+    prune_parser.add_argument(
+        "--force", action="store_true", help="Ignore the minimum interval between prune runs."
+    )
     return parser
 
 
@@ -129,6 +144,38 @@ def main(argv: list[str] | None = None) -> int:
             status["state_exists"] = settings.crawl.state_path.exists()
         print(json.dumps(status, indent=2))
         return 0 if status["storage_ok"] else 1
+
+    if args.command == "raw-prune":
+        raw_settings = settings.crawl.raw_store
+        store = build_raw_store(settings)
+        if store is None:
+            print(json.dumps({"enabled": False, "detail": "crawl.raw_store.enabled is false"}, indent=2))
+            return 1
+        retention_days = args.days if args.days is not None else raw_settings.blob_retention_days
+        fetch_log_days = (
+            args.fetch_log_days
+            if args.fetch_log_days is not None
+            else raw_settings.fetch_log_retention_days
+        )
+        stats = store.prune(
+            retention_days=retention_days,
+            fetch_log_retention_days=fetch_log_days,
+            dry_run=args.dry_run,
+            min_interval=timedelta() if args.force else timedelta(hours=6),
+        )
+        print(
+            json.dumps(
+                {
+                    "root": str(store.root),
+                    "dry_run": args.dry_run,
+                    "blob_retention_days": retention_days,
+                    "fetch_log_retention_days": fetch_log_days,
+                    **asdict(stats),
+                },
+                indent=2,
+            )
+        )
+        return 0
 
     if args.command == "refresh-seeds":
         result = service.seed_discovery.refresh(seed_set_name=args.seed_set)

@@ -121,6 +121,7 @@ allowed_hosts = [
   "www.tgb.cn",
   "app.jiuyangongshe.com",
   "bbs.hupu.com",
+  "m.hupu.com",
 ]
 
 [crawl.raw_store]
@@ -128,9 +129,16 @@ allowed_hosts = [
 # under {root_path}/blobs plus a {root_path}/fetch_log.db SQLite index that
 # records status, timing, content hash, block classification, and parser
 # errors per fetch. Used by sources.guba for debugging and reprocessing.
+# Bounded retention: fetch_log rows older than fetch_log_retention_days are
+# dropped, and a blob body older than blob_retention_days is deleted (the log
+# row survives, so load_body can miss for an old row). Pruning runs on the
+# crawl cycle at most once every 6 hours; alphapulse raw-prune --dry-run
+# previews the effect.
 enabled = false
 root_path = ".runtime/raw"
 compress = true
+blob_retention_days = 7
+fetch_log_retention_days = 90
 
 [sources.xueqiu]
 enabled = true
@@ -312,6 +320,8 @@ fetch_comments = false
 # authorization; the crawler stops automatically after this date.
 enabled = false
 base_url = "https://bbs.hupu.com"
+mobile_api_enabled = true
+mobile_base_url = "https://m.hupu.com"
 board_slug = "stock"
 authorization_expires_on = 2029-07-31
 # /stock-postdate is sorted newest-first at roughly 50 posts per page.
