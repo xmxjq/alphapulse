@@ -132,6 +132,7 @@ class AlphaPulseService:
     sources: dict[str, SourceAdapter] = field(default_factory=dict)
     seed_discovery: SeedDiscoveryManager | None = None
     seed_discovery_lock: Lock = field(default_factory=Lock)
+    raw_store_prune_lock: Lock = field(default_factory=Lock)
 
     def __post_init__(self) -> None:
         if self.state is None:
@@ -1380,6 +1381,8 @@ class AlphaPulseService:
         store = build_raw_store(self.settings)
         if store is None:
             return
+        if not self.raw_store_prune_lock.acquire(blocking=False):
+            return
         try:
             stats = store.prune(
                 retention_days=raw_settings.blob_retention_days,
@@ -1391,6 +1394,8 @@ class AlphaPulseService:
                 extra={"event": "raw_store_prune_failed", "extra_data": {}},
             )
             return
+        finally:
+            self.raw_store_prune_lock.release()
         if stats.skipped:
             return
         logger.info(
