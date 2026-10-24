@@ -241,6 +241,7 @@ class AlphaPulseService:
                 self._prune_expired_guba_pending_tasks()
             elif source_name == "hupu":
                 self._prune_expired_hupu_pending_tasks()
+            self._prune_raw_store()
             queue = TaskQueue()
             for seed in self._select_seeds(seed_set_name):
                 stats.seeds_processed += 1
