@@ -470,6 +470,23 @@ def test_guba_daily_report_matches_lowercase_concept_posts_to_ranking(
     assert all(section.key != "other" for section in report.sections)
 
 
+def test_guba_report_includes_listed_concept_without_duplicating_total(tmp_path: Path) -> None:
+    state = StateStore(tmp_path / "state.db")
+    day = "2026-09-16"
+    state.replace_guba_ranking(day, [
+        {"section": "hot_concept", "rank": 1, "code": "BK1152", "name": "Concept",
+         "url": "https://guba.eastmoney.com/list,BK1152.html", "members": None},
+    ])
+    reader = StubReader()
+    reader.range_posts = [_post_summary("guba", "42", "600519", 3).model_copy(
+        update={"board_codes": ["600519", "bk1152", "BK1152"]})]
+    report = WebQueries(reader=reader, state=state).guba_daily_report(day)
+    assert report.total_posts == 1
+    assert report.total_comments == 3
+    assert report.sections[0].entries[0].post_count == 1
+    assert report.sections[1].entries[0].post_count == 1
+
+
 def test_web_queries_annotates_guba_boards_with_seed_sets(tmp_path: Path) -> None:
     state = StateStore(tmp_path / "state.db")
     state.store_compiled_seed_set(

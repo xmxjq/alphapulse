@@ -54,6 +54,8 @@ class GubaAdapter:
         self.raw_store = raw_store
         self._blocked_until = 0.0
         self._blocked_kind: str | None = None
+        self._listed_board_codes: dict[str, set[str]] = {}
+        self._membership_day: str | None = None
 
     def discover(self, seed: SeedDefinition) -> list[CrawlTask]:
         tasks: list[CrawlTask] = []
@@ -125,10 +127,13 @@ class GubaAdapter:
         else:
             response = self.client.get(str(task.url), expect_marker=expect_marker)
 
-        if response.status_code == 0:
+        if response.status_code == 0 or response.status_code >= 500:
             self._save_raw(response, task.kind, requested_url=str(task.url))
+            # A missing outcome status keeps the durable task eligible for retry.
+            # The raw archive retains the actual upstream HTTP status.
             outcome = FetchOutcome(blocked=False, status_code=None)
-            outcome.errors.append(f"Fetch failed for {task.url}: {response.error_message}")
+            reason = response.error_message or f"HTTP {response.status_code}"
+            outcome.errors.append(f"Fetch failed for {task.url}: {reason}")
             return outcome
 
         if response.blocked:
@@ -182,6 +187,10 @@ class GubaAdapter:
 
         base = str(self.settings.base_url)
         day_start = self._day_start()
+        membership_day = datetime.now(ZoneInfo(self.settings.ranking_timezone)).date().isoformat()
+        if membership_day != self._membership_day:
+            self._listed_board_codes.clear()
+            self._membership_day = membership_day
         seen_post_ids: set[str] = set()
         for entry in article_list.entries:
             if entry.post_id in seen_post_ids:
@@ -199,6 +208,10 @@ class GubaAdapter:
             ):
                 continue
             detail_url = post_detail_url(base, request_code, entry.post_id)
+            if board_code:
+                codes = self._listed_board_codes.setdefault(entry.post_id, set())
+                codes.add(board_code)
+                outcome.post_board_memberships[entry.post_id] = sorted(codes)
             pubdate_ts = self._entry_ts(entry)
             outcome.discovered_tasks.append(
                 CrawlTask(
@@ -210,6 +223,7 @@ class GubaAdapter:
                     metadata={
                         "post_id": entry.post_id,
                         "board_code": code,
+                        "listing_board_code": board_code,
                         "title": entry.title,
                         "post_type": entry.post_type,
                         "pubdate_ts": pubdate_ts,
@@ -337,6 +351,11 @@ class GubaAdapter:
             return outcome
 
         self._save_raw(response, task.kind, requested_url=str(task.url), meta=meta)
+        listed_codes = set(self._listed_board_codes.get(post_id, set()))
+        listing_code = normalize_board_code(task.metadata.get("listing_board_code"))
+        if listing_code:
+            listed_codes.add(listing_code)
+        post.raw_topic_ids = list(dict.fromkeys([*post.raw_topic_ids, *sorted(listed_codes)]))
         outcome.posts.append(post)
         if author is not None:
             outcome.authors.append(author)
@@ -363,7 +382,7 @@ class GubaAdapter:
         while page <= self.settings.max_reply_pages:
             response = self.client.post_replies(post_id=post_id, board_code=board_code, page=page)
             meta = {"post_id": post_id, "board_code": board_code, "page": page}
-            if response.status_code == 0 or response.blocked:
+            if response.status_code == 0 or response.status_code >= 500 or response.blocked:
                 if response.blocked:
                     self._trip_circuit(response.block_kind)
                 self._save_raw(

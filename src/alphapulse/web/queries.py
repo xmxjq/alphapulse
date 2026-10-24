@@ -772,8 +772,7 @@ class WebQueries:
                 if multi_board and post.board_codes
                 else [post.board_code or ""]
             )
-            for raw_code in dict.fromkeys(raw_codes):
-                code = normalize_board_code(raw_code) or ""
+            for code in dict.fromkeys(normalize_board_code(raw_code) or "" for raw_code in raw_codes):
                 by_board.setdefault(code, []).append(post)
         total_posts = len(posts)
         total_comments = sum(post.comment_count or 0 for post in posts)
@@ -858,6 +857,7 @@ class WebQueries:
             lambda code: f"{base}/list,{code}.html",
             limit,
             normalize_guba_board_code,
+            multi_board=True,
         )
 
     def guba_llm_report(

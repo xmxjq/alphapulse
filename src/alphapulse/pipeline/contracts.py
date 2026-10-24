@@ -105,6 +105,7 @@ class FetchOutcome(BaseModel):
     authors: list[NormalizedAuthor] = Field(default_factory=list)
     comments: list[NormalizedComment] = Field(default_factory=list)
     discovered_tasks: list[CrawlTask] = Field(default_factory=list)
+    post_board_memberships: dict[str, list[str]] = Field(default_factory=dict)
     blocked: bool = False
     status_code: int | None = None
     errors: list[str] = Field(default_factory=list)

@@ -140,6 +140,44 @@ mobile routing turn off without a restart. Proxy metrics are split into
 `guba_ab_dual_mobile`. Health remains shared by IP: a hard block on either
 dual channel benches that IP for all Guba traffic.
 
+## Adaptive Extraction
+
+For a shared pool, adaptive batching reduces purchases at low demand without
+lowering the configured peak pool size or changing source crawl settings:
+
+```toml
+[crawl.kuaidaili]
+batch_size = 2
+low_watermark = 0
+adaptive_batching = true
+adaptive_request_limit_per_minute = 16
+adaptive_recovery_seconds = 600
+```
+
+An empty healthy pool initially requests one IP. If all usable IPs reach the
+rolling one-minute acquisition threshold, it buys only the missing capacity up
+to `batch_size` purchases in that replenishment round. If one IP subsequently
+expires, it does not repeatedly top up the pool: surviving usable IPs are reused
+until none remain, as in the original policy. This threshold is an expansion
+trigger, not a throttle. Already-paid usable IPs are retained until expiry.
+
+An IP bench or an elevated recent failure ratio temporarily restores the normal
+batch size on the next required refill, without topping up healthy cached IPs.
+The failure guard uses up to 50 results, requires at least 20
+results and three failures, and triggers above 5% failures. The recovery period
+does not shorten source-scoped benches. Optional expansion errors retain a
+still-valid cached route and back off extraction for 30 seconds; an empty or
+expired pool still fails closed rather than falling through to direct egress.
+
+Adaptive batching is opt-in, requires `batch_size >= 2` and `low_watermark = 0`,
+and cannot be combined with the paired-IP Guba experiment. It does not change
+source lists, refresh intervals, source concurrency, agent schedules, or the IP
+expiry safety margin. Batch metrics add `requested` and `allocation`
+(`single`, `pressure`, `recovery`, or `configured`) for independent readback.
+Lease events also record `wait_ms` for time spent waiting to acquire a proxy.
+Savings depend on demand and failure patterns and should be measured, not
+assumed to be 50%.
+
 ## Recovery
 
 Keep both `crawler` and `guba_browser` stopped while changing proxy settings.

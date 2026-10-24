@@ -37,7 +37,7 @@ class BilibiliAdapter:
         self.settings = settings
         self.crawl_settings = crawl_settings
         self.api = BilibiliApiClient(settings, crawl_settings)
-        self.space_cli = space_cli or BilibiliCliSpaceDiscoveryClient()
+        self.space_cli = space_cli or BilibiliCliSpaceDiscoveryClient(cookies=settings.cookies)
 
     def discover(self, seed: SeedDefinition) -> list[CrawlTask]:
         tasks: list[CrawlTask] = []

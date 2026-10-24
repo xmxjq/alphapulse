@@ -344,13 +344,14 @@ class GubaClient:
                         },
                     },
                 )
-                if lease is not None and blocked:
+                retryable = blocked or block_kind == "http_5xx"
+                if lease is not None and retryable:
                     self._report_bad_proxy(
                         lease,
                         f"HTTP {exc.code}",
                         provider=lease_provider,
                     )
-                if blocked and attempt + 1 < attempts:
+                if retryable and attempt + 1 < attempts:
                     backoff_for_block = True
                     continue
                 return last_result
@@ -386,6 +387,24 @@ class GubaClient:
             if remote_response is not None and remote_response.duration_ms is not None:
                 duration_ms = remote_response.duration_ms
             block_kind = classify_block(status_code, text, final_url)
+            if block_kind == "http_5xx":
+                reason = f"HTTP {status_code}"
+                last_result = GubaHttpResult(
+                    url=final_url,
+                    status_code=status_code,
+                    text=text,
+                    duration_ms=duration_ms,
+                    error_message=reason,
+                    block_kind=block_kind,
+                )
+                if lease is not None:
+                    self._report_bad_proxy(lease, reason, provider=lease_provider)
+                if agent_job_id is not None:
+                    self.agent_pool.store.record_outcome(agent_job_id, "failure", reason)
+                if attempt + 1 < attempts:
+                    backoff_for_block = True
+                    continue
+                return last_result
             if mobile_post_id is not None and block_kind is None:
                 mobile_post = self._mobile_article_post(text, mobile_post_id)
                 if mobile_post is None:

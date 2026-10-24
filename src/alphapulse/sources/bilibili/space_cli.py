@@ -13,9 +13,29 @@ class SpaceDiscoveryClient(Protocol):
 
 
 class BilibiliCliSpaceDiscoveryClient:
+    def __init__(self, *, cookies: dict[str, str] | None = None) -> None:
+        self.cookies = dict(cookies or {})
+
+    def _credential(self, bili_auth):
+        # Loading must not scan browsers, refresh credentials, or clear sessions
+        # after an indeterminate API failure in an unattended crawler.
+        saved = bili_auth._load_saved_credential()
+        if saved is not None:
+            return saved
+        if self.cookies.get("SESSDATA"):
+            return bili_auth.Credential(
+                sessdata=self.cookies["SESSDATA"],
+                bili_jct=self.cookies.get("bili_jct", ""),
+                buvid3=self.cookies.get("buvid3", ""),
+                buvid4=self.cookies.get("buvid4", ""),
+                dedeuserid=self.cookies.get("DedeUserID", ""),
+                ac_time_value=self.cookies.get("ac_time_value", ""),
+            )
+        return None
+
     def get_user_videos(self, *, uid: int, count: int) -> list[dict[str, Any]]:
         bili_auth, bili_client = _import_bili_cli()
-        credential = bili_auth.get_credential(mode="read")
+        credential = self._credential(bili_auth)
         result = asyncio.run(
             bili_client.get_user_videos(
                 uid=uid,
@@ -29,7 +49,7 @@ class BilibiliCliSpaceDiscoveryClient:
 
     def get_user_info(self, *, uid: int) -> dict[str, Any]:
         bili_auth, bili_client = _import_bili_cli()
-        credential = bili_auth.get_credential(mode="read")
+        credential = self._credential(bili_auth)
         result = asyncio.run(bili_client.get_user_info(uid=uid, credential=credential))
         if not isinstance(result, dict):
             raise RuntimeError("bilibili-cli returned an unexpected user-info payload")
@@ -37,9 +57,7 @@ class BilibiliCliSpaceDiscoveryClient:
 
     def search_videos(self, *, keyword: str, count: int) -> list[dict[str, Any]]:
         bili_auth, bili_client = _import_bili_cli()
-        # Search is unauthenticated, but pass credential when available to avoid
-        # rate limiting on heavy keyword queries.
-        credential = bili_auth.get_credential(mode="read")
+        # The CLI search API has no credential parameter.
         results: list[dict[str, Any]] = []
         page = 1
         max_pages = 2
