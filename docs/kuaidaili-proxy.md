@@ -42,7 +42,7 @@ enabled = false
 
 The provider overrides the `num` parameter in the saved URL with `batch_size`,
 accepts both text and JSON API responses, rotates cached proxies round-robin,
-and benches proxies immediately after explicit blocks (HTTP 403/407/418/429)
+and benches proxies immediately after explicit blocks (HTTP 403/418/429)
 or proxy setup failures. A `soft_block` classification (a 200 response
 missing its expected data marker — the only signal `classify_block` has for
 a WAF/interstitial page) is a heuristic, not a confirmed block, so it goes
@@ -59,6 +59,26 @@ HTTP/1 response stream even when the upstream page is complete.
 The WebUI `Proxy pool` tab attributes leases, successes, failures, API errors,
 and empty-pool events to Guba, TGB, or Jiuyan. Events recorded before source
 attribution was introduced remain visible as `unknown`.
+
+## Authentication circuit breaker
+
+An explicit proxy authentication failure (HTTP 407, including a curl CONNECT
+tunnel response) immediately opens a persistent, pool-wide circuit. No cached
+proxy can be leased and no more paid IPs can be extracted, including after a
+crawler restart. Ordinary source-specific blocks and timeouts keep the existing
+source-isolated retry policy.
+
+The marker is next to `metrics_path`, with `.auth-blocked` appended to its
+filename. Operators may create this marker to hold paid traffic during an
+incident. Keep `crawl.proxy.enabled = true` and `fail_open = false`: disabling
+the proxy is not a safe substitute because it can enable direct requests.
+
+After independently verifying the provider account and the worker's public-IP
+whitelist, stop the crawler, move the exact marker to a timestamped recovery
+location without overwriting, and restart the crawler. Do not automatically
+remove the marker or periodically purchase IPs to test recovery. Self-hosted
+agent paths are not blocked by this circuit; sources that require paid
+discovery may remain degraded until authentication is repaired.
 
 A failure to acquire a proxy at all (Kuaidaili GetDPS API error, or an empty
 pool) is retried within the same request up to `sources.guba.max_retries` /

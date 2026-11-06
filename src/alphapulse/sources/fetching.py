@@ -227,6 +227,10 @@ class KuaidailiProxyPool:
         self._adaptive_fallback_until = 0.0
         self._expansion_retry_at = 0.0
         self._adaptive_expansion_remaining = 0
+        self.auth_block_path = settings.metrics_path.with_name(
+            settings.metrics_path.name + ".auth-blocked"
+        )
+        self._auth_blocked = False
         self._lock = threading.Lock()
 
     def provider(
@@ -250,6 +254,7 @@ class KuaidailiProxyPool:
     ) -> ProxyLease | None:
         started = time.monotonic()
         with self._lock:
+            self._check_auth_circuit()
             now = time.monotonic()
             self._prune_expired(now)
             self._refresh_for_demand(source, now, experiment=experiment)
@@ -357,6 +362,14 @@ class KuaidailiProxyPool:
         source: str | None = None,
     ) -> None:
         with self._lock:
+            if self._is_proxy_auth_failure(reason):
+                # Authentication is shared: rotating paid exits cannot repair it.
+                self._auth_blocked = True
+                try:
+                    with self.auth_block_path.open("x", encoding="utf-8") as marker:
+                        json.dump({"reason": "proxy_auth_407", "opened_at": datetime.now(UTC).isoformat()}, marker)
+                except FileExistsError:
+                    pass
             self._record_adaptive_result(False)
             bench_key = (lease.proxy_url, source)
             streak_key = self._failure_streak_key(lease, source)
@@ -394,6 +407,21 @@ class KuaidailiProxyPool:
                 source=self._metrics_source(source, lease),
             )
 
+    def _check_auth_circuit(self) -> None:
+        if self._auth_blocked or self.auth_block_path.exists():
+            raise RuntimeError(
+                "Paid proxy authentication circuit is open; manual verification and reset required"
+            )
+
+    @staticmethod
+    def _is_proxy_auth_failure(reason: str) -> bool:
+        return bool(re.search(
+            r"(?:\bhttp(?:\s+error)?|\bstatus(?:_code|\s+code)?|\bresponse)\s*[:=]?\s*407\b"
+            r"|\bproxy authentication required\b",
+            reason,
+            re.IGNORECASE,
+        ))
+
     def report_success(
         self,
         lease: ProxyLease,
@@ -430,6 +458,7 @@ class KuaidailiProxyPool:
     def _refresh(
         self, source: str | None, *, count: int | None = None, allocation: str = "configured"
     ) -> None:
+        self._check_auth_circuit()
         requested_count = self.settings.batch_size if count is None else count
         try:
             api_url = self.settings.api_url_file.read_text(encoding="utf-8").strip()
