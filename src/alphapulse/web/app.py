@@ -16,6 +16,7 @@ from toon_format import encode
 
 from alphapulse.runtime.config import Settings
 from alphapulse.runtime.agent_pool import AgentPoolStore
+from alphapulse.web.crawl_health import crawl_health
 from alphapulse.web.models import (
     AgentCompleteRequest,
     AgentFailRequest,
@@ -83,6 +84,19 @@ def create_app(
 
     def get_queries() -> WebQueries:
         return queries
+
+    @app.get("/api/crawl-health")
+    def crawl_health_status(q: WebQueries = Depends(get_queries)) -> Response:
+        readable = True
+        latest = None
+        try:
+            latest = q.reader.latest_run()
+        except Exception:
+            readable = False
+        payload = crawl_health(settings, last_cycle_at=latest.finished_at if latest else None,
+                               cycle_readable=readable)
+        return Response(content=json.dumps(payload), media_type="application/json",
+                        headers={"Cache-Control": "no-store"})
 
     @app.get("/api/status", response_model=StatusResponse)
     def status(q: WebQueries = Depends(get_queries)) -> StatusResponse:
