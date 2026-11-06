@@ -80,6 +80,35 @@ remove the marker or periodically purchase IPs to test recovery. Self-hosted
 agent paths are not blocked by this circuit; sources that require paid
 discovery may remain degraded until authentication is repaired.
 
+## Extraction budgets
+
+Paid extractions also have durable, pool-wide limits:
+
+```toml
+[crawl.kuaidaili]
+max_extracted_per_hour = 60
+max_extracted_per_day = 600
+max_extracted_without_success = 10
+```
+
+These are the defaults and use rolling one-hour and 24-hour windows, not
+calendar boundaries. Each API call reserves its requested IP count in SQLite
+before any network access. Failed, empty, or timed-out calls still consume the
+reservation because their billing outcome may be unknown. Reservations are
+atomic across sources, pool instances and processes, and survive restarts.
+Accounting starts when this protection is deployed; historical `batch_fetched`
+events are not retroactively charged to the new reservation ledger.
+
+After ten reserved IPs without any successful paid request, further extraction
+stops until a paid request succeeds. Cached valid IPs may still be used, but
+the HTTP 407 circuit always blocks both cached leases and extractions. Self-hosted
+agent successes do not reset the paid no-success counter. Hourly and daily
+limits expire naturally; restarting the crawler does not reset any budget.
+If authentication has been repaired while the no-success limit is exhausted,
+keep the persistent hold in place and use a separately bounded, single-IP
+recovery probe. Record success only after validating the response. Do not clear
+the reservation ledger to resume, or automatically change the provider whitelist.
+
 A failure to acquire a proxy at all (Kuaidaili GetDPS API error, or an empty
 pool) is retried within the same request up to `sources.guba.max_retries` /
 `crawl.proxy.max_attempts`, the same as any other transient failure — it does

@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
@@ -91,6 +91,58 @@ class ProxyMetricsStore:
                 CREATE INDEX IF NOT EXISTS idx_proxy_events_provider_source_time
                 ON proxy_events (provider, source, occurred_at)
                 """
+            )
+
+    def reserve_extraction(
+        self,
+        provider: str,
+        count: int,
+        *,
+        max_per_hour: int,
+        max_per_day: int,
+        max_without_success: int,
+        source: str | None = None,
+    ) -> None:
+        if count < 1 or min(max_per_hour, max_per_day, max_without_success) < 1:
+            raise ValueError("Paid proxy extraction limits must be positive")
+        now = datetime.now(UTC)
+        with self.connection() as conn:
+            # Reserve before the API call, atomically across pools and restarts.
+            conn.execute("BEGIN IMMEDIATE")
+            usage = conn.execute(
+                """
+                SELECT COALESCE(SUM(count), 0) AS daily,
+                    COALESCE(SUM(CASE WHEN occurred_at > ? THEN count ELSE 0 END), 0) AS hourly
+                FROM proxy_events
+                WHERE provider = ? AND event_type = 'extraction_reserved'
+                    AND occurred_at > ?
+                """,
+                ((now - timedelta(hours=1)).isoformat(), provider,
+                 (now - timedelta(days=1)).isoformat()),
+            ).fetchone()
+            last_success = conn.execute(
+                """
+                SELECT COALESCE(MAX(id), 0) FROM proxy_events
+                WHERE provider = ? AND event_type = 'request_success'
+                """,
+                (provider,),
+            ).fetchone()[0]
+            unsuccessful = conn.execute(
+                """
+                SELECT COALESCE(SUM(count), 0) FROM proxy_events
+                WHERE provider = ? AND event_type = 'extraction_reserved' AND id > ?
+                """,
+                (provider, last_success),
+            ).fetchone()[0]
+            if usage["hourly"] + count > max_per_hour:
+                raise RuntimeError("Paid proxy hourly extraction budget exhausted")
+            if usage["daily"] + count > max_per_day:
+                raise RuntimeError("Paid proxy daily extraction budget exhausted")
+            if unsuccessful + count > max_without_success:
+                raise RuntimeError("Paid proxy no-success extraction budget exhausted")
+            self._insert_event(
+                conn, provider=provider, event_type="extraction_reserved",
+                occurred_at=now.isoformat(), count=count, source=source,
             )
 
     def record_batch(

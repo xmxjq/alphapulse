@@ -151,6 +151,9 @@ class CrawlKuaidailiSettings(BaseModel):
     adaptive_batching: bool = False
     adaptive_request_limit_per_minute: int = Field(default=16, ge=1, le=600)
     adaptive_recovery_seconds: int = Field(default=600, ge=60, le=3600)
+    max_extracted_per_hour: int = Field(default=60, ge=1, le=10000)
+    max_extracted_per_day: int = Field(default=600, ge=1, le=100000)
+    max_extracted_without_success: int = Field(default=10, ge=1, le=1000)
 
     @model_validator(mode="after")
     def validate_low_watermark(self) -> "CrawlKuaidailiSettings":

@@ -460,6 +460,14 @@ class KuaidailiProxyPool:
     ) -> None:
         self._check_auth_circuit()
         requested_count = self.settings.batch_size if count is None else count
+        self.metrics.reserve_extraction(
+            self.provider_name,
+            requested_count,
+            max_per_hour=self.settings.max_extracted_per_hour,
+            max_per_day=self.settings.max_extracted_per_day,
+            max_without_success=self.settings.max_extracted_without_success,
+            source=source,
+        )
         try:
             api_url = self.settings.api_url_file.read_text(encoding="utf-8").strip()
             if not api_url.startswith(("http://", "https://")):
