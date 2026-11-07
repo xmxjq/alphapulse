@@ -32,13 +32,16 @@ func TestSourceStallAndRecovery(t *testing.T) {
 	if active["source_guba"] == "" {
 		t.Fatal("missing source alarm")
 	}
-	if prepare(&s, active, epoch.Add(10*time.Minute)) == nil {
+	if prepare(&s, active, epoch.Add(10*time.Minute)) != nil {
+		t.Fatal("source confirmation window skipped")
+	}
+	if prepare(&s, active, epoch.Add(20*time.Minute)) == nil {
 		t.Fatal("missing notification")
 	}
-	if prepare(&s, active, epoch.Add(11*time.Minute)) != nil {
+	if prepare(&s, active, epoch.Add(21*time.Minute)) != nil {
 		t.Fatal("duplicate notification")
 	}
-	stamp := epoch.Add(12 * time.Minute)
+	stamp := epoch.Add(22 * time.Minute)
 	h.Sources[0].LastSuccess = &stamp
 	n := prepare(&s, evaluate(&s, h, true, stamp), stamp)
 	if n == nil || !strings.Contains(n.Title, "恢复") {
@@ -64,7 +67,7 @@ func TestIdleAndDisabledSource(t *testing.T) {
 	}
 }
 
-func TestImmediateGuardsAndHourlyRepeat(t *testing.T) {
+func TestGuardConfirmationAndHourlyRepeat(t *testing.T) {
 	s := freshState()
 	h := healthy()
 	h.Proxy.Enabled = true
@@ -74,13 +77,16 @@ func TestImmediateGuardsAndHourlyRepeat(t *testing.T) {
 	if len(a) != 2 {
 		t.Fatal("guards missing")
 	}
-	if prepare(&s, a, epoch) == nil {
+	if prepare(&s, a, epoch) != nil {
+		t.Fatal("guard confirmation window skipped")
+	}
+	if prepare(&s, a, epoch.Add(10*time.Minute)) == nil {
 		t.Fatal("first notification missing")
 	}
-	if prepare(&s, a, epoch.Add(59*time.Minute)) != nil {
+	if prepare(&s, a, epoch.Add(69*time.Minute)) != nil {
 		t.Fatal("early repeat")
 	}
-	if prepare(&s, a, epoch.Add(time.Hour)) == nil {
+	if prepare(&s, a, epoch.Add(70*time.Minute)) == nil {
 		t.Fatal("repeat missing")
 	}
 }
@@ -152,6 +158,7 @@ func TestStatePersistsAttemptAndRejectsCorruption(t *testing.T) {
 	s := freshState()
 	p := filepath.Join(dir, "state.json")
 	prepare(&s, map[string]string{"proxy_auth": "test"}, epoch)
+	prepare(&s, map[string]string{"proxy_auth": "test"}, epoch.Add(10*time.Minute))
 	if save(p, s) != nil {
 		t.Fatal("save failed")
 	}
@@ -159,7 +166,7 @@ func TestStatePersistsAttemptAndRejectsCorruption(t *testing.T) {
 	if err != nil {
 		t.Fatal("load failed")
 	}
-	if prepare(&loaded, map[string]string{"proxy_auth": "test"}, epoch.Add(time.Minute)) != nil {
+	if prepare(&loaded, map[string]string{"proxy_auth": "test"}, epoch.Add(11*time.Minute)) != nil {
 		t.Fatal("restart replay")
 	}
 	if os.WriteFile(p, []byte("not-json"), 0600) != nil {
@@ -167,6 +174,65 @@ func TestStatePersistsAttemptAndRejectsCorruption(t *testing.T) {
 	}
 	if _, err = load(p); err == nil {
 		t.Fatal("corrupt state reset silently")
+	}
+}
+
+func TestBriefIncidentsStaySilent(t *testing.T) {
+	for _, key := range []string{"proxy_auth", "budget_hourly", "budget_daily", "budget_no_success", "source_jiuyan", "monitor_unavailable", "crawler_stalled"} {
+		t.Run(key, func(t *testing.T) {
+			s := freshState()
+			active := map[string]string{key: "test"}
+			if prepare(&s, active, epoch) != nil || prepare(&s, active, epoch.Add(10*time.Minute-time.Nanosecond)) != nil {
+				t.Fatal("brief incident alerted")
+			}
+			if prepare(&s, map[string]string{}, epoch.Add(10*time.Minute)) != nil || len(s.Incidents) != 0 {
+				t.Fatal("brief incident recovery was not silent")
+			}
+			if prepare(&s, active, epoch.Add(11*time.Minute)) != nil {
+				t.Fatal("new occurrence inherited old timer")
+			}
+			if prepare(&s, active, epoch.Add(21*time.Minute)) == nil {
+				t.Fatal("persistent occurrence did not alert")
+			}
+		})
+	}
+}
+
+func TestPendingTimerSurvivesRestart(t *testing.T) {
+	dir, err := os.MkdirTemp("", "alphapulse-watchdog-delay-")
+	if err != nil {
+		t.Fatal("fixture failed")
+	}
+	s := freshState()
+	active := map[string]string{"proxy_auth": "test"}
+	prepare(&s, active, epoch)
+	p := filepath.Join(dir, "state.json")
+	if save(p, s) != nil {
+		t.Fatal("save failed")
+	}
+	loaded, err := load(p)
+	if err != nil {
+		t.Fatal("load failed")
+	}
+	if prepare(&loaded, active, epoch.Add(9*time.Minute)) != nil {
+		t.Fatal("pending restart alerted early")
+	}
+	if prepare(&loaded, active, epoch.Add(10*time.Minute)) == nil {
+		t.Fatal("pending restart reset the timer")
+	}
+}
+
+func TestMixedIncidentsHaveIndependentTimers(t *testing.T) {
+	s := freshState()
+	prepare(&s, map[string]string{"proxy_auth": "auth"}, epoch)
+	now := epoch.Add(10 * time.Minute)
+	n := prepare(&s, map[string]string{"proxy_auth": "auth", "source_jiuyan": "source"}, now)
+	if n == nil || !strings.Contains(n.Body, "- auth") || strings.Contains(n.Body, "- source") {
+		t.Fatal("new incident bypassed its own confirmation window")
+	}
+	n = prepare(&s, map[string]string{}, now.Add(time.Minute))
+	if n == nil || !strings.Contains(n.Body, "- auth") || strings.Contains(n.Body, "- source") {
+		t.Fatal("silent incident leaked into recovery")
 	}
 }
 
