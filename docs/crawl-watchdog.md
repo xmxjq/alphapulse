@@ -26,11 +26,11 @@ Cloudflare Access policy must also protect this new `/api/` path.
 - A failed, stale, malformed or incomplete health observation is a monitoring
   failure, not a healthy/empty result. Detect after three continuous minutes.
   Previously known incidents cannot recover during unknown health.
-- Hold each detected alert condition for ten continuous minutes before its first
+- Hold each detected alert condition for fifteen continuous minutes before its first
   notification. If it clears sooner, silently discard it without an alert or a
   recovery notification. A new occurrence starts a new confirmation window.
   This confirmation window follows the detection thresholds above: for example,
-  a source requires ten minutes of observed no-progress, then ten more minutes
+  a source requires ten minutes of observed no-progress, then fifteen more minutes
   with the stall condition still active. Pending timers survive daemon restarts.
 - Batch changes, deduplicate the same incident, and repeat active faults no more
   than once per hour. Send a condition-cleared notification after a valid recovery.
