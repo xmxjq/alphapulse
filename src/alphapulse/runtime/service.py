@@ -511,6 +511,14 @@ class AlphaPulseService:
             task = queue.pop()
             if self._discard_task(task, stats):
                 continue
+            adapter = self._adapter_for_task(task)
+            if (
+                self._paid_proxy_auth_blocked(adapter)
+                and getattr(getattr(adapter, "client", None), "agent_pool", None) is None
+                and not self._is_guba_browser_post(task)
+            ):
+                self._defer_paid_task(task, stats)
+                continue
             if source_blocked or self._source_circuit_open(task.source):
                 source_blocked = True
                 stats.skipped_tasks += 1
@@ -726,6 +734,16 @@ class AlphaPulseService:
                 )
                 if first.kind == "refresh_comments" or self._is_guba_browser_post(first):
                     routes = ["existing"]
+                    if (
+                        first.kind == "refresh_comments"
+                        and self._paid_proxy_auth_blocked(adapter)
+                    ):
+                        routes = []
+                if not routes:
+                    task = queue.pop()
+                    if not self._discard_task(task, stats):
+                        self._defer_paid_task(task, stats)
+                    continue
 
                 batch: list[tuple[CrawlTask, str]] = []
                 for route in routes:
@@ -899,6 +917,8 @@ class AlphaPulseService:
         paid_slots = self._guba_paid_slots(
             experiment_eligible=experiment_eligible,
         )
+        if self._paid_proxy_auth_blocked(adapter):
+            paid_slots = 0
         capacity = getattr(adapter, "available_agent_capacity")()
         agent_slots = min(
             self.settings.sources.guba.concurrent_agent_requests,
@@ -968,6 +988,11 @@ class AlphaPulseService:
             while queue:
                 first = queue.peek()
                 routes = self._jiuyan_hybrid_routes(adapter, first)
+                if not routes:
+                    task = queue.pop()
+                    if not self._discard_task(task, stats):
+                        self._defer_paid_task(task, stats)
+                    continue
                 batch_kind = first.kind
                 batch: list[tuple[CrawlTask, str]] = []
 
@@ -1042,6 +1067,8 @@ class AlphaPulseService:
         task: CrawlTask,
     ) -> list[str]:
         paid_slots = self.settings.sources.jiuyan.concurrent_paid_requests
+        if self._paid_proxy_auth_blocked(adapter):
+            paid_slots = 0
         if task.kind != "fetch_post":
             return ["existing"] * paid_slots
         capacity = getattr(adapter, "available_agent_capacity")()
@@ -1108,6 +1135,9 @@ class AlphaPulseService:
                     break
                 first = queue.peek()
                 routes = self._hupu_hybrid_routes(adapter, first)
+                if not routes:
+                    self._defer_paid_task(queue.pop(), stats)
+                    continue
                 batch_kind = first.kind
                 batch: list[tuple[CrawlTask, str]] = []
                 for route in routes:
@@ -1172,6 +1202,8 @@ class AlphaPulseService:
         task: CrawlTask,
     ) -> list[str]:
         paid_slots = self.settings.sources.hupu.concurrent_paid_requests
+        if self._paid_proxy_auth_blocked(adapter):
+            paid_slots = 0
         if task.kind != "fetch_post":
             return ["existing"] * paid_slots
         capacity = getattr(adapter, "available_agent_capacity")()
@@ -1516,6 +1548,20 @@ class AlphaPulseService:
         adapter = self._adapter_for_source(source_name)
         check = getattr(adapter, "is_circuit_open", None)
         return bool(check()) if callable(check) else False
+
+    @staticmethod
+    def _paid_proxy_auth_blocked(adapter: SourceAdapter) -> bool:
+        client = getattr(adapter, "client", None)
+        provider = getattr(client, "proxy_provider", None)
+        check = getattr(provider, "is_auth_blocked", None)
+        return bool(check()) if callable(check) else False
+
+    def _defer_paid_task(self, task: CrawlTask, stats: RunStats) -> None:
+        # Keep the task for a later cycle without claiming it or logging a
+        # synthetic fetch failure. Agent-eligible tasks may still run now.
+        assert self.state is not None
+        self.state.upsert_pending_tasks([task])
+        stats.skipped_tasks += 1
 
     def _select_seeds(self, seed_set_name: str | None) -> list[SeedDefinition]:
         assert self.seed_discovery is not None

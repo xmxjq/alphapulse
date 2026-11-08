@@ -2,11 +2,131 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from alphapulse.pipeline.contracts import CrawlTask, FetchOutcome, SeedDefinition
 from alphapulse.runtime.config import Settings, load_settings
 from alphapulse.runtime.service import AlphaPulseService, RunStats
 from alphapulse.sources.bilibili.api import BilibiliApiResult
 from alphapulse.sources.fetching import FetchResult, KuaidailiProxyProvider
+
+
+class AuthHoldProvider:
+    def __init__(self, blocked=True):
+        self.blocked = blocked
+
+    def is_auth_blocked(self):
+        return self.blocked
+
+
+class AuthHoldAdapter:
+    def __init__(self, source, capacity=0, open_during_fetch=False, hybrid=True):
+        self.source_name = source
+        self.capacity = capacity
+        self.open_during_fetch = open_during_fetch
+        self.calls = []
+        self.client = type("Client", (), {})()
+        self.client.proxy_provider = AuthHoldProvider()
+        self.client.agent_pool = object() if hybrid else None
+
+    def discover(self, seed):
+        return [
+            CrawlTask(
+                source=self.source_name,
+                kind=kind,
+                url=f"https://example.com/{self.source_name}/{kind}",
+                seed_name=seed.name,
+                priority=180 if kind == "discover" else 150,
+                metadata={"post_id": "1", "article_id": "1"},
+            )
+            for kind in ["discover", "fetch_post"]
+        ]
+
+    def is_circuit_open(self):
+        return False
+
+    def available_agent_capacity(self):
+        return self.capacity
+
+    def fetch_item_with_transport(self, task, transport):
+        self.calls.append((task.kind, transport))
+        if self.open_during_fetch:
+            self.client.proxy_provider.blocked = True
+            return FetchOutcome(status_code=None, errors=["proxy authentication failed"])
+        return FetchOutcome(status_code=200)
+
+    def fetch_item(self, task):
+        return self.fetch_item_with_transport(task, "auto")
+
+
+@pytest.mark.parametrize("source", ["guba", "jiuyan", "hupu"])
+@pytest.mark.parametrize("capacity", [0, 1])
+def test_auth_hold_preserves_pending_and_keeps_agent_work(tmp_path, source, capacity):
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    source_settings = getattr(settings.sources, source)
+    source_settings.concurrent_paid_requests = 1
+    source_settings.concurrent_agent_requests = 1
+    adapter = AuthHoldAdapter(source, capacity)
+    store = FakeStore()
+    service = AlphaPulseService(
+        settings, store=store, sources={source: adapter},
+        seed_discovery=StaticSeedDiscovery(),
+    )
+
+    stats = service.run_source_cycle(source)
+
+    expected = (2 if source == "guba" else 1) if capacity else 0
+    assert stats.pages_fetched == expected
+    assert stats.errors == 0
+    assert not store.errors
+    assert len(adapter.calls) == expected
+    assert all(route == "agent" for _, route in adapter.calls)
+    pending = service.state.load_pending_tasks(source=source)
+    assert len(pending) == 2 - expected
+    if capacity and source != "guba":
+        assert pending[0].kind == "discover"
+
+    # Paid work becomes eligible again after a verified operator recovery.
+    adapter.client.proxy_provider.blocked = False
+    adapter.capacity = 0
+    service.run_source_cycle(source)
+    assert not service.state.load_pending_tasks(source=source)
+
+
+@pytest.mark.parametrize("source", ["guba", "jiuyan", "hupu"])
+def test_auth_hold_opened_mid_cycle_stops_subsequent_paid_tasks(tmp_path, source):
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    getattr(settings.sources, source).concurrent_paid_requests = 1
+    adapter = AuthHoldAdapter(source, open_during_fetch=True)
+    adapter.client.proxy_provider.blocked = False
+    service = AlphaPulseService(
+        settings, store=FakeStore(), sources={source: adapter},
+        seed_discovery=StaticSeedDiscovery(),
+    )
+
+    stats = service.run_source_cycle(source)
+    assert len(adapter.calls) == 1
+    assert stats.pages_fetched == 1
+    assert len(service.state.load_pending_tasks(source=source)) == 2
+    stats = service.run_source_cycle(source)
+    assert len(adapter.calls) == 1
+    assert stats.pages_fetched == stats.errors == 0
+
+
+def test_auth_hold_without_agents_defers_in_serial_queue(tmp_path):
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    adapter = AuthHoldAdapter("jiuyan", hybrid=False)
+    service = AlphaPulseService(
+        settings, store=FakeStore(), sources={"jiuyan": adapter},
+        seed_discovery=StaticSeedDiscovery(),
+    )
+    stats = service.run_source_cycle("jiuyan")
+    assert stats.pages_fetched == stats.errors == 0
+    assert not adapter.calls
+    assert len(service.state.load_pending_tasks(source="jiuyan")) == 2
 
 
 class FakeStore:

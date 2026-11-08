@@ -103,3 +103,10 @@ Run a public API smoke test with:
 ```bash
 uv run python scripts/jiuyan_live_check.py --pages 1
 ```
+
+While the paid proxy authentication hold is open, the scheduler retains paid-only
+discovery tasks without issuing fetches or recording synthetic fetch errors.
+Available agent slots may continue processing queued details. With no eligible
+route, tasks remain pending for a later cycle; a high-priority deferred discovery
+task does not prevent agent-eligible details from running. The hold is not reset
+automatically, and proxy extraction budgets and fail-closed behavior are unchanged.

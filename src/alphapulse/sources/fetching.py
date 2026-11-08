@@ -407,8 +407,12 @@ class KuaidailiProxyPool:
                 source=self._metrics_source(source, lease),
             )
 
+    def is_auth_blocked(self) -> bool:
+        """Inspect the hold without acquiring or extracting a paid proxy."""
+        return self._auth_blocked or self.auth_block_path.exists()
+
     def _check_auth_circuit(self) -> None:
-        if self._auth_blocked or self.auth_block_path.exists():
+        if self.is_auth_blocked():
             raise RuntimeError(
                 "Paid proxy authentication circuit is open; manual verification and reset required"
             )
@@ -759,6 +763,9 @@ class KuaidailiProxyProvider:
 
     def acquire(self) -> ProxyLease | None:
         return self.acquire_for_experiment(eligible=False)
+
+    def is_auth_blocked(self) -> bool:
+        return self.pool.is_auth_blocked()
 
     def acquire_for_experiment(self, *, eligible: bool) -> ProxyLease | None:
         return self.pool.acquire(

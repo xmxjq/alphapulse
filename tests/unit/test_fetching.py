@@ -964,6 +964,26 @@ def test_build_kuaidaili_provider_scopes_to_guba(tmp_path) -> None:
     assert _build_proxy_provider(settings, source="bilibili") is None
 
 
+def test_kuaidaili_auth_hold_inspection_never_extracts(tmp_path, monkeypatch) -> None:
+    settings = _kuaidaili_settings(tmp_path).kuaidaili
+    provider = KuaidailiProxyProvider(settings)
+    pool = provider.pool
+    monkeypatch.setattr(pool, "_refresh", lambda *a, **kw: pytest.fail("must not extract"))
+    assert not provider.is_auth_blocked()
+    pool.auth_block_path.write_text("{}", encoding="utf-8")
+    assert provider.is_auth_blocked()
+    assert KuaidailiProxyProvider(settings).is_auth_blocked()
+    with pytest.raises(RuntimeError, match="authentication circuit is open"):
+        provider.acquire()
+
+
+def test_kuaidaili_auth_hold_keeps_in_memory_protection(tmp_path) -> None:
+    provider = KuaidailiProxyProvider(_kuaidaili_settings(tmp_path).kuaidaili)
+    provider.pool._auth_blocked = True
+    assert not provider.pool.auth_block_path.exists()
+    assert provider.is_auth_blocked()
+
+
 def test_static_list_provider_requires_urls_when_selected() -> None:
     with pytest.raises(ValueError):
         CrawlSettings.model_validate(
