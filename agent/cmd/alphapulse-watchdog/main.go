@@ -64,6 +64,16 @@ type notice struct {
 }
 
 const notificationDelay = 15 * time.Minute
+const notificationRepeat = 6 * time.Hour
+
+func notifiable(key string) bool {
+	switch key {
+	case "proxy_auth", "budget_hourly", "budget_daily", "budget_no_success", "monitor_unavailable", "crawler_stalled":
+		return true
+	default:
+		return false
+	}
+}
 
 func freshState() state {
 	return state{Version: 1, Incidents: map[string]incident{}, Progress: map[string]progress{}}
@@ -163,7 +173,14 @@ func prepare(s *state, active map[string]string, now time.Time) *notice {
 			v.Since = now
 		}
 		v.Summary = active[key]
-		if now.Sub(v.Since) >= notificationDelay && (v.LastAttempt.IsZero() || now.Sub(v.LastAttempt) >= time.Hour) {
+		// Source-level stalls remain diagnostic, including incidents saved by older binaries.
+		if !notifiable(key) {
+			v.LastAttempt = time.Time{}
+			v.Accepted = false
+			s.Incidents[key] = v
+			continue
+		}
+		if now.Sub(v.Since) >= notificationDelay && (v.LastAttempt.IsZero() || now.Sub(v.LastAttempt) >= notificationRepeat) {
 			alerts = append(alerts, "- "+v.Summary)
 			v.LastAttempt = now
 			v.Accepted = false
@@ -180,7 +197,7 @@ func prepare(s *state, active map[string]string, now time.Time) *notice {
 			continue
 		}
 		previous := s.Incidents[key]
-		if !previous.LastAttempt.IsZero() {
+		if notifiable(key) && !previous.LastAttempt.IsZero() {
 			recovered = append(recovered, "- "+previous.Summary)
 		}
 		delete(s.Incidents, key)
@@ -199,7 +216,7 @@ func prepare(s *state, active map[string]string, now time.Time) *notice {
 	if len(recovered) > 0 {
 		body += "以下告警条件已解除：\n" + strings.Join(recovered, "\n") + "\n\n"
 	}
-	body += "此消息来自群晖上的独立监控。告警条件持续 15 分钟后才通知；相同异常每小时最多提醒一次，不会自动重启服务或解除代理熔断。"
+	body += "此消息来自群晖上的独立监控。仅严重异常持续 15 分钟才通知；相同异常每 6 小时最多提醒一次，单一来源停滞仅记录、不推送。不会自动重启服务或解除代理熔断。"
 	return &notice{Title: title, Body: body}
 }
 
@@ -427,7 +444,7 @@ func run() error {
 		if err = save(*statePath, s); err != nil {
 			return err
 		}
-		s.TestAccepted = send(c, *keyFile, notice{Title: "AlphaPulse 抓取监控已接入（测试）", Body: "这是一条测试通知，不代表当前发生故障。\n\n群晖独立监控每分钟检查一次：代理认证熔断、提取预算达到上限、有待抓任务且连续 10 分钟无成功抓取、连续 3 分钟无法读取健康状态。上述告警条件持续 15 分钟后才通知，提前恢复则静默取消。相同异常一小时内去重，仅已通知的异常解除后通知恢复。\n\n请在聊天中确认手机是否实际收到。"})
+		s.TestAccepted = send(c, *keyFile, notice{Title: "AlphaPulse 抓取监控已接入（测试）", Body: "这是一条测试通知，不代表当前发生故障。\n\n群晖独立监控每分钟检查一次，仅推送代理认证熔断、提取预算保护、整体抓取停摆或监控失联。严重条件持续 15 分钟后才通知，提前恢复则静默取消；同一异常每 6 小时最多提醒一次，仅已通知的严重异常解除后通知恢复。单一来源停滞仅记录、不推送。\n\n请在聊天中确认手机是否实际收到。"})
 		if err = save(*statePath, s); err != nil {
 			return err
 		}

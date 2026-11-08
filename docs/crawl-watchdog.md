@@ -20,22 +20,28 @@ Cloudflare Access policy must also protect this new `/api/` path.
 - Detect when a source has a continuously observed backlog and no new successful
   response for at least ten minutes. Successful progress resets the timer; an empty
   backlog or disabled source does not alarm. Blocked/invalid HTTP 200 responses do
-  not count as successful responses for raw-enabled sources.
+  not count as successful responses for raw-enabled sources. These per-source
+  conditions are diagnostic only: keep their state, but never push an alert or
+  recovery. A small backlog or one failing source is not a whole-service outage.
 - Detect when neither crawl cycles nor successful responses have progressed for
   at least `max(15 minutes, 2 * poll interval + 5 minutes)`.
 - A failed, stale, malformed or incomplete health observation is a monitoring
   failure, not a healthy/empty result. Detect after three continuous minutes.
   Previously known incidents cannot recover during unknown health.
-- Hold each detected alert condition for fifteen continuous minutes before its first
+- Only proxy authentication holds, extraction budget guards, aggregate crawler
+  stalls and monitoring outages can send notifications. Hold each such condition
+  for fifteen continuous minutes before its first
   notification. If it clears sooner, silently discard it without an alert or a
   recovery notification. A new occurrence starts a new confirmation window.
-  This confirmation window follows the detection thresholds above: for example,
-  a source requires ten minutes of observed no-progress, then fifteen more minutes
-  with the stall condition still active. Pending timers survive daemon restarts.
+  This confirmation window follows the detection thresholds above. Pending timers
+  survive daemon restarts. Existing source incidents from an older binary are
+  silently downgraded without a final recovery push.
 - Batch changes, deduplicate the same incident, and repeat active faults no more
-  than once per hour. Send a condition-cleared notification after a valid recovery.
+  than once per six hours. Keep existing severe incident attempt timestamps when
+  upgrading, so deployment itself does not replay an alert. Send a condition-cleared
+  notification only for a previously notified severe condition after a valid recovery.
 - Persist notification attempt markers before POST. A timeout or restart does not
-  replay that message. Later hourly reminders are new observations, not delivery retries.
+  replay that message. Later reminders are new observations, not delivery retries.
   API acceptance is not proof of receipt in the user's WeChat client.
 
 ## Deployment

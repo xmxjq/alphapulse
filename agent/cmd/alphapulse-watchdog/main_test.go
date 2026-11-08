@@ -35,8 +35,8 @@ func TestSourceStallAndRecovery(t *testing.T) {
 	if prepare(&s, active, epoch.Add(10*time.Minute)) != nil {
 		t.Fatal("source confirmation window skipped")
 	}
-	if prepare(&s, active, epoch.Add(25*time.Minute)) == nil {
-		t.Fatal("missing notification")
+	if prepare(&s, active, epoch.Add(25*time.Minute)) != nil {
+		t.Fatal("diagnostic source generated notification")
 	}
 	if prepare(&s, active, epoch.Add(26*time.Minute)) != nil {
 		t.Fatal("duplicate notification")
@@ -44,8 +44,8 @@ func TestSourceStallAndRecovery(t *testing.T) {
 	stamp := epoch.Add(27 * time.Minute)
 	h.Sources[0].LastSuccess = &stamp
 	n := prepare(&s, evaluate(&s, h, true, stamp), stamp)
-	if n == nil || !strings.Contains(n.Title, "恢复") {
-		t.Fatal("missing recovery")
+	if n != nil {
+		t.Fatal("diagnostic source generated recovery")
 	}
 	if prepare(&s, evaluate(&s, h, true, stamp), stamp) != nil {
 		t.Fatal("duplicate recovery")
@@ -67,7 +67,7 @@ func TestIdleAndDisabledSource(t *testing.T) {
 	}
 }
 
-func TestGuardConfirmationAndHourlyRepeat(t *testing.T) {
+func TestGuardConfirmationAndSixHourlyRepeat(t *testing.T) {
 	s := freshState()
 	h := healthy()
 	h.Proxy.Enabled = true
@@ -89,7 +89,10 @@ func TestGuardConfirmationAndHourlyRepeat(t *testing.T) {
 	if prepare(&s, a, epoch.Add(74*time.Minute)) != nil {
 		t.Fatal("early repeat")
 	}
-	if prepare(&s, a, epoch.Add(75*time.Minute)) == nil {
+	if prepare(&s, a, epoch.Add(375*time.Minute-time.Nanosecond)) != nil {
+		t.Fatal("repeat before six hours")
+	}
+	if prepare(&s, a, epoch.Add(375*time.Minute)) == nil {
 		t.Fatal("repeat missing")
 	}
 }
@@ -181,7 +184,7 @@ func TestStatePersistsAttemptAndRejectsCorruption(t *testing.T) {
 }
 
 func TestBriefIncidentsStaySilent(t *testing.T) {
-	for _, key := range []string{"proxy_auth", "budget_hourly", "budget_daily", "budget_no_success", "source_jiuyan", "monitor_unavailable", "crawler_stalled"} {
+	for _, key := range []string{"proxy_auth", "budget_hourly", "budget_daily", "budget_no_success", "monitor_unavailable", "crawler_stalled"} {
 		t.Run(key, func(t *testing.T) {
 			s := freshState()
 			active := map[string]string{key: "test"}
@@ -229,7 +232,7 @@ func TestMixedIncidentsHaveIndependentTimers(t *testing.T) {
 	s := freshState()
 	prepare(&s, map[string]string{"proxy_auth": "auth"}, epoch)
 	now := epoch.Add(15 * time.Minute)
-	n := prepare(&s, map[string]string{"proxy_auth": "auth", "source_jiuyan": "source"}, now)
+	n := prepare(&s, map[string]string{"proxy_auth": "auth", "crawler_stalled": "source"}, now)
 	if n == nil || !strings.Contains(n.Body, "- auth") || strings.Contains(n.Body, "- source") {
 		t.Fatal("new incident bypassed its own confirmation window")
 	}
@@ -276,5 +279,65 @@ func TestFetchRejectsRedirectStaleIncompleteAndSecretBody(t *testing.T) {
 				t.Fatal("credential leaked")
 			}
 		})
+	}
+}
+
+func TestDiagnosticSourcesNeverNotify(t *testing.T) {
+	for _, name := range []string{"guba", "tgb", "jiuyan", "hupu", "bilibili", "xueqiu"} {
+		t.Run(name, func(t *testing.T) {
+			s := freshState()
+			key := "source_" + name
+			active := map[string]string{key: "diagnostic"}
+			for _, elapsed := range []time.Duration{0, 15 * time.Minute, 6 * time.Hour, 24 * time.Hour} {
+				if prepare(&s, active, epoch.Add(elapsed)) != nil {
+					t.Fatal("source notification")
+				}
+			}
+			if len(s.Incidents) != 1 || !s.Incidents[key].LastAttempt.IsZero() {
+				t.Fatal("diagnostic state not retained silently")
+			}
+			if prepare(&s, map[string]string{}, epoch.Add(25*time.Hour)) != nil {
+				t.Fatal("source recovery notification")
+			}
+		})
+	}
+}
+
+func TestUpgradeSilencesLegacySourcesWithoutReplayingSevereFault(t *testing.T) {
+	for _, stillActive := range []bool{false, true} {
+		s := freshState()
+		s.Incidents["source_hupu"] = incident{Since: epoch, LastAttempt: epoch, Accepted: true, Summary: "minor"}
+		s.Incidents["proxy_auth"] = incident{Since: epoch, LastAttempt: epoch, Accepted: true, Summary: "severe"}
+		active := map[string]string{"proxy_auth": "severe"}
+		if stillActive {
+			active["source_hupu"] = "minor"
+		}
+		if prepare(&s, active, epoch.Add(2*time.Hour)) != nil {
+			t.Fatal("upgrade replayed notification")
+		}
+		if v, ok := s.Incidents["source_hupu"]; ok && (!v.LastAttempt.IsZero() || v.Accepted) {
+			t.Fatal("legacy source attempt retained")
+		}
+		n := prepare(&s, active, epoch.Add(6*time.Hour))
+		if n == nil || !strings.Contains(n.Body, "- severe") || strings.Contains(n.Body, "- minor") {
+			t.Fatal("severe reminder missing or diagnostic leaked")
+		}
+		n = prepare(&s, map[string]string{}, epoch.Add(7*time.Hour))
+		if n == nil || !strings.Contains(n.Title, "恢复") || strings.Contains(n.Body, "- minor") {
+			t.Fatal("severe recovery missing or diagnostic leaked")
+		}
+	}
+}
+
+func TestDiagnosticAndUnknownKeysCannotLeakIntoSevereNotice(t *testing.T) {
+	s := freshState()
+	active := map[string]string{"source_guba": "minor", "unknown": "unknown diagnostic", "budget_daily": "severe"}
+	prepare(&s, active, epoch)
+	n := prepare(&s, active, epoch.Add(15*time.Minute))
+	if n == nil || !strings.Contains(n.Body, "- severe") || strings.Contains(n.Body, "- minor") || strings.Contains(n.Body, "unknown diagnostic") {
+		t.Fatal("notification allowlist failed")
+	}
+	if prepare(&s, active, epoch.Add(time.Hour)) != nil {
+		t.Fatal("old hourly repeat survived")
 	}
 }
