@@ -238,6 +238,7 @@ class AlphaPulseService:
             },
         )
         try:
+            self._probe_paid_auth_recovery(adapter)
             if source_name == "guba":
                 self._prune_expired_guba_pending_tasks()
             elif source_name == "hupu":
@@ -358,6 +359,8 @@ class AlphaPulseService:
             },
         )
         try:
+            for adapter in self.sources.values():
+                self._probe_paid_auth_recovery(adapter)
             self._prune_expired_guba_pending_tasks()
             self._prune_expired_hupu_pending_tasks()
             self._prune_raw_store()
@@ -1563,6 +1566,18 @@ class AlphaPulseService:
         adapter = self._adapter_for_source(source_name)
         check = getattr(adapter, "is_circuit_open", None)
         return bool(check()) if callable(check) else False
+
+    @staticmethod
+    def _probe_paid_auth_recovery(adapter: SourceAdapter) -> None:
+        client = getattr(adapter, "client", None)
+        provider = getattr(client, "proxy_provider", None)
+        probe = getattr(provider, "maybe_recover_auth", None)
+        if callable(probe):
+            try:
+                probe()
+            except Exception:
+                # Recovery bookkeeping failures must not stop healthy agents.
+                logger.warning("Paid proxy recovery probe could not complete")
 
     @staticmethod
     def _paid_proxy_auth_blocked(adapter: SourceAdapter) -> bool:

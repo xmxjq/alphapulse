@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -74,6 +75,14 @@ class ProxyMetricsStore:
 
                 CREATE INDEX IF NOT EXISTS idx_proxy_events_provider_time
                     ON proxy_events (provider, occurred_at);
+
+                CREATE TABLE IF NOT EXISTS proxy_auth_recovery (
+                    provider TEXT PRIMARY KEY,
+                    opened_at TEXT NOT NULL,
+                    attempts INTEGER NOT NULL,
+                    next_probe_at TEXT NOT NULL,
+                    last_outcome TEXT NOT NULL
+                );
                 """
             )
             event_columns = {
@@ -91,6 +100,56 @@ class ProxyMetricsStore:
                 CREATE INDEX IF NOT EXISTS idx_proxy_events_provider_source_time
                 ON proxy_events (provider, source, occurred_at)
                 """
+            )
+
+    def reserve_auth_probe(
+        self, provider: str, opened_at: datetime, *, now: datetime | None = None,
+    ) -> int | None:
+        now = now or datetime.now(UTC)
+        if now < opened_at + timedelta(minutes=5):
+            return None
+        with self.connection() as conn:
+            # The durable claim serializes source workers, pool instances and
+            # restarts. Reserve the next slot before any extraction/network I/O.
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM proxy_auth_recovery WHERE provider=?", (provider,),
+            ).fetchone()
+            same_incident = row is not None and row["opened_at"] == opened_at.isoformat()
+            if same_incident and datetime.fromisoformat(row["next_probe_at"]) > now:
+                return None
+            attempt = row["attempts"] + 1 if same_incident else 1
+            seconds = min(300 * 2 ** min(attempt, 4), 3600) + random.uniform(0, 30)
+            next_at = now + timedelta(seconds=seconds)
+            conn.execute(
+                "INSERT INTO proxy_auth_recovery VALUES (?,?,?,?,?) "
+                "ON CONFLICT(provider) DO UPDATE SET opened_at=excluded.opened_at, "
+                "attempts=excluded.attempts, next_probe_at=excluded.next_probe_at, "
+                "last_outcome=excluded.last_outcome",
+                (provider, opened_at.isoformat(), attempt, next_at.isoformat(), "in_flight"),
+            )
+            return attempt
+
+    def record_auth_probe(
+        self, provider: str, opened_at: datetime, attempt: int, outcome: str,
+        *, proxy_url: str | None = None,
+    ) -> None:
+        if outcome not in {"success", "auth_407", "transport_error", "http_error",
+                           "extraction_error", "budget_exhausted", "marker_changed"}:
+            raise ValueError("Invalid authentication probe outcome")
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE proxy_auth_recovery SET last_outcome=? "
+                "WHERE provider=? AND opened_at=? AND attempts=?",
+                (outcome, provider, opened_at.isoformat(), attempt),
+            )
+            # A neutral connectivity probe is not a successful crawl and must
+            # not reset the paid no-success extraction budget.
+            self._insert_event(
+                conn, provider=provider, event_type="auth_probe_" + outcome,
+                occurred_at=datetime.now(UTC).isoformat(), source="auth_probe",
+                proxy_identifier=proxy_id(proxy_url) if proxy_url else None,
+                detail={"attempt": attempt},
             )
 
     def reserve_extraction(

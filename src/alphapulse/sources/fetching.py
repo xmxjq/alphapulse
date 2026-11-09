@@ -4,6 +4,7 @@ import json
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -370,6 +371,7 @@ class KuaidailiProxyPool:
                         json.dump({"reason": "proxy_auth_407", "opened_at": datetime.now(UTC).isoformat()}, marker)
                 except FileExistsError:
                     pass
+                self._auth_blocked = False
             self._record_adaptive_result(False)
             bench_key = (lease.proxy_url, source)
             streak_key = self._failure_streak_key(lease, source)
@@ -414,8 +416,82 @@ class KuaidailiProxyPool:
     def _check_auth_circuit(self) -> None:
         if self.is_auth_blocked():
             raise RuntimeError(
-                "Paid proxy authentication circuit is open; manual verification and reset required"
+                "Paid proxy authentication circuit is open; waiting for bounded recovery probe"
             )
+
+    def maybe_recover_auth(self) -> bool:
+        """Half-open one route only; ordinary acquisitions remain blocked."""
+        with self._lock:
+            if not self.is_auth_blocked():
+                return False
+            try:
+                body = self.auth_block_path.read_bytes()
+                marker = json.loads(body)
+                if marker.get("reason") != "proxy_auth_407":
+                    return False
+                opened_at = datetime.fromisoformat(marker["opened_at"])
+                if opened_at.tzinfo is None:
+                    return False
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                # Manual or malformed emergency holds never auto-release.
+                return False
+            attempt = self.metrics.reserve_auth_probe(self.provider_name, opened_at)
+            if attempt is None:
+                return False
+            lease = None
+            outcome = "extraction_error"
+            try:
+                now = time.monotonic()
+                self._prune_expired(now)
+                candidates = [
+                    url for url in self._urls
+                    if not any(key[0] == url and until > now
+                               for key, until in self._benched_until.items())
+                ]
+                if not candidates:
+                    self._refresh("auth_probe", count=1, allocation="auth_probe", auth_probe=True)
+                    candidates = self._available(time.monotonic(), "auth_probe")
+                if candidates:
+                    lease = self._lease(candidates[-1])
+                    outcome = self._probe_auth(lease)
+            except Exception as exc:
+                if "extraction budget exhausted" in str(exc):
+                    outcome = "budget_exhausted"
+            if outcome == "success":
+                if self.auth_block_path.read_bytes() != body:
+                    outcome = "marker_changed"
+                else:
+                    # Retain incident evidence rather than deleting the hold.
+                    archive = self.auth_block_path.with_name(
+                        self.auth_block_path.name + ".recovered-" + uuid.uuid4().hex
+                    )
+                    self.auth_block_path.rename(archive)
+                    self._auth_blocked = False
+            elif lease is not None:
+                self._benched_until[(lease.proxy_url, "auth_probe")] = self._expires_at.get(
+                    lease.proxy_url, time.monotonic()
+                )
+            self.metrics.record_auth_probe(
+                self.provider_name, opened_at, attempt, outcome,
+                proxy_url=lease.proxy_url if lease else None,
+            )
+            return outcome == "success"
+
+    @staticmethod
+    def _probe_auth(lease: ProxyLease) -> str:
+        from curl_cffi import requests as curl_requests
+
+        try:
+            with curl_requests.Session(trust_env=False) as session:
+                response = session.head(
+                    "https://www.baidu.com/", proxy=lease.proxy_url,
+                    timeout=10, allow_redirects=False,
+                )
+            if response.status_code == 407:
+                return "auth_407"
+            return "success" if 200 <= response.status_code < 400 else "http_error"
+        except Exception as exc:
+            return "auth_407" if KuaidailiProxyPool._is_proxy_auth_failure(str(exc)) else "transport_error"
 
     @staticmethod
     def _is_proxy_auth_failure(reason: str) -> bool:
@@ -460,9 +536,13 @@ class KuaidailiProxyPool:
             )
 
     def _refresh(
-        self, source: str | None, *, count: int | None = None, allocation: str = "configured"
+        self, source: str | None, *, count: int | None = None, allocation: str = "configured",
+        auth_probe: bool = False,
     ) -> None:
-        self._check_auth_circuit()
+        if not auth_probe:
+            self._check_auth_circuit()
+        elif count != 1 or allocation != "auth_probe" or source != "auth_probe":
+            raise ValueError("Authentication recovery permits one proxy only")
         requested_count = self.settings.batch_size if count is None else count
         self.metrics.reserve_extraction(
             self.provider_name,
@@ -506,6 +586,8 @@ class KuaidailiProxyPool:
             ) as response:
                 payload = response.read().decode("utf-8", errors="replace")
             extracted = self._parse_extracted_proxies(payload)
+            if auth_probe:
+                extracted = extracted[:1]
             if not extracted:
                 raise RuntimeError("Kuaidaili API returned no proxy addresses")
         except Exception as exc:
@@ -766,6 +848,9 @@ class KuaidailiProxyProvider:
 
     def is_auth_blocked(self) -> bool:
         return self.pool.is_auth_blocked()
+
+    def maybe_recover_auth(self) -> bool:
+        return self.pool.maybe_recover_auth()
 
     def acquire_for_experiment(self, *, eligible: bool) -> ProxyLease | None:
         return self.pool.acquire(

@@ -64,21 +64,32 @@ attribution was introduced remain visible as `unknown`.
 
 An explicit proxy authentication failure (HTTP 407, including a curl CONNECT
 tunnel response) immediately opens a persistent, pool-wide circuit. No cached
-proxy can be leased and no more paid IPs can be extracted, including after a
-crawler restart. Ordinary source-specific blocks and timeouts keep the existing
-source-isolated retry policy.
+proxy can be leased by normal tasks, including after a crawler restart.
+Ordinary source-specific blocks and timeouts keep the existing source-isolated
+retry policy. A bounded half-open probe is the only automatic exception.
 
 The marker is next to `metrics_path`, with `.auth-blocked` appended to its
 filename. Operators may create this marker to hold paid traffic during an
 incident. Keep `crawl.proxy.enabled = true` and `fail_open = false`: disabling
 the proxy is not a safe substitute because it can enable direct requests.
 
-After independently verifying the provider account and the worker's public-IP
-whitelist, stop the crawler, move the exact marker to a timestamped recovery
-location without overwriting, and restart the crawler. Do not automatically
-remove the marker or periodically purchase IPs to test recovery. Self-hosted
-agent paths are not blocked by this circuit; sources that require paid
-discovery may remain degraded until authentication is repaired.
+Automatic 407 holds are probed after five minutes, then with 10, 20, 40 and
+60 minute delays (capped at 60 minutes, plus up to 30 seconds of jitter).
+Probes run at the next source cycle after the due time. SQLite reserves one
+shared slot before network access, so parallel sources and restarts cannot
+multiply attempts. Each probe reuses a valid, unbenched cached route or requests
+exactly one paid IP, then issues one HTTPS HEAD to `https://www.baidu.com/`
+with a 10-second timeout, TLS verification, no redirects and no direct fallback.
+Only a 2xx/3xx response releases the hold; its marker is archived without
+overwriting. Failures retain the hold and back off. All extraction budgets
+still apply, and a neutral probe never resets the no-success crawl budget.
+If that budget is exhausted, automatic probes cannot purchase another IP.
+
+Manual or malformed holds never auto-release. After independently verifying
+the provider account and the worker's public-IP whitelist, operators may stop
+the crawler, move the exact marker to a timestamped recovery location without
+overwriting, and restart the crawler. Self-hosted agent paths remain eligible
+throughout a paid hold; pending paid work resumes only after recovery.
 
 ## Extraction budgets
 
@@ -101,8 +112,9 @@ events are not retroactively charged to the new reservation ledger.
 
 After ten reserved IPs without any successful paid request, further extraction
 stops until a paid request succeeds. Cached valid IPs may still be used, but
-the HTTP 407 circuit always blocks both cached leases and extractions. Self-hosted
-agent successes do not reset the paid no-success counter. Hourly and daily
+the HTTP 407 circuit blocks normal cached leases and extractions; only the
+bounded half-open probe above may run. Self-hosted agent successes do not reset
+the paid no-success counter. Hourly and daily
 limits expire naturally; restarting the crawler does not reset any budget.
 If authentication has been repaired while the no-success limit is exhausted,
 keep the persistent hold in place and use a separately bounded, single-IP

@@ -59,6 +59,42 @@ class AuthHoldAdapter:
         return self.fetch_item_with_transport(task, "auto")
 
 
+@pytest.mark.parametrize("aggregate", [False, True])
+def test_due_auth_probe_runs_before_held_queue_and_resumes_pending(tmp_path, aggregate):
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    adapter = AuthHoldAdapter("tgb", hybrid=False)
+    probes = []
+    def recover():
+        probes.append(True)
+        adapter.client.proxy_provider.blocked = False
+    adapter.client.proxy_provider.maybe_recover_auth = recover
+    service = AlphaPulseService(
+        settings, store=FakeStore(), sources={"tgb": adapter},
+        seed_discovery=StaticSeedDiscovery(),
+    )
+    stats = service.run_cycle() if aggregate else service.run_source_cycle("tgb")
+    assert probes == [True]
+    assert stats.pages_fetched == 2
+    assert not service.state.load_pending_tasks(source="tgb")
+
+
+def test_probe_bookkeeping_failure_keeps_agents_eligible(tmp_path):
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    adapter = AuthHoldAdapter("tgb", capacity=1)
+    def fail():
+        raise OSError("fixture")
+    adapter.client.proxy_provider.maybe_recover_auth = fail
+    service = AlphaPulseService(
+        settings, store=FakeStore(), sources={"tgb": adapter},
+        seed_discovery=StaticSeedDiscovery(),
+    )
+    stats = service.run_source_cycle("tgb")
+    assert stats.pages_fetched == 2
+    assert all(route == "agent" for _, route in adapter.calls)
+
+
 @pytest.mark.parametrize("source", ["guba", "jiuyan", "hupu"])
 @pytest.mark.parametrize("capacity", [0, 1])
 def test_auth_hold_preserves_pending_and_keeps_agent_work(tmp_path, source, capacity):
