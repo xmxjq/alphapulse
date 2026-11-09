@@ -15,7 +15,7 @@ from alphapulse.pipeline.contracts import (
     SeedDefinition,
 )
 from alphapulse.runtime.config import CrawlSettings, TgbSettings
-from alphapulse.sources.tgb.api import TgbClient, TgbHttpResult, is_missing_page
+from alphapulse.sources.tgb.api import TgbClient, TgbHttpResult, TgbTransport, is_missing_page
 from alphapulse.sources.tgb.parser import (
     TgbListEntry,
     TgbShuoEntry,
@@ -98,12 +98,24 @@ class TgbAdapter:
         return tasks
 
     def fetch_item(self, task: CrawlTask) -> FetchOutcome:
+        return self.fetch_item_with_transport(task, "auto")
+
+    def available_agent_capacity(self) -> int:
+        agent_pool = getattr(self.client, "agent_pool", None)
+        if agent_pool is None:
+            return 0
+        return agent_pool.store.available_capacity("http", source="tgb")
+
+    def fetch_item_with_transport(
+        self, task: CrawlTask, transport: TgbTransport,
+    ) -> FetchOutcome:
         kind = str(task.metadata.get("board_kind") or "")
         if task.kind == "discover":
             marker = _STOCK_MARKER if kind == KIND_STOCK else _LIST_MARKER
         else:
             marker = _DETAIL_MARKER
-        response = self.client.get(str(task.url), expect_marker=marker)
+        kwargs = {} if transport == "auto" else {"transport": transport}
+        response = self.client.get(str(task.url), expect_marker=marker, **kwargs)
 
         if response.status_code == 0:
             self._save_raw(response, task.kind, requested_url=str(task.url))

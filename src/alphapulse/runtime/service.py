@@ -512,13 +512,22 @@ class AlphaPulseService:
             if self._discard_task(task, stats):
                 continue
             adapter = self._adapter_for_task(task)
+            agent_only = False
             if (
                 self._paid_proxy_auth_blocked(adapter)
-                and getattr(getattr(adapter, "client", None), "agent_pool", None) is None
                 and not self._is_guba_browser_post(task)
             ):
-                self._defer_paid_task(task, stats)
-                continue
+                capacity = getattr(adapter, "available_agent_capacity", None)
+                fetch_with_transport = getattr(adapter, "fetch_item_with_transport", None)
+                if (
+                    task.kind == "refresh_comments"
+                    or not callable(capacity)
+                    or not callable(fetch_with_transport)
+                    or capacity() <= 0
+                ):
+                    self._defer_paid_task(task, stats)
+                    continue
+                agent_only = True
             if source_blocked or self._source_circuit_open(task.source):
                 source_blocked = True
                 stats.skipped_tasks += 1
@@ -630,7 +639,11 @@ class AlphaPulseService:
                 continue
 
             adapter = self._adapter_for_task(task)
-            outcome = adapter.fetch_item(task)
+            outcome = (
+                adapter.fetch_item_with_transport(task, "agent")
+                if agent_only
+                else adapter.fetch_item(task)
+            )
             self._apply_outcome(task, outcome, queue, stats)
             if outcome.blocked:
                 if self._record_jiuyan_captcha_block(task, outcome):
@@ -669,6 +682,8 @@ class AlphaPulseService:
                     )
             elif outcome.status_code is None:
                 self.state.release_url_claim(str(task.url))
+                if self._paid_proxy_auth_blocked(adapter):
+                    self.state.upsert_pending_tasks([task])
             else:
                 if task.source == "jiuyan" and task.kind == "fetch_post":
                     self.state.clear_task_failures(task.dedupe_key)

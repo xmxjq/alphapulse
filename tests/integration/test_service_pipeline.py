@@ -94,11 +94,12 @@ def test_auth_hold_preserves_pending_and_keeps_agent_work(tmp_path, source, capa
     assert not service.state.load_pending_tasks(source=source)
 
 
-@pytest.mark.parametrize("source", ["guba", "jiuyan", "hupu"])
+@pytest.mark.parametrize("source", ["guba", "jiuyan", "hupu", "tgb"])
 def test_auth_hold_opened_mid_cycle_stops_subsequent_paid_tasks(tmp_path, source):
     settings = Settings()
     settings.crawl.state_path = tmp_path / "state.db"
-    getattr(settings.sources, source).concurrent_paid_requests = 1
+    if source != "tgb":
+        getattr(settings.sources, source).concurrent_paid_requests = 1
     adapter = AuthHoldAdapter(source, open_during_fetch=True)
     adapter.client.proxy_provider.blocked = False
     service = AlphaPulseService(
@@ -127,6 +128,61 @@ def test_auth_hold_without_agents_defers_in_serial_queue(tmp_path):
     assert stats.pages_fetched == stats.errors == 0
     assert not adapter.calls
     assert len(service.state.load_pending_tasks(source="jiuyan")) == 2
+
+
+@pytest.mark.parametrize("capacity", [0, 1])
+def test_tgb_auth_hold_uses_only_available_agents_across_cycles(tmp_path, capacity):
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    adapter = AuthHoldAdapter("tgb", capacity=capacity)
+    store = FakeStore()
+    service = AlphaPulseService(
+        settings, store=store, sources={"tgb": adapter},
+        seed_discovery=StaticSeedDiscovery(),
+    )
+
+    for _ in range(2):
+        stats = service.run_source_cycle("tgb")
+        assert stats.errors == 0
+    assert not store.errors
+    assert len(adapter.calls) == (2 if capacity else 0)
+    assert all(route == "agent" for _, route in adapter.calls)
+    pending = service.state.load_pending_tasks(source="tgb")
+    assert len(pending) == (0 if capacity else 2)
+    if not capacity:
+        with service.state.connection() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM url_state").fetchone()[0] == 0
+        service = AlphaPulseService(
+            settings, store=store, sources={"tgb": adapter},
+            seed_discovery=StaticSeedDiscovery(),
+        )
+        assert service.run_source_cycle("tgb").errors == 0
+        assert not adapter.calls
+        adapter.client.proxy_provider.blocked = False
+        assert service.run_source_cycle("tgb").pages_fetched == 2
+        assert not service.state.load_pending_tasks(source="tgb")
+
+
+def test_tgb_auth_hold_defers_when_agent_capacity_disappears(tmp_path):
+    settings = Settings()
+    settings.crawl.state_path = tmp_path / "state.db"
+    adapter = AuthHoldAdapter("tgb", capacity=1)
+    original = adapter.fetch_item_with_transport
+
+    def fetch(task, transport):
+        adapter.capacity = 0
+        return original(task, transport)
+
+    adapter.fetch_item_with_transport = fetch
+    service = AlphaPulseService(
+        settings, store=FakeStore(), sources={"tgb": adapter},
+        seed_discovery=StaticSeedDiscovery(),
+    )
+    stats = service.run_source_cycle("tgb")
+    assert stats.pages_fetched == 1
+    assert stats.errors == 0
+    assert len(adapter.calls) == 1
+    assert len(service.state.load_pending_tasks(source="tgb")) == 1
 
 
 class FakeStore:

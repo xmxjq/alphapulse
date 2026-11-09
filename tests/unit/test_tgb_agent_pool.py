@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from alphapulse.runtime.agent_pool import AgentPoolUnavailable, RemoteFetchResponse
 from alphapulse.runtime.config import CrawlSettings, TgbSettings
 from alphapulse.sources.tgb import api as tgb_api
@@ -195,3 +197,43 @@ def test_tgb_paid_proxy_uses_chrome_impersonation(monkeypatch, tmp_path) -> None
     assert final_url == "https://www.tgb.cn/zongban/1/1"
     assert captured["proxy"] == "http://proxy.example:8080"
     assert captured["impersonate"] == "chrome"
+
+
+@pytest.mark.parametrize("agent_enabled", [False, True])
+def test_tgb_agent_only_never_acquires_proxy_or_dispatches(monkeypatch, tmp_path, agent_enabled):
+    client = _client(tmp_path)
+    client.agent_pool = FakeAgentPool(error=AgentPoolUnavailable("offline")) if agent_enabled else None
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("agent-only transport must not use a local route")
+
+    client.proxy_provider = type("Provider", (), {"acquire": unexpected})()
+    monkeypatch.setattr(client, "_dispatch", unexpected)
+    result = client.get("https://www.tgb.cn/a/post-1", transport="agent")
+    assert result.status_code == 0
+    assert result.error_message
+
+
+def test_tgb_adapter_exposes_source_capacity_and_forced_route(tmp_path):
+    from alphapulse.pipeline.contracts import CrawlTask
+    from alphapulse.sources.tgb.adapter import TgbAdapter
+
+    client = _client(tmp_path)
+    calls = []
+
+    class Store:
+        def available_capacity(self, capability, *, source):
+            calls.append((capability, source))
+            return 2
+
+    client.agent_pool = FakeAgentPool(error=AgentPoolUnavailable("offline"))
+    client.agent_pool.store = Store()
+    adapter = TgbAdapter(client.settings, client.crawl_settings, client=client)
+    assert adapter.available_agent_capacity() == 2
+    assert calls == [("http", "tgb")]
+    task = CrawlTask(source="tgb", kind="fetch_post", url="https://www.tgb.cn/a/post-1", seed_name="test")
+    result = adapter.fetch_item_with_transport(task, "agent")
+    assert result.status_code is None
+    assert len(client.agent_pool.calls) == 1
+    client.agent_pool = None
+    assert adapter.available_agent_capacity() == 0

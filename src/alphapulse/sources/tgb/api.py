@@ -143,9 +143,12 @@ class TgbClient:
 
             if remote_response is None:
                 if (
-                    self.agent_pool is not None
-                    and transport != "existing"
-                    and not self.crawl_settings.agent_pool.fallback_to_existing_transport
+                    transport == "agent"
+                    or (
+                        self.agent_pool is not None
+                        and transport != "existing"
+                        and not self.crawl_settings.agent_pool.fallback_to_existing_transport
+                    )
                 ):
                     return TgbHttpResult(
                         url=url,

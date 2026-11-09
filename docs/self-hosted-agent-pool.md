@@ -194,6 +194,12 @@ leases. The worker therefore marks it offline after
 `heartbeat_ttl_seconds` and continues through paid proxies or other agents.
 It resumes automatically at the next window.
 
+An enabled agent pool does not imply an online, eligible node. During a paid
+proxy authentication hold, serial TGB tasks wait pending when agent capacity is
+zero. Available nodes are used in agent-only mode without falling back to paid
+or direct transport. The hold still requires verified operator recovery; this
+does not alter active windows, extraction budgets, or authorization checks.
+
 Jitter is deterministic for each node and local date, so process restarts do
 not reset it. Start boundaries move later and end boundaries move earlier by
 up to the configured duration; the Agent never fetches beyond the configured
